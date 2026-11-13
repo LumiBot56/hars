@@ -19,8 +19,10 @@ use tracing_subscriber::EnvFilter;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-/// How long in-flight HTTP requests get to finish after a stop signal.
-const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long in-flight HTTP requests get to finish after a stop signal. Half
+/// of `docker stop`'s default 10 s grace period, so the final stages still
+/// run before Docker sends SIGKILL.
+const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn main() -> anyhow::Result<()> {
     // Before the runtime and its worker threads allocate anything.
@@ -66,6 +68,8 @@ fn disable_transparent_huge_pages() -> std::io::Result<bool> {
 async fn run(thp_disabled: std::io::Result<bool>) -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        // No colour codes in `docker logs` or journald.
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
         .init();
 
     match thp_disabled {
