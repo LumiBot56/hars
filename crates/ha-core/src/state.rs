@@ -1,10 +1,11 @@
-use crate::{Clock, Context, EntityId};
+use crate::{Clock, Context, EntityId, Event, EventBus, EventKind};
 use jiff::Timestamp;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 pub type Attributes = serde_json::Map<String, serde_json::Value>;
 
@@ -23,6 +24,39 @@ pub struct State {
 #[derive(Default)]
 pub struct StateMachine {
     states: RwLock<HashMap<EntityId, Arc<State>>>,
+    /// Lossless `state_changed` consumers. Only touched while `states` is
+    /// locked, so every consumer sees changes in the order they were applied.
+    listeners: Mutex<Vec<mpsc::UnboundedSender<Arc<Event>>>>,
+}
+
+/// A lossless, ordered feed of `state_changed` events, from
+/// [`crate::Hass::subscribe_state_changes`].
+///
+/// Unlike the [`EventBus`], nothing is ever dropped: the queue grows while the
+/// consumer is behind, so it is only for internal consumers that keep up
+/// (automations, the recorder). Dropping it unsubscribes.
+pub struct StateChanges {
+    /// Every state at the moment of subscribing. Each later change is in the
+    /// feed, and none before it is.
+    pub snapshot: Vec<Arc<State>>,
+    rx: mpsc::UnboundedReceiver<Arc<Event>>,
+}
+
+impl StateChanges {
+    /// The next `state_changed` event. `None` once the `Hass` is gone.
+    pub async fn recv(&mut self) -> Option<Arc<Event>> {
+        self.rx.recv().await
+    }
+
+    /// The next event if one is queued.
+    pub fn try_recv(&mut self) -> Option<Arc<Event>> {
+        self.rx.try_recv().ok()
+    }
+
+    /// Events queued and not yet received.
+    pub fn backlog(&self) -> usize {
+        self.rx.len()
+    }
 }
 
 impl StateMachine {
@@ -42,18 +76,38 @@ impl StateMachine {
         self.len() == 0
     }
 
-    /// Returns `(current, previous)`. If nothing changed, `current` is the
-    /// same `Arc` as `previous` and no new allocation is made. The time is
-    /// read under the lock, so a write never gets an older `last_updated`
-    /// than the write it follows.
+    /// Subscribe to every later change, with a snapshot taken atomically
+    /// with the subscription.
+    pub(crate) fn subscribe(&self) -> StateChanges {
+        let (tx, rx) = mpsc::unbounded_channel();
+        // Writers notify while holding the write lock, so holding the read
+        // lock here means no change can fall between snapshot and feed.
+        let states = self.states.read();
+        let mut listeners = self.listeners.lock();
+        // Writes also prune, but an idle system must not pile up dead feeds.
+        listeners.retain(|tx| !tx.is_closed());
+        listeners.push(tx);
+        drop(listeners);
+        StateChanges {
+            snapshot: states.values().cloned().collect(),
+            rx,
+        }
+    }
+
+    /// Write a state and, if it changed, fire `state_changed` to the
+    /// lossless listeners and the bus before the lock is released, so every
+    /// consumer sees one order. The timestamp is read under the lock for the
+    /// same reason. An unchanged write returns the existing `Arc` and fires
+    /// nothing.
     pub(crate) fn set(
         &self,
         entity_id: EntityId,
         state: SmolStr,
         attributes: Attributes,
-        clock: &Clock,
         context: Option<Context>,
-    ) -> (Arc<State>, Option<Arc<State>>) {
+        clock: &Clock,
+        bus: &EventBus,
+    ) -> Arc<State> {
         let mut states = self.states.write();
         let old = states.get(&entity_id).cloned();
 
@@ -61,7 +115,7 @@ impl StateMachine {
             && o.state == state
             && o.attributes == attributes
         {
-            return (o.clone(), old);
+            return o.clone();
         }
 
         let now = clock.now();
@@ -69,16 +123,31 @@ impl StateMachine {
             Some(o) if o.state == state => o.last_changed,
             _ => now,
         };
+        let context = context.unwrap_or_else(|| Context::at(now));
         let new = Arc::new(State {
             entity_id: entity_id.clone(),
             state,
             attributes,
             last_changed,
             last_updated: now,
-            context: context.unwrap_or_else(|| Context::at(now)),
+            context: context.clone(),
         });
-        states.insert(entity_id, new.clone());
-        (new, old)
+        states.insert(entity_id.clone(), new.clone());
+
+        let event = Arc::new(Event::new(
+            EventKind::StateChanged {
+                entity_id,
+                old_state: old,
+                new_state: Some(new.clone()),
+            },
+            now,
+            context,
+        ));
+        self.listeners
+            .lock()
+            .retain(|tx| tx.send(event.clone()).is_ok());
+        bus.fire_shared(event);
+        new
     }
 }
 
@@ -203,5 +272,153 @@ mod tests {
         let json = serde_json::to_value(&*off).unwrap();
         assert_eq!(json["context"]["id"], off.context.id.to_string());
         assert_eq!(json["context"]["parent_id"], serde_json::Value::Null);
+    }
+
+    fn change(event: &Event) -> (&EntityId, Option<&Arc<State>>, &Arc<State>) {
+        match &event.kind {
+            EventKind::StateChanged {
+                entity_id,
+                old_state,
+                new_state: Some(new),
+            } => (entity_id, old_state.as_ref(), new),
+            other => panic!("expected state_changed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn listeners_miss_nothing_when_the_bus_overflows() {
+        const N: usize = 10_000; // > the 4,096-event bus capacity
+        let hass = Hass::new();
+        let mut bus = hass.bus().subscribe();
+        let mut feed = hass.subscribe_state_changes();
+        assert!(feed.snapshot.is_empty());
+        let id = EntityId::parse("sensor.counter").unwrap();
+        for i in 0..N {
+            hass.set_state(id.clone(), i.to_string(), Attributes::new());
+        }
+        assert_eq!(feed.backlog(), N);
+        for i in 0..N {
+            let event = feed.try_recv().expect("lossless");
+            assert_eq!(change(&event).2.state, i.to_string());
+        }
+        assert!(feed.try_recv().is_none());
+        assert!(matches!(
+            bus.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_))
+        ));
+    }
+
+    /// Concurrent writers to one entity: every consumer must see a single
+    /// chain where each event's `old_state` is the previous `new_state`.
+    #[test]
+    fn concurrent_writes_arrive_in_one_order() {
+        const THREADS: usize = 4;
+        const WRITES: usize = 1_000; // 4,000 fits in the bus too
+        let hass = Hass::new();
+        let mut bus = hass.bus().subscribe();
+        let mut feed = hass.subscribe_state_changes();
+        let id = EntityId::parse("sensor.contended").unwrap();
+        std::thread::scope(|s| {
+            for t in 0..THREADS {
+                let (hass, id) = (&hass, &id);
+                s.spawn(move || {
+                    for i in 0..WRITES {
+                        hass.set_state(id.clone(), format!("{t}-{i}"), Attributes::new());
+                    }
+                });
+            }
+        });
+
+        let mut feed_events = Vec::new();
+        while let Some(e) = feed.try_recv() {
+            feed_events.push(e);
+        }
+        let mut bus_events = Vec::new();
+        while let Ok(e) = bus.try_recv() {
+            bus_events.push(e);
+        }
+        for events in [&feed_events, &bus_events] {
+            assert_eq!(events.len(), THREADS * WRITES);
+            let mut prev: Option<&Arc<State>> = None;
+            for event in events {
+                let (_, old, new) = change(event);
+                match (prev, old) {
+                    (None, None) => {}
+                    (Some(p), Some(o)) => assert!(Arc::ptr_eq(p, o), "chain broken"),
+                    _ => panic!("chain broken at the first event"),
+                }
+                assert!(new.last_updated >= old.map_or(new.last_updated, |o| o.last_updated));
+                prev = Some(new);
+            }
+            assert!(Arc::ptr_eq(prev.unwrap(), &hass.states().get(&id).unwrap()));
+        }
+        for (a, b) in feed_events.iter().zip(&bus_events) {
+            assert!(
+                Arc::ptr_eq(a, b),
+                "feed and bus share one order and one Arc"
+            );
+        }
+    }
+
+    /// Subscribing while another thread writes: the snapshot plus the feed
+    /// must account for every change exactly once.
+    #[test]
+    fn snapshot_and_feed_have_no_gap_or_overlap() {
+        let hass = Hass::new();
+        let id = EntityId::parse("sensor.busy").unwrap();
+        hass.set_state(id.clone(), "start", Attributes::new());
+        let subscribed = std::sync::atomic::AtomicBool::new(false);
+        let feed = std::thread::scope(|s| {
+            // Write until the subscription exists, then 1,000 more: so it is
+            // always taken while writes are in flight.
+            let writer = s.spawn(|| {
+                let mut i = 0;
+                let mut after = 0;
+                while after < 1_000 {
+                    hass.set_state(id.clone(), i.to_string(), Attributes::new());
+                    i += 1;
+                    if subscribed.load(std::sync::atomic::Ordering::Acquire) {
+                        after += 1;
+                    }
+                }
+                i
+            });
+            while hass.states().get(&id).unwrap().state == "start" {
+                std::hint::spin_loop();
+            }
+            let feed = hass.subscribe_state_changes();
+            subscribed.store(true, std::sync::atomic::Ordering::Release);
+            (feed, writer.join().unwrap())
+        });
+        let (mut feed, writes) = feed;
+        // The write that raced the flag may predate the subscription.
+        assert!(feed.backlog() >= 999, "subscribed mid-write");
+        let mut prev = feed.snapshot[0].clone();
+        while let Some(event) = feed.try_recv() {
+            let (_, old, new) = change(&event);
+            assert!(Arc::ptr_eq(old.unwrap(), &prev), "gap or overlap");
+            prev = new.clone();
+        }
+        assert_eq!(prev.state, (writes - 1).to_string());
+    }
+
+    #[test]
+    fn dropped_feed_unsubscribes() {
+        let hass = Hass::new();
+        let feed = hass.subscribe_state_changes();
+        let _kept = hass.subscribe_state_changes();
+        drop(feed);
+        let id = EntityId::parse("light.a").unwrap();
+        hass.set_state(id, "on", Attributes::new());
+        assert_eq!(hass.states().listeners.lock().len(), 1);
+    }
+
+    #[test]
+    fn dropped_feeds_do_not_pile_up_while_idle() {
+        let hass = Hass::new();
+        for _ in 0..100 {
+            drop(hass.subscribe_state_changes());
+        }
+        assert_eq!(hass.states().listeners.lock().len(), 1);
     }
 }
