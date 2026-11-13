@@ -11,11 +11,16 @@ use ha_core::{
     Attributes, Context, EntityId, EventKind, Hass, ServiceData, ServiceError, SupportsResponse,
 };
 use serde_json::{Value, json};
+use std::future::IntoFuture;
+use std::time::Duration;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tracing_subscriber::EnvFilter;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+/// How long in-flight HTTP requests get to finish after a stop signal.
+const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -26,15 +31,81 @@ async fn main() -> anyhow::Result<()> {
     let hass = Hass::new();
     let addr = std::env::var("HARS_BIND").unwrap_or_else(|_| "0.0.0.0:8123".into());
 
-    let app = router(hass);
+    let mut signals = StopSignals::install()?;
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let (stop_http, http_stopped) = tokio::sync::oneshot::channel::<()>();
+    let mut server = tokio::spawn(
+        axum::serve(listener, router(hass.clone()))
+            .with_graceful_shutdown(async {
+                let _ = http_stopped.await;
+            })
+            .into_future(),
+    );
+    hass.start();
     tracing::info!("hars listening on http://{addr}");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await?;
+
+    tokio::select! {
+        signal = signals.recv() => tracing::info!("{signal} received, stopping"),
+        res = &mut server => {
+            res??;
+            anyhow::bail!("HTTP server exited unexpectedly");
+        }
+    }
+
+    hass.begin_stop();
+    let _ = stop_http.send(());
+    match tokio::time::timeout(HTTP_DRAIN_TIMEOUT, &mut server).await {
+        Ok(res) => res??,
+        Err(_) => {
+            tracing::warn!(
+                "HTTP connections still open after {HTTP_DRAIN_TIMEOUT:?}; closing them"
+            );
+            server.abort();
+        }
+    }
+    hass.finish_stop();
+    tracing::info!("hars stopped");
     Ok(())
+}
+
+/// SIGTERM (container stop) and SIGINT (Ctrl-C) handlers. They are installed
+/// before the port is bound, so a signal that arrives as soon as the server
+/// is reachable still stops it cleanly instead of killing it.
+struct StopSignals {
+    #[cfg(unix)]
+    term: tokio::signal::unix::Signal,
+    #[cfg(unix)]
+    int: tokio::signal::unix::Signal,
+}
+
+impl StopSignals {
+    fn install() -> std::io::Result<Self> {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            Ok(Self {
+                term: signal(SignalKind::terminate())?,
+                int: signal(SignalKind::interrupt())?,
+            })
+        }
+        #[cfg(not(unix))]
+        Ok(Self {})
+    }
+
+    async fn recv(&mut self) -> &'static str {
+        #[cfg(unix)]
+        {
+            tokio::select! {
+                _ = self.term.recv() => "SIGTERM",
+                _ = self.int.recv() => "SIGINT",
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+            "Ctrl-C"
+        }
+    }
 }
 
 fn router(hass: Hass) -> Router {

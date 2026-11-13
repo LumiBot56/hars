@@ -130,7 +130,7 @@ Fixtures are sanitised (no tokens, coordinates rounded) before they are committe
       subscribers, which resync from a snapshot when they lag
 - [ ] Perf harness (`docs/PERF.md`): RSS/PSS, CPU time, wakeups, binary size;
       `criterion` benches for state writes and event fan-out
-- [ ] Graceful shutdown on SIGTERM + lifecycle events
+- [x] Graceful shutdown on SIGTERM + lifecycle events
       (`homeassistant_start`/`started`/`stop`)
 
 ### M1: Import, registries, config & restore
@@ -230,6 +230,9 @@ Fixtures are sanitised (no tokens, coordinates rounded) before they are committe
 ### M6: History
 - [ ] Recorder: SQLite (WAL), bounded writer queue, max batch delay 5 s,
       10-day **and** byte-size retention, purge + checkpoint, sane behaviour on a full disk
+- [ ] Stop waits for the final-write flush: the lifecycle stages
+      (`homeassistant_final_write`) need a completion barrier, as HA's
+      `async_stop` waits for each stage's handlers; today they only fire events
 - [ ] Crash test: kill -9 loses at most one batch window and never corrupts the DB
 - [ ] WS `history/stream`, `logbook/event_stream`,
       `sensor/numeric_device_classes`, `recorder/get_statistics_metadata` and
