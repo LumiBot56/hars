@@ -14,6 +14,7 @@ mod clock;
 pub mod config;
 mod context;
 mod entity_id;
+pub mod entityfilter;
 mod event;
 mod lifecycle;
 pub mod restore;
@@ -25,7 +26,7 @@ pub mod yaml;
 
 pub use clock::{Clock, SimulatedClock, isoformat, serialize_iso};
 pub use context::{Context, ContextId};
-pub use entity_id::{EntityId, EntityIdError};
+pub use entity_id::{EntityId, EntityIdError, valid_entity_id};
 pub use event::{Event, EventBus, EventKind};
 pub use lifecycle::{CoreState, SetupGuard};
 pub use schema::{Kind, Range, Schema};
