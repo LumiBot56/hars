@@ -21,6 +21,8 @@ pub struct Registration {
     pub entry_id: String,
     pub webhook_id: Arc<str>,
     data: RwLock<Map<String, Value>>,
+    /// Multi-step changes (`update_registration`) run one at a time.
+    ops: parking_lot::Mutex<()>,
 }
 
 /// What opening a request's `encrypted_data` gave.
@@ -42,7 +44,19 @@ impl Registration {
             entry_id: entry.get("entry_id")?.as_str()?.to_owned(),
             webhook_id,
             data: RwLock::new(data),
+            ops: parking_lot::Mutex::new(()),
         })
+    }
+
+    /// Hold while a change spans several steps (the data, the device,
+    /// the saved entry), so concurrent requests apply in one order.
+    pub fn lock_ops(&self) -> parking_lot::MutexGuard<'_, ()> {
+        self.ops.lock()
+    }
+
+    /// Run `f` on the data with it locked against changes.
+    pub fn with_data<T>(&self, f: impl FnOnce(&Map<String, Value>) -> T) -> T {
+        f(&self.data.read())
     }
 
     /// A copy of the entry's `data`.
@@ -207,6 +221,7 @@ pub struct MobileApp {
     deleted_ids: HashSet<String>,
     sensors: std::sync::OnceLock<sensor::Sensors>,
     trackers: std::sync::OnceLock<tracker::Trackers>,
+    entries: std::sync::OnceLock<Arc<crate::config_entries::ConfigEntries>>,
 }
 
 /// The webhook's view of an id.
@@ -250,12 +265,19 @@ impl MobileApp {
             deleted_ids: deleted_ids.into_iter().collect(),
             sensors: std::sync::OnceLock::new(),
             trackers: std::sync::OnceLock::new(),
+            entries: std::sync::OnceLock::new(),
         }
     }
 
     /// The registrations' entities, restored and written (before start, as
     /// HA's platforms set up).
-    pub fn setup(&self, hass: &ha_core::Hass, registry: Arc<ha_registry::Registry>) {
+    pub fn setup(
+        &self,
+        hass: &ha_core::Hass,
+        registry: Arc<ha_registry::Registry>,
+        entries: Arc<crate::config_entries::ConfigEntries>,
+    ) {
+        let _ = self.entries.set(entries);
         let regs: Vec<Arc<Registration>> = self.registrations.read().values().cloned().collect();
         let _ = self
             .sensors
@@ -265,6 +287,16 @@ impl MobileApp {
             .set(tracker::Trackers::setup(hass, registry.clone(), &regs));
         tracker::setup_notify(hass, &registry, &regs);
         register_notify_services(hass, &regs);
+    }
+
+    /// Save a registration's data to its config entry (HA's
+    /// `async_update_entry`), if it changed.
+    pub fn persist(&self, reg: &Registration) {
+        if let Some(entries) = self.entries.get() {
+            // Read and saved under the data's lock: a newer change can't be
+            // overwritten by an older snapshot.
+            reg.with_data(|data| entries.update_data(&reg.entry_id, data.clone()));
+        }
     }
 
     /// The trackers, once [`MobileApp::setup`] ran.
