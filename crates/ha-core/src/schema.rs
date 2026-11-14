@@ -31,6 +31,15 @@ pub enum Kind {
     EntityIds,
     /// `vol.All(cv.ensure_list, [kind])`: a single value becomes a list.
     List(Box<Kind>),
+    /// `vol.All(vol.Coerce(int), vol.Clamp(min, max))`.
+    IntClamp(i64, i64),
+    /// `vol.All(vol.Coerce(float), vol.Clamp(min, max))`.
+    FloatClamp(f64, f64),
+    /// `vol.All(vol.Coerce(tuple), vol.ExactSequence(kinds))`: a list (or a
+    /// string, as its characters) of exactly these items. Becomes a list.
+    Tuple(Vec<Kind>),
+    /// `vol.Any(True, kind)`.
+    TrueOr(Box<Kind>),
 }
 
 /// Inclusive bounds, as `vol.Range`.
@@ -66,6 +75,8 @@ struct Field {
 #[derive(Debug, Clone, Default)]
 pub struct Schema {
     fields: Vec<Field>,
+    /// `vol.Exclusive` groups: (group name, keys).
+    exclusive: Vec<(&'static str, &'static [&'static str])>,
     allow_extra: bool,
     entity_service: bool,
 }
@@ -106,6 +117,13 @@ impl Schema {
         self
     }
 
+    /// `vol.Exclusive(key, group)` for each of `keys`: at most one may be
+    /// given. The keys still need their own field.
+    pub fn exclusive(mut self, group: &'static str, keys: &'static [&'static str]) -> Self {
+        self.exclusive.push((group, keys));
+        self
+    }
+
     /// Keep unknown keys instead of rejecting them (`extra=vol.ALLOW_EXTRA`).
     pub fn allow_extra(mut self) -> Self {
         self.allow_extra = true;
@@ -119,6 +137,13 @@ impl Schema {
         let invalid = |msg: String| Err(ServiceError::Invalid(msg));
         let mut coerced: Vec<(&str, Value)> = Vec::new();
         let mut drop_metadata = false;
+        for (group, keys) in &self.exclusive {
+            if keys.iter().filter(|k| data.contains_key(**k)).count() > 1 {
+                return invalid(format!(
+                    "two or more values in the same group of exclusion '{group}' @ data[<{group}>]"
+                ));
+            }
+        }
 
         for (key, value) in data {
             let key = key.as_str();
@@ -261,6 +286,76 @@ fn check(kind: &Kind, value: &Value) -> Checked {
             }
         },
         Kind::EntityIds => check_target("entity_id", value),
+        Kind::IntClamp(min, max) => {
+            // Python's int() has no size limit, so any int (or float, or
+            // int string) clamps; only what int() rejects is an error.
+            let expected = || ("expected int".to_owned(), None);
+            let n: i128 = match value {
+                Value::Number(n) => match (n.as_i64(), n.as_u64(), n.as_f64()) {
+                    (Some(i), _, _) => i.into(),
+                    (_, Some(u), _) => u.into(),
+                    (_, _, Some(f)) if f.is_finite() => f.trunc().clamp(-1e30, 1e30) as i128,
+                    _ => return Err(expected()),
+                },
+                Value::Bool(b) => i128::from(*b),
+                Value::String(s) => match parse_python_int(s) {
+                    Some(n) => n,
+                    // Valid but beyond i128: its sign decides.
+                    None if is_python_int(s) => {
+                        if s.trim().starts_with('-') {
+                            i128::MIN
+                        } else {
+                            i128::MAX
+                        }
+                    }
+                    None => return Err(expected()),
+                },
+                _ => return Err(expected()),
+            };
+            let clamped = n.clamp(i128::from(*min), i128::from(*max)) as i64;
+            Ok((i128::from(clamped) != n || !value.is_i64()).then(|| Value::from(clamped)))
+        }
+        Kind::FloatClamp(min, max) => {
+            // Python's float() takes `inf` (which clamps); NaN can't be
+            // carried in JSON, so it's refused.
+            let n = match value {
+                Value::Number(n) => n.as_f64().unwrap_or(0.0),
+                Value::Bool(b) => f64::from(u8::from(*b)),
+                Value::String(s) => match s.trim().parse::<f64>() {
+                    Ok(f) if !f.is_nan() => f,
+                    _ => return err("expected float".into()),
+                },
+                _ => return err("expected float".into()),
+            };
+            let clamped = n.clamp(*min, *max);
+            // `vol.Coerce(float)` makes a float of an int too.
+            Ok((clamped != n || !value.is_f64())
+                .then(|| Number::from_f64(clamped).map(Value::Number))
+                .flatten())
+        }
+        Kind::Tuple(kinds) => {
+            let items: Vec<Value> = match value {
+                Value::Array(items) => items.clone(),
+                Value::String(s) => s.chars().map(|c| Value::String(c.into())).collect(),
+                // `tuple(mapping)` is its keys.
+                Value::Object(m) => m.keys().map(|k| Value::String(k.clone())).collect(),
+                _ => return err("expected tuple".into()),
+            };
+            if items.len() != kinds.len() {
+                // voluptuous's own (odd) message for a wrong length.
+                return err("None".into());
+            }
+            let mut out = Vec::with_capacity(items.len());
+            for (kind, item) in kinds.iter().zip(&items) {
+                let new = check(kind, item).map_err(|(m, _)| (m, None))?;
+                out.push(new.unwrap_or_else(|| item.clone()));
+            }
+            Ok((Value::Array(out.clone()) != *value).then_some(Value::Array(out)))
+        }
+        Kind::TrueOr(kind) => match value {
+            Value::Bool(true) => Ok(None),
+            _ => check(kind, value).map_err(|_| ("not a valid value".into(), None)),
+        },
         Kind::List(item) => {
             if value.is_null() {
                 return Ok(Some(Value::Array(Vec::new()))); // ensure_list(None) == []
@@ -301,6 +396,17 @@ fn check_target(key: &str, value: &Value) -> Checked {
         Value::Array(items) if items.iter().all(Value::is_string) => Ok(None),
         _ => Err(("value should be a string".into(), None)),
     }
+}
+
+/// Whether `int(str)` accepts `s`, whatever its size.
+fn is_python_int(s: &str) -> bool {
+    let t = s.trim();
+    let digits = t.strip_prefix(['+', '-']).unwrap_or(t);
+    !digits.is_empty()
+        && !digits.starts_with('_')
+        && !digits.ends_with('_')
+        && !digits.contains("__")
+        && digits.bytes().all(|b| b.is_ascii_digit() || b == b'_')
 }
 
 /// Python's `int(str)`: surrounding whitespace, an optional sign, and
@@ -577,5 +683,137 @@ mod tests {
             err(&b, json!({ "b": " BAD " })),
             "invalid boolean value bad for dictionary value @ data['b']"
         );
+    }
+
+    /// Each against voluptuous 0.15.2 with HA's light schema.
+    #[test]
+    fn clamps_tuples_any_and_exclusive_groups() {
+        let schema = Schema::new()
+            .optional("transition", Kind::FloatClamp(0.0, 6553.0))
+            .optional("brightness", Kind::IntClamp(0, 255))
+            .optional("brightness_pct", Kind::Float(Range::new(0.0, 100.0)))
+            .optional(
+                "rgb_color",
+                Kind::Tuple(vec![Kind::Int(Range::new(0.0, 255.0)); 3]),
+            )
+            .optional(
+                "hs_color",
+                Kind::Tuple(vec![
+                    Kind::Float(Range::new(0.0, 360.0)),
+                    Kind::Float(Range::new(0.0, 100.0)),
+                ]),
+            )
+            .optional(
+                "xy_color",
+                Kind::Tuple(vec![Kind::Float(Range::new(0.0, 1.0)); 2]),
+            )
+            .optional("white", Kind::TrueOr(Box::new(Kind::IntClamp(0, 255))))
+            .exclusive("brightness", &["brightness", "brightness_pct"])
+            .exclusive(
+                "Color descriptors",
+                &["rgb_color", "hs_color", "xy_color", "white"],
+            );
+        let ok = |v: Value| schema.validate(&data(v)).unwrap().map(Value::Object);
+        let bad = |v: Value| match schema.validate(&data(v)) {
+            Err(ServiceError::Invalid(m)) => m,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            ok(json!({"brightness": 300})),
+            Some(json!({"brightness": 255}))
+        );
+        assert_eq!(
+            ok(json!({"brightness": 12.7})),
+            Some(json!({"brightness": 12}))
+        );
+        assert_eq!(
+            ok(json!({"brightness": true})),
+            Some(json!({"brightness": 1}))
+        );
+        assert_eq!(ok(json!({"brightness": 12})), None);
+        assert_eq!(
+            ok(json!({"transition": 9000})),
+            Some(json!({"transition": 6553.0}))
+        );
+        assert_eq!(ok(json!({"white": true})), None);
+        assert_eq!(ok(json!({"white": 300})), Some(json!({"white": 255})));
+        assert_eq!(
+            ok(json!({"rgb_color": ["1", 2, 3]})),
+            Some(json!({"rgb_color": [1, 2, 3]}))
+        );
+        // Python's ints have no limit: huge values clamp.
+        assert_eq!(
+            ok(json!({"brightness": 1e30})),
+            Some(json!({"brightness": 255}))
+        );
+        assert_eq!(
+            ok(json!({"brightness": "-9223372036854775809"})),
+            Some(json!({"brightness": 0}))
+        );
+        assert_eq!(
+            ok(json!({"brightness": "123456789012345678901234567890123456789012"})),
+            Some(json!({"brightness": 255}))
+        );
+        assert_eq!(
+            ok(json!({"transition": "inf"})),
+            Some(json!({"transition": 6553.0}))
+        );
+        // `tuple({...})` is its keys.
+        assert_eq!(
+            ok(json!({"rgb_color": {"1": 0, "2": 0, "3": 0}})),
+            Some(json!({"rgb_color": [1, 2, 3]}))
+        );
+        for (v, msg) in [
+            (
+                json!({"brightness": "12.5"}),
+                "expected int for dictionary value @ data['brightness']",
+            ),
+            (
+                json!({"transition": "x"}),
+                "expected float for dictionary value @ data['transition']",
+            ),
+            (
+                json!({"brightness_pct": 101}),
+                "value must be at most 100 for dictionary value @ data['brightness_pct']",
+            ),
+            (
+                json!({"brightness": 1, "brightness_pct": 2}),
+                "two or more values in the same group of exclusion 'brightness' @ data[<brightness>]",
+            ),
+            (
+                json!({"rgb_color": [1, 2]}),
+                "None for dictionary value @ data['rgb_color']",
+            ),
+            (
+                json!({"rgb_color": [1, 2, 300]}),
+                "value must be at most 255 for dictionary value @ data['rgb_color']",
+            ),
+            (
+                json!({"rgb_color": "abc"}),
+                "expected int for dictionary value @ data['rgb_color']",
+            ),
+            (
+                json!({"rgb_color": 5}),
+                "expected tuple for dictionary value @ data['rgb_color']",
+            ),
+            (
+                json!({"hs_color": [400, 1]}),
+                "value must be at most 360 for dictionary value @ data['hs_color']",
+            ),
+            (
+                json!({"xy_color": [0.5, "a"]}),
+                "expected float for dictionary value @ data['xy_color']",
+            ),
+            (
+                json!({"white": "x"}),
+                "not a valid value for dictionary value @ data['white']",
+            ),
+            (
+                json!({"rgb_color": [1, 2, 3], "xy_color": [0.1, 0.2]}),
+                "two or more values in the same group of exclusion 'Color descriptors' @ data[<Color descriptors>]",
+            ),
+        ] {
+            assert_eq!(bad(v.clone()), msg, "{v}");
+        }
     }
 }
