@@ -223,7 +223,13 @@ Fixtures are sanitised (no tokens, coordinates rounded) before they are committe
       min) and `/api/brands/{integration,hardware}/…` proxied from HA's CDN
       with HA's disk cache (`.cache/brands`, 404s cached, 30-day background
       refresh, the placeholder image)
-- [ ] `manifest/list`, `system_log/list`, other languages
+- [x] `manifest/list`, `manifest/get`: HA's manifests (generated from the
+      wheel by `scripts/gen-manifests.py`) for what hars runs, `default_config`
+      and common config-entry domains
+- [x] `system_log/list` (admin): the last 50 warnings and errors from a
+      `tracing` layer, deduplicated by logger and call site as HA's
+      `DedupStore` (count, up to 5 messages, newest first); `clear` empties it
+- [ ] Other languages
 - [x] WS registries: `config/entity_registry/list_for_display` (HA's display
       keys, legacy device-name prefix stripping),
       `config/{device,area,floor,label}_registry/list`
