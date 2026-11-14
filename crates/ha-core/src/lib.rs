@@ -16,6 +16,7 @@ mod context;
 mod entity_id;
 mod event;
 mod lifecycle;
+pub mod restore;
 mod schema;
 mod service;
 mod state;
@@ -52,6 +53,7 @@ struct HassInner {
     services: ServiceRegistry,
     core_state: AtomicU8,
     config: parking_lot::RwLock<Arc<config::CoreConfig>>,
+    restore: parking_lot::RwLock<Arc<restore::RestoreState>>,
 }
 
 impl Hass {
@@ -76,6 +78,15 @@ impl Hass {
     /// Location, units and locale (`hass.config`).
     pub fn config(&self) -> Arc<config::CoreConfig> {
         self.inner.config.read().clone()
+    }
+
+    /// Last states for entities that restore themselves.
+    pub fn restore(&self) -> Arc<restore::RestoreState> {
+        self.inner.restore.read().clone()
+    }
+
+    pub fn set_restore(&self, restore: restore::RestoreState) {
+        *self.inner.restore.write() = Arc::new(restore);
     }
 
     pub fn set_config(&self, config: config::CoreConfig) {
@@ -199,7 +210,28 @@ impl Hass {
             context,
             &inner.clock,
             &inner.bus,
+            false,
         )
+    }
+
+    /// Write a state only if the entity has none, in one step (HA's
+    /// start-time placeholders can't overwrite a state written meanwhile).
+    pub fn set_state_if_absent(
+        &self,
+        entity_id: EntityId,
+        state: impl Into<smol_str::SmolStr>,
+        attributes: Attributes,
+    ) {
+        let inner = &*self.inner;
+        inner.states.set(
+            entity_id,
+            state.into(),
+            attributes,
+            None,
+            &inner.clock,
+            &inner.bus,
+            true,
+        );
     }
 
     /// Remove an entity's state (HA's `async_remove`): `state_changed`
