@@ -281,3 +281,186 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 }
+
+/// HA's `Store.async_delay_save`: a write `delay` after the **last**
+/// change (each change pushes it back), of the data as it is at write
+/// time. One task per store sleeps until the deadline (woken early by a
+/// reschedule), and waits on a `Notify` (no timer) while nothing is
+/// pending. The task lives as long as the runtime.
+pub struct DelayedSave {
+    due: parking_lot::Mutex<Option<tokio::time::Instant>>,
+    wake: tokio::sync::Notify,
+    /// One write at a time (the task's and a flush's).
+    writing: tokio::sync::Mutex<()>,
+    write: Box<dyn Fn() -> io::Result<()> + Send + Sync>,
+    name: String,
+}
+
+impl DelayedSave {
+    /// `write` serialises the current data and saves it (blocking; it runs
+    /// on the blocking pool). Spawns the task.
+    pub fn spawn(
+        name: impl Into<String>,
+        write: impl Fn() -> io::Result<()> + Send + Sync + 'static,
+    ) -> std::sync::Arc<Self> {
+        let this = std::sync::Arc::new(Self {
+            due: parking_lot::Mutex::new(None),
+            wake: tokio::sync::Notify::new(),
+            writing: tokio::sync::Mutex::new(()),
+            write: Box::new(write),
+            name: name.into(),
+        });
+        let task = this.clone();
+        tokio::spawn(async move {
+            let this = task;
+            loop {
+                let due = *this.due.lock();
+                match due {
+                    // Nothing pending: no timer.
+                    None => this.wake.notified().await,
+                    Some(at) if at <= tokio::time::Instant::now() => {
+                        // Claimed under the write lock, so a flush waits
+                        // for this write rather than seeing nothing due.
+                        let turn = this.writing.lock().await;
+                        let claimed = {
+                            let mut due = this.due.lock();
+                            if *due == Some(at) {
+                                *due = None;
+                                true
+                            } else {
+                                false
+                            }
+                        };
+                        if claimed {
+                            this.write_locked(turn).await;
+                        }
+                    }
+                    // A reschedule (earlier or later) wakes the sleep.
+                    Some(at) => {
+                        tokio::select! {
+                            () = tokio::time::sleep_until(at) => {}
+                            () = this.wake.notified() => {}
+                        }
+                    }
+                }
+            }
+        });
+        this
+    }
+
+    /// Write `delay` from now (replacing any earlier deadline).
+    pub fn schedule(&self, delay: std::time::Duration) {
+        *self.due.lock() = Some(tokio::time::Instant::now() + delay);
+        self.wake.notify_one();
+    }
+
+    /// Whether a write is pending.
+    pub fn pending(&self) -> bool {
+        self.due.lock().is_some()
+    }
+
+    /// Write now if anything is pending, after any write in progress
+    /// (`homeassistant_final_write`).
+    pub async fn flush(self: &std::sync::Arc<Self>) {
+        let turn = self.writing.lock().await;
+        if self.due.lock().take().is_some() {
+            self.write_locked(turn).await;
+        }
+    }
+
+    async fn write_locked(self: &std::sync::Arc<Self>, _turn: tokio::sync::MutexGuard<'_, ()>) {
+        let this = self.clone();
+        let res = tokio::task::spawn_blocking(move || (this.write)()).await;
+        match res {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::error!("saving {}: {e}", self.name),
+            Err(e) => tracing::error!("saving {}: {e}", self.name),
+        }
+    }
+}
+
+#[cfg(test)]
+mod delayed_save_tests {
+    use super::DelayedSave;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    fn counter() -> (Arc<AtomicUsize>, Arc<DelayedSave>) {
+        let n = Arc::new(AtomicUsize::new(0));
+        let m = n.clone();
+        let save = DelayedSave::spawn("test", move || {
+            m.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+        (n, save)
+    }
+
+    async fn advance(d: Duration) {
+        tokio::time::advance(d).await;
+        // Let the task and the blocking write run.
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+
+    /// The write lands `delay` after the last change, once.
+    #[tokio::test(start_paused = true)]
+    async fn trailing_debounce() {
+        let (n, save) = counter();
+        save.schedule(Duration::from_secs(10));
+        advance(Duration::from_secs(5)).await;
+        save.schedule(Duration::from_secs(10));
+        advance(Duration::from_secs(9)).await;
+        assert_eq!(n.load(Ordering::SeqCst), 0);
+        assert!(save.pending());
+        advance(Duration::from_secs(2)).await;
+        assert_eq!(n.load(Ordering::SeqCst), 1);
+        assert!(!save.pending());
+        advance(Duration::from_secs(60)).await;
+        assert_eq!(n.load(Ordering::SeqCst), 1);
+    }
+
+    /// Review regression: a nearer deadline (running, 10 s) replaces a
+    /// farther one (starting, 180 s) and is met.
+    #[tokio::test(start_paused = true)]
+    async fn a_nearer_deadline_wakes_the_sleep() {
+        let (n, save) = counter();
+        save.schedule(Duration::from_secs(180));
+        advance(Duration::from_secs(1)).await;
+        save.schedule(Duration::from_secs(10));
+        advance(Duration::from_secs(11)).await;
+        assert_eq!(n.load(Ordering::SeqCst), 1);
+    }
+
+    /// Review regression: a flush during a write waits for it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn flush_waits_for_a_write_in_progress() {
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let d = done.clone();
+        let save = DelayedSave::spawn("slow", move || {
+            std::thread::sleep(Duration::from_millis(300));
+            d.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        save.schedule(Duration::ZERO);
+        // Let the task claim the write.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!save.pending());
+        save.flush().await;
+        assert!(done.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn flush_writes_only_what_is_pending() {
+        let (n, save) = counter();
+        save.flush().await;
+        assert_eq!(n.load(Ordering::SeqCst), 0);
+        save.schedule(Duration::from_secs(180));
+        save.flush().await;
+        assert_eq!(n.load(Ordering::SeqCst), 1);
+        advance(Duration::from_secs(200)).await;
+        assert_eq!(n.load(Ordering::SeqCst), 1);
+    }
+}
