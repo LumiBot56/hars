@@ -71,6 +71,20 @@ pub(super) fn dispatch(
             empty(conn, r)
         }
         "repairs/list_issues" => empty(conn, json!({"issues": []})),
+        "labs/list" => only_keys(msg, &[]).map(|()| {
+            if conn.principal.permission < Permission::Admin {
+                conn.out.error(json!(id), "unauthorized", "Unauthorized");
+                return;
+            }
+            let r = conn
+                .shared
+                .config
+                .labs
+                .list(&crate::components(&conn.shared.config));
+            conn.out.result(id, r);
+        }),
+        "labs/subscribe" => labs_subscribe(conn, id, msg),
+        "labs/update" => labs_update(conn, id, msg),
         "persistent_notification/subscribe" => only_keys(msg, &[]).map(|()| {
             // Result first, then the current notifications (none), as HA.
             conn.out.result(id, Value::Null);
@@ -167,6 +181,101 @@ fn get_icons(conn: &mut Conn, id: u64, msg: &Map<String, Value>) -> Result<(), I
     };
     conn.out
         .result_raw(id, &crate::i18n::icons(category, domains));
+    Ok(())
+}
+
+/// `labs/subscribe`: the result, the feature now as an event, then an
+/// event on each change to it.
+fn labs_subscribe(conn: &mut Conn, id: u64, msg: &Map<String, Value>) -> Result<(), Invalid> {
+    only_keys(msg, &["domain", "preview_feature"])?;
+    let domain = required_str(msg, "domain")?.to_owned();
+    let feature = required_str(msg, "preview_feature")?.to_owned();
+    let out = conn.out.clone();
+    let live = Arc::new(parking_lot::Mutex::new(true));
+    let listener_live = live.clone();
+    let listener: crate::labs::Listener = Box::new(move |update: &Value| {
+        let live = listener_live.lock();
+        *live && out.event(id, update)
+    });
+    // Held until the first event is queued, so a change can't come first.
+    let guard = live.lock();
+    let Some(now) = conn
+        .shared
+        .config
+        .labs
+        .subscribe(&domain, &feature, live.clone(), listener)
+    else {
+        drop(guard);
+        conn.out.error(
+            json!(id),
+            "not_found",
+            &format!("Preview feature {domain}.{feature} not found"),
+        );
+        return Ok(());
+    };
+    conn.out.result(id, Value::Null);
+    conn.out.event(id, &now);
+    drop(guard);
+    conn.subs.insert(id, Subscription::Listener(live));
+    Ok(())
+}
+
+/// `labs/update` (admin): save, then fire `labs_updated`. `hars` makes no
+/// backups yet, so asking for one before enabling is an error.
+fn labs_update(conn: &mut Conn, id: u64, msg: &Map<String, Value>) -> Result<(), Invalid> {
+    only_keys(
+        msg,
+        &["domain", "preview_feature", "enabled", "create_backup"],
+    )?;
+    let domain = required_str(msg, "domain")?.to_owned();
+    let feature = required_str(msg, "preview_feature")?.to_owned();
+    let bool_arg = |key: &str, required: bool| match msg.get(key) {
+        Some(Value::Bool(b)) => Ok(*b),
+        Some(_) => Err(format!(
+            "expected bool for dictionary value @ data['{key}']"
+        )),
+        None if required => Err(format!("required key not provided @ data['{key}']")),
+        None => Ok(false),
+    };
+    let enabled = bool_arg("enabled", true)?;
+    let backup = bool_arg("create_backup", false)?;
+    if conn.principal.permission < Permission::Admin {
+        conn.out.error(json!(id), "unauthorized", "Unauthorized");
+        return Ok(());
+    }
+    let labs = conn.shared.config.labs.clone();
+    let hass = conn.shared.hass.clone();
+    let out = conn.out.clone();
+    tokio::spawn(async move {
+        if labs.describe(&domain, &feature, false).is_none() {
+            out.error(
+                json!(id),
+                "not_found",
+                &format!("Preview feature {domain}.{feature} not found"),
+            );
+            return;
+        }
+        if backup && enabled {
+            out.error(
+                json!(id),
+                "unknown_error",
+                "Error creating backup: backups are not available in hars yet",
+            );
+            return;
+        }
+        labs.update(&domain, &feature, enabled).await;
+        let now = hass.clock().now();
+        hass.bus().fire(ha_core::Event::new(
+            ha_core::EventKind::Custom {
+                name: "labs_updated".into(),
+                data: json!({"domain": domain, "preview_feature": feature, "enabled": enabled}),
+            },
+            now,
+            // HA fires it without the caller's context.
+            ha_core::Context::at(now),
+        ));
+        out.result(id, Value::Null);
+    });
     Ok(())
 }
 
