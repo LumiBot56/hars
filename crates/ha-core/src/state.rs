@@ -5,20 +5,98 @@ use serde::Serialize;
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::sync::mpsc;
 
 pub type Attributes = serde_json::Map<String, serde_json::Value>;
 
-/// Immutable snapshot of one entity. Shared via `Arc` between the state
-/// machine, events, and API responses so it is never deep-copied.
+/// Immutable snapshot of one entity (but for `last_reported`). Shared via
+/// `Arc` between the state machine, events, and API responses so it is
+/// never deep-copied. Serializes as HA's `State.as_dict`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct State {
     pub entity_id: EntityId,
     pub state: SmolStr,
     pub attributes: Attributes,
+    #[serde(serialize_with = "crate::clock::serialize_iso")]
     pub last_changed: Timestamp,
+    pub last_reported: Reported,
+    #[serde(serialize_with = "crate::clock::serialize_iso")]
     pub last_updated: Timestamp,
     pub context: Context,
+}
+
+/// `last_reported`: when the state was last written, changed or not. A
+/// write that changes nothing moves it on the existing state, as HA
+/// mutates its `State` in place, so it is atomic (microseconds since the
+/// epoch) and needs no copy of the attributes.
+///
+/// HA caches a state's dict and JSON the first time they're made, and a
+/// report doesn't clear that cache: the `last_reported` its JSON shows is
+/// the one at the state's first serialization. `shown` keeps that, and
+/// [`Reported::get`] the live time.
+#[derive(Debug)]
+pub struct Reported {
+    live: AtomicI64,
+    /// `i64::MIN` until first serialized.
+    shown: AtomicI64,
+}
+
+const UNSET: i64 = i64::MIN;
+
+impl Reported {
+    pub fn new(t: Timestamp) -> Self {
+        Self {
+            live: AtomicI64::new(t.as_microsecond()),
+            shown: AtomicI64::new(UNSET),
+        }
+    }
+
+    /// When the state was last written.
+    pub fn get(&self) -> Timestamp {
+        micros(self.live.load(Ordering::Relaxed))
+    }
+
+    fn set(&self, t: Timestamp) {
+        self.live.store(t.as_microsecond(), Ordering::Relaxed);
+    }
+
+    /// What the state's JSON shows: fixed by the first serialization.
+    fn shown(&self) -> Timestamp {
+        let live = self.live.load(Ordering::Relaxed);
+        match self
+            .shown
+            .compare_exchange(UNSET, live, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => micros(live),
+            Err(shown) => micros(shown),
+        }
+    }
+}
+
+fn micros(us: i64) -> Timestamp {
+    Timestamp::from_microsecond(us).unwrap_or_default()
+}
+
+impl Clone for Reported {
+    fn clone(&self) -> Self {
+        Self {
+            live: AtomicI64::new(self.live.load(Ordering::Relaxed)),
+            shown: AtomicI64::new(self.shown.load(Ordering::Relaxed)),
+        }
+    }
+}
+
+impl PartialEq for Reported {
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
+    }
+}
+
+impl Serialize for Reported {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        crate::clock::serialize_iso(&self.shown(), s)
+    }
 }
 
 #[derive(Default)]
@@ -97,8 +175,8 @@ impl StateMachine {
     /// Write a state and, if it changed, fire `state_changed` to the
     /// lossless listeners and the bus before the lock is released, so every
     /// consumer sees one order. The timestamp is read under the lock for the
-    /// same reason. An unchanged write returns the existing `Arc` and fires
-    /// nothing.
+    /// same reason. An unchanged write returns the existing `Arc`, moves
+    /// only its `last_reported`, and fires no `state_changed`.
     pub(crate) fn set(
         &self,
         entity_id: EntityId,
@@ -115,6 +193,7 @@ impl StateMachine {
             && o.state == state
             && o.attributes == attributes
         {
+            o.last_reported.set(clock.now());
             return o.clone();
         }
 
@@ -129,6 +208,7 @@ impl StateMachine {
             state,
             attributes,
             last_changed,
+            last_reported: Reported::new(now),
             last_updated: now,
             context: context.clone(),
         });
@@ -420,5 +500,61 @@ mod tests {
             drop(hass.subscribe_state_changes());
         }
         assert_eq!(hass.states().listeners.lock().len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn serializes_and_reports_like_has_state() {
+        let sim = crate::SimulatedClock::new("2026-11-14T13:29:29.778252Z".parse().unwrap());
+        let hass = Hass::with_clock(sim.clock());
+        let id = EntityId::parse("sensor.t").unwrap();
+        let mut attrs = Attributes::new();
+        attrs.insert("unit_of_measurement".into(), "°C".into());
+        let first = hass.set_state(id.clone(), "20", attrs.clone());
+        let json = serde_json::to_value(&*first).unwrap();
+        let keys: Vec<&str> = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "attributes",
+                "context",
+                "entity_id",
+                "last_changed",
+                "last_reported",
+                "last_updated",
+                "state"
+            ]
+        );
+        for k in ["last_changed", "last_reported", "last_updated"] {
+            assert_eq!(json[k], "2026-11-14T13:29:29.778252+00:00", "{k}");
+        }
+
+        // The same write later: same state object, only `last_reported`
+        // moves, and nothing fires. Its JSON keeps the time it was first
+        // serialized with, as HA's cached dict.
+        let mut rx = hass.bus().subscribe();
+        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        let again = hass.set_state(id.clone(), "20", attrs.clone());
+        assert!(Arc::ptr_eq(&first, &again));
+        assert_eq!(
+            again.last_reported.get().to_string(),
+            "2026-11-14T13:29:31.778252Z"
+        );
+        let json = serde_json::to_value(&*again).unwrap();
+        assert_eq!(json["last_reported"], "2026-11-14T13:29:29.778252+00:00");
+        assert!(rx.try_recv().is_err());
+
+        // Not yet serialized when reported: it shows the report.
+        let other = EntityId::parse("sensor.u").unwrap();
+        hass.set_state(other.clone(), "1", Attributes::new());
+        tokio::time::advance(std::time::Duration::from_secs(3)).await;
+        let reported = hass.set_state(other, "1", Attributes::new());
+        let json = serde_json::to_value(&*reported).unwrap();
+        assert_eq!(json["last_reported"], "2026-11-14T13:29:34.778252+00:00");
+        assert_eq!(json["last_updated"], "2026-11-14T13:29:31.778252+00:00");
     }
 }
