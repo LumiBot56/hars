@@ -99,6 +99,18 @@ impl Serialize for Reported {
     }
 }
 
+/// How a write treats the existing state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WriteMode {
+    /// An unchanged write only moves `last_reported`.
+    Normal,
+    /// Only if there is no state yet.
+    IfAbsent,
+    /// HA's `force_update`: a new state and `state_changed` even when
+    /// nothing changed; every timestamp moves.
+    Force,
+}
+
 #[derive(Default)]
 pub struct StateMachine {
     states: RwLock<HashMap<EntityId, Arc<State>>>,
@@ -235,16 +247,19 @@ impl StateMachine {
         context: Option<Context>,
         clock: &Clock,
         bus: &EventBus,
-        if_absent: bool,
+        mode: WriteMode,
     ) -> Arc<State> {
         let mut states = self.states.write();
         let old = states.get(&entity_id).cloned();
         // Checked under the same lock as the write: nothing slips between.
-        if if_absent && let Some(o) = &old {
+        if mode == WriteMode::IfAbsent
+            && let Some(o) = &old
+        {
             return o.clone();
         }
 
-        if let Some(o) = &old
+        if mode != WriteMode::Force
+            && let Some(o) = &old
             && o.state == state
             && o.attributes == attributes
         {
@@ -253,8 +268,9 @@ impl StateMachine {
         }
 
         let now = clock.now();
+        // `same_state = old.state == new_state and not force_update`.
         let last_changed = match &old {
-            Some(o) if o.state == state => o.last_changed,
+            Some(o) if o.state == state && mode != WriteMode::Force => o.last_changed,
             _ => now,
         };
         let context = context.unwrap_or_else(|| Context::at(now));
@@ -292,6 +308,30 @@ mod tests {
     use crate::{EventKind, Hass};
 
     use super::*;
+
+    /// HA's `force_update`: an unchanged write still fires, and all three
+    /// timestamps move (HA's `same_state` is false when forced).
+    #[tokio::test]
+    async fn forced_writes_fire_when_unchanged() {
+        let sim = crate::SimulatedClock::new("2026-01-01T00:00:00Z".parse().unwrap());
+        let hass = Hass::with_clock(sim.clock());
+        let id = EntityId::parse("device_tracker.phone").unwrap();
+        let first = hass.set_state(id.clone(), "home", Attributes::new());
+        let mut rx = hass.bus().subscribe();
+        let same = hass.set_state(id.clone(), "home", Attributes::new());
+        assert!(Arc::ptr_eq(&first, &same));
+        assert!(rx.try_recv().is_err());
+        sim.jump_to("2026-01-01T00:01:40Z".parse().unwrap());
+        let forced = hass.set_state_forced(id.clone(), "home", Attributes::new());
+        assert!(!Arc::ptr_eq(&first, &forced));
+        assert!(forced.last_changed > first.last_changed);
+        assert_eq!(forced.last_updated, forced.last_changed);
+        assert_eq!(forced.last_reported.get(), forced.last_changed);
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            EventKind::StateChanged { .. }
+        ));
+    }
 
     #[tokio::test]
     async fn set_state_fires_only_on_change() {
