@@ -25,9 +25,11 @@ command arrives.
 Every held-back call and every `automation_triggered` goes to a JSON Lines
 file (`HARS_SHADOW_LOG`, default `<config>/.hars/shadow.jsonl`), appended to,
 with a `shadow_started` line each time `hars` starts. If the disk stops
-accepting writes, `hars` keeps up to 4 MiB of decisions, retries every second,
-and when it recovers writes a `shadow_gap` line saying how many it had to
-drop; shutdown waits for the queue to be written (the final-write stage).
+accepting writes, `hars` holds the batch that failed and up to 4 MiB of
+decisions behind it, retries every second, and when it recovers writes a
+`shadow_gap` line saying how many it had to drop. Shutdown waits for the queue
+to be written (the final-write stage), with one last try if the disk is
+failing.
 
 Entities whose state only changes when *commanded* are the exception: the
 SwitchBot IR air conditioner (`assumed_state`) and its switch, and the Bot's
@@ -91,9 +93,12 @@ compares, over the window from `hars`'s first start to now:
   the same service and targets is a *mismatch*; HA's call with no match is
   *missing*; `hars`'s with no match is *extra*. Only calls made on behalf of an
   automation are compared: those in a context an `automation_triggered` of
-  the same side started (`--all-contexts` adds the UI's and the apps'). Each
-  call is matched to the earliest unmatched one within the tolerance, which
-  finds a complete pairing whenever there is one.
+  the same side started (`--all-contexts` adds the UI's and the apps'). Calls
+  are matched in two passes (identical calls first, then the same service and
+  targets with other data), each taking the earliest unmatched one within the
+  tolerance; any call left over is reported, so a difference is never hidden,
+  though a pair of near-simultaneous differing calls can be described as
+  missing and extra rather than as mismatches.
 - **triggers**: HA's `automation_triggered` against `hars`'s, by automation and
   time, with a per-automation count.
 

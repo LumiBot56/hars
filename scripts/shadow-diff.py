@@ -52,8 +52,9 @@ _CROCKFORD = {c: i for i, c in enumerate("0123456789ABCDEFGHJKMNPQRSTVWXYZ")}
 
 
 def ulid_bytes(text):
-    """A context id's 16 bytes, as HA's recorder stores it (`context_id_bin`)."""
-    if not text:
+    """A context id's 16 bytes, as HA's recorder stores it (`context_id_bin`);
+    None if `text` is empty or not a ULID."""
+    if not text or len(text) != 26:
         return None
     try:
         n = 0
@@ -131,20 +132,23 @@ class Trigger:
         return f"{stamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}Z {self.entity_id} ({self.name})"
 
 
-def context_of(row):
-    ctx = row.get("context") or {}
-    return {
-        "id": ulid_bytes(ctx.get("id")),
-        "parent_id": ulid_bytes(ctx.get("parent_id")),
-        "user_id": ctx.get("user_id"),
-    }
+def context_of(row, where):
+    """The context a log line carries: its `id` is required, and a ULID."""
+    ctx = row.get("context")
+    if not isinstance(ctx, dict) or ulid_bytes(ctx.get("id")) is None:
+        raise InputError(f"{where}: no valid context id")
+    parent = ctx.get("parent_id")
+    if parent is not None and ulid_bytes(parent) is None:
+        raise InputError(f"{where}: bad parent context id")
+    return {"id": ulid_bytes(ctx["id"]), "parent_id": ulid_bytes(parent), "user_id": ctx.get("user_id")}
 
 
 def read_jsonl(path):
     """(calls, triggers, starts, gaps) from a shadow-format JSON Lines file.
 
     A line that is not JSON is an error, except one cut off by a crash: the
-    last line, or one the next start of hars marked off with `shadow_started`."""
+    last line, or one the next start of hars marked off with `shadow_started`.
+    A line of a known type with a field missing is an error too."""
     calls, triggers, starts, gaps = [], [], [], []
     bad = None
     with open(path, encoding="utf-8") as f:
@@ -165,23 +169,30 @@ def read_jsonl(path):
             if bad is not None:
                 print(f"{path}:{bad}: skipping a line cut off by a crash", file=sys.stderr)
                 bad = None
+            where = f"{path}:{n}"
             try:
                 if kind == "call_service":
+                    data = row["service_data"]
+                    if not isinstance(data, dict):
+                        raise InputError(f"{where}: service_data is not an object")
                     calls.append(
-                        Call(row["t"], row["domain"], row["service"],
-                             row.get("service_data") or {}, context_of(row))
+                        Call(float(row["t"]), row["domain"], row["service"], data,
+                             context_of(row, where))
                     )
                 elif kind == "automation_triggered":
-                    d = row.get("data") or {}
+                    d = row["data"]
+                    if not isinstance(d, dict) or not d.get("entity_id"):
+                        raise InputError(f"{where}: an automation_triggered without an entity_id")
                     triggers.append(
-                        Trigger(row["t"], d.get("entity_id"), d.get("name"), context_of(row)["id"])
+                        Trigger(float(row["t"]), d["entity_id"], d.get("name"),
+                                context_of(row, where)["id"])
                     )
                 elif kind == "shadow_started":
-                    starts.append(row["t"])
+                    starts.append(float(row["t"]))
                 elif kind == "shadow_gap":
-                    gaps.append((row["t"], row["until"], row.get("dropped", 0)))
-            except (KeyError, TypeError) as e:
-                raise InputError(f"{path}:{n}: a {kind} line without {e}")
+                    gaps.append((float(row["t"]), float(row["until"]), int(row.get("dropped", 0))))
+            except (KeyError, TypeError, ValueError) as e:
+                raise InputError(f"{where}: a {kind} line without a usable {e}")
     if bad is not None:
         print(f"{path}:{bad}: skipping a last line cut off by a crash", file=sys.stderr)
     return calls, triggers, starts, gaps
@@ -218,13 +229,26 @@ def read_ha_db(path, since, until):
                    "user_id": row[5]}
         try:
             data = json.loads(shared)
-        except (TypeError, json.JSONDecodeError):
-            continue
-        if kind == "call_service":
-            calls.append(Call(t, data["domain"], data["service"], data.get("service_data") or {}, ctx))
-        else:
-            triggers.append(Trigger(t, data.get("entity_id"), data.get("name"), ctx and ctx["id"]))
-    return calls, triggers, has_ctx
+            if kind == "call_service":
+                calls.append(
+                    Call(t, data["domain"], data["service"], data["service_data"], ctx)
+                )
+            else:
+                triggers.append(Trigger(t, data["entity_id"], data.get("name"), ctx and ctx["id"]))
+        except (TypeError, KeyError, json.JSONDecodeError):
+            raise InputError(f"{path}: a {kind} row at {t} that is not in HA's shape")
+    # A run that started before the window can still call a service inside
+    # it: its trigger's context is needed whenever the trigger was.
+    contexts = set()
+    if has_ctx:
+        contexts = {
+            bytes(r[0]) for r in db.execute(
+                "SELECT e.context_id_bin FROM events e"
+                " JOIN event_types t ON t.event_type_id = e.event_type_id"
+                " WHERE t.event_type = 'automation_triggered' AND e.time_fired_ts < ?"
+                " AND e.context_id_bin IS NOT NULL", (until,))
+        }
+    return calls, triggers, has_ctx, contexts
 
 
 def automation_made(call, contexts):
@@ -241,10 +265,9 @@ def window(items, since, until):
 def pair(ours, theirs, tolerance, same):
     """Match `ours` to `theirs` (both sorted by time) one to one: each of ours,
     in time order, takes the *earliest* unmatched one of theirs within
-    `tolerance` for which `same(a, b)` holds. With one tolerance for every
-    item that finds a complete matching whenever there is one (taking the
-    nearest instead can strand a later item). Returns (pairs, ours left,
-    theirs left)."""
+    `tolerance` for which `same(a, b)` holds. Among items that are all `same`
+    this finds a complete matching whenever there is one (taking the nearest
+    instead can strand a later item). Returns (pairs, ours left, theirs left)."""
     times = [b.t for b in theirs]
     used = [False] * len(theirs)
     pairs, left = [], []
@@ -395,10 +418,11 @@ def main(argv=None):
         if since >= until:
             raise InputError("the window is empty or reversed: --since must be before --until")
         if args.ha_db:
-            ha_calls, ha_trig, has_ctx = read_ha_db(args.ha_db, since, until)
+            ha_calls, ha_trig, has_ctx, ha_contexts = read_ha_db(args.ha_db, since, until)
         else:
             ha_calls, ha_trig, _, _ = read_jsonl(args.ha_jsonl)
             has_ctx = True
+            ha_contexts = {t.ctx_id for t in ha_trig if t.ctx_id}
     except (InputError, ValueError, OSError, sqlite3.Error) as e:
         print(f"shadow-diff: {e}", file=sys.stderr)
         return 2
@@ -410,8 +434,7 @@ def main(argv=None):
     # leave it out of both sides, and the result is not clean.
     excludes += [(a, b) for a, b, _ in gaps]
 
-    def keeper(triggers):
-        contexts = {t.ctx_id for t in triggers if t.ctx_id}
+    def keeper(contexts):
 
         def keep(c):
             if c.domain in RUNS:
@@ -422,8 +445,8 @@ def main(argv=None):
 
     # Each side's automation calls are those in a context one of its own
     # `automation_triggered` events started.
-    ha_calls = list(filter(keeper(ha_trig), ha_calls))
-    hars_calls = list(filter(keeper(hars_trig), hars_calls))
+    ha_calls = list(filter(keeper(ha_contexts), ha_calls))
+    hars_calls = list(filter(keeper({t.ctx_id for t in hars_trig if t.ctx_id}), hars_calls))
 
     def inside(items):
         items = window(items, since, until)

@@ -70,15 +70,23 @@ fn append(path: &std::path::Path, text: &str, marker: bool) -> std::io::Result<(
         .read(true)
         .append(true)
         .open(path)?;
-    if marker && f.metadata()?.len() > 0 {
-        let mut last = [0u8];
-        f.seek(SeekFrom::End(-1))?;
-        f.read_exact(&mut last)?;
-        if last[0] != b'\n' {
-            f.write_all(b"\n")?;
+    let before = f.metadata()?.len();
+    let written = (|| {
+        if marker && before > 0 {
+            let mut last = [0u8];
+            f.seek(SeekFrom::End(-1))?;
+            f.read_exact(&mut last)?;
+            if last[0] != b'\n' {
+                f.write_all(b"\n")?;
+            }
         }
+        f.write_all(text.as_bytes())
+    })();
+    if written.is_err() {
+        // Not a prefix of it: the retry writes the whole batch again.
+        let _ = f.set_len(before);
     }
-    f.write_all(text.as_bytes())
+    written
 }
 
 /// How the writer behaves when the disk doesn't cooperate.
@@ -119,21 +127,32 @@ impl Pending {
         }
     }
 
+    /// Something to write: lines, or a gap to report.
     fn is_empty(&self) -> bool {
-        self.held.is_empty() && self.text.is_empty()
+        self.held.is_empty() && self.text.is_empty() && self.dropped_from.is_none()
     }
 
-    /// Everything waiting, in order.
-    fn take(&mut self) -> String {
-        let mut all = std::mem::take(&mut self.held);
-        all.push_str(&self.text);
-        self.text.clear();
-        all
+    /// The next write: a batch that failed before, else what has queued
+    /// (never both, so a failing disk doesn't grow one batch without bound:
+    /// at most `max_pending` is held and `max_pending` queues). With nothing
+    /// but a drop to report, the gap line.
+    fn take(&mut self, now: f64) -> String {
+        if !self.held.is_empty() {
+            return std::mem::take(&mut self.held);
+        }
+        if self.text.is_empty() {
+            self.gap(now);
+        }
+        std::mem::take(&mut self.text)
     }
 
     /// A write succeeded. If decisions were dropped meanwhile, a `shadow_gap`
     /// line says so, so the comparison knows it can't vouch for that time.
     fn wrote(&mut self, now: f64) {
+        self.gap(now);
+    }
+
+    fn gap(&mut self, now: f64) {
         if let Some(from) = self.dropped_from.take() {
             let gap = json!({
                 "t": from, "until": now, "type": "shadow_gap", "dropped": self.dropped
@@ -160,12 +179,17 @@ async fn start_with(hass: &Hass, path: PathBuf, limits: Limits) {
         "{}\n",
         json!({"t": seconds(clock.now().as_microsecond()), "type": "shadow_started"})
     );
+    let mut pending = Pending::default();
     let marked = {
-        let path = path.clone();
+        let (path, marker) = (path.clone(), marker.clone());
         tokio::task::spawn_blocking(move || append(&path, &marker, true)).await
     };
+    // A marker that couldn't be written goes out with the first write that can.
+    let mut repair = false;
     if let Ok(Err(e)) | Err(e) = marked.map_err(std::io::Error::other) {
         tracing::error!("the shadow log could not be written: {e}");
+        pending.held = marker;
+        repair = true;
     }
     tracing::warn!(
         "SHADOW MODE: service calls that act on devices are not run; they are logged to {}",
@@ -177,22 +201,25 @@ async fn start_with(hass: &Hass, path: PathBuf, limits: Limits) {
     });
     tokio::spawn(async move {
         type Write = tokio::task::JoinHandle<(String, std::io::Result<()>)>;
-        let mut pending = Pending::default();
         let mut writing: Option<Write> = None;
         let mut retry_at: Option<tokio::time::Instant> = None;
         let mut closing = false;
+        // At shutdown, one last try, not a retry loop.
+        let mut last_try = false;
         loop {
-            let ready = retry_at.is_none_or(|at| tokio::time::Instant::now() >= at) || closing;
-            if writing.is_none() && ready && !pending.is_empty() {
-                let text = pending.take();
+            let ready = retry_at.is_none_or(|at| tokio::time::Instant::now() >= at);
+            if writing.is_none() && !pending.is_empty() && (ready || (closing && !last_try)) {
+                last_try = closing;
+                let text = pending.take(seconds(clock.now().as_microsecond()));
                 let path = path.clone();
+                let marker = std::mem::take(&mut repair);
                 writing = Some(tokio::task::spawn_blocking(move || {
-                    let r = append(&path, &text, false);
+                    let r = append(&path, &text, marker);
                     (text, r)
                 }));
                 retry_at = None;
             }
-            if closing && writing.is_none() {
+            if closing && writing.is_none() && (pending.is_empty() || last_try) {
                 if !pending.is_empty() {
                     tracing::error!("the shadow log could not be written at shutdown");
                 }
@@ -215,6 +242,8 @@ async fn start_with(hass: &Hass, path: PathBuf, limits: Limits) {
                         Ok((text, Err(e))) => {
                             tracing::error!("the shadow log could not be written, will retry: {e}");
                             pending.held = text;
+                            // The retry checks the file's end again.
+                            repair = true;
                             retry_at = Some(tokio::time::Instant::now() + limits.retry);
                         }
                         Err(e) => tracing::error!("the shadow log writer failed: {e}"),
@@ -403,5 +432,76 @@ mod tests {
             .count();
         let _ = std::fs::remove_file(&path);
         assert_eq!(n, 200);
+    }
+
+    /// A decision too big to queue is counted and reported even when nothing
+    /// else is waiting.
+    #[tokio::test]
+    async fn an_oversized_decision_still_leaves_a_gap() {
+        let path = std::env::temp_dir().join(format!("hars-shadow-big-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let hass = Hass::new();
+        let limits = Limits {
+            max_pending: 100,
+            retry: std::time::Duration::from_millis(20),
+        };
+        start_with(&hass, path.clone(), limits).await;
+        trigger(&hass, &"x".repeat(500));
+        let mut gap = None;
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            gap = read_lines(&path)
+                .into_iter()
+                .find(|l| l["type"] == "shadow_gap");
+            if gap.is_some() {
+                break;
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(gap.expect("a gap line")["dropped"], 1);
+    }
+
+    /// A failed batch is held as it was, never merged with what has queued,
+    /// so a disk that stays full can't grow it.
+    #[test]
+    fn a_held_batch_is_not_merged_with_new_lines() {
+        let limits = Limits {
+            max_pending: 50,
+            retry: std::time::Duration::ZERO,
+        };
+        let mut p = Pending::default();
+        p.push("a".repeat(40), 1.0, limits);
+        let first = p.take(2.0);
+        p.held = first.clone(); // the write failed
+        p.push("b".repeat(40), 3.0, limits);
+        assert_eq!(p.take(4.0), first, "the held batch goes alone");
+        p.held = first.clone(); // and fails again
+        assert_eq!(p.held.len() + p.text.len(), 41 + 41);
+        // Nothing queued but a drop: the gap is the write.
+        let mut p = Pending::default();
+        p.push("c".repeat(500), 5.0, limits);
+        assert!(!p.is_empty());
+        let gap: Value = serde_json::from_str(p.take(6.0).trim()).unwrap();
+        assert_eq!(
+            (gap["type"].as_str(), gap["t"].as_f64()),
+            (Some("shadow_gap"), Some(5.0))
+        );
+        assert!(p.is_empty());
+    }
+
+    /// `append` adds to what is there, and with `marker` first ends a torn
+    /// last line. (Undoing a write that fails halfway is not tested: it needs
+    /// a disk that fills mid-write.)
+    #[test]
+    fn append_adds_and_a_marker_ends_a_torn_line() {
+        let path = std::env::temp_dir().join(format!("hars-shadow-trunc-{}", std::process::id()));
+        std::fs::write(&path, "keep\n").unwrap();
+        append(&path, "one\n", false).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep\none\n");
+        std::fs::write(&path, "torn").unwrap();
+        append(&path, "marker\n", true).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(text, "torn\nmarker\n");
     }
 }

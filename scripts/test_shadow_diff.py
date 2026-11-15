@@ -231,6 +231,39 @@ class ShadowDiff(unittest.TestCase):
         self.assertEqual(status, 2)
         self.assertIn("not JSON", out.getvalue())
 
+    def test_a_run_that_started_before_the_window_still_counts(self):
+        # The trigger is a day before `--since`; its run calls a service inside.
+        early = ulid(7)
+        ctx = {"id": early, "parent_id": None, "user_id": None}
+        ha = [trig(T0 - 86400, "automation.slow", ctx), call(T0 + 5, "light", "turn_on", LIGHT, ctx)]
+        hars = [trig(T0 - 86400, "automation.slow", ctx)]
+        for db in (False, True):
+            r = Run(self, ha, hars, "--json", db=db, auto=False,
+                    starts=(T0 - 100,))
+            out = json.loads(r.out)
+            self.assertEqual(out["calls"]["missing"], 1, r.out)  # HA's call was seen, hars's was not
+
+    def test_a_line_missing_what_it_needs_is_an_error_not_a_clean_pass(self):
+        r = Run(self, [], [])
+        base = os.path.join(r.dir.name, "hars.jsonl")
+        ha = os.path.join(r.dir.name, "ha.jsonl")
+        bad_rows = [
+            {"t": T0, "type": "call_service", "domain": "light", "service": "turn_on",
+             "service_data": LIGHT},                                        # no context
+            {"t": T0, "type": "call_service", "domain": "light", "service": "turn_on",
+             "service_data": LIGHT, "context": {"id": "not-a-ulid"}},        # bad id
+            {"t": T0, "type": "call_service", "domain": "light", "service": "turn_on",
+             "context": AUTO},                                               # no service_data
+            {"t": T0, "type": "automation_triggered", "data": {}, "context": AUTO},
+        ]
+        for row in bad_rows:
+            with open(ha, "w") as f:
+                f.write(json.dumps(row) + "\n")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                status = sd.main(["--hars-log", base, "--ha-jsonl", ha, "--until", str(T0 + 3600)])
+            self.assertEqual(status, 2, row)
+
     def test_a_reversed_window_is_an_error_not_a_pass(self):
         out = io.StringIO()
         with contextlib.redirect_stderr(out):
