@@ -123,8 +123,8 @@ function Install-Hars {
             return
         }
         $replace = $true
-        # The port the running hars really listens on (hars.env may have been edited since).
-        foreach ($e in @($info.Config.Env)) { if ($e -match '^HARS_BIND=.*:(\d+)$') { $runPort = $Matches[1] } }
+        # The port hars holds while it runs (hars.env may have been edited since).
+        if ($info.State.Running) { foreach ($e in @($info.Config.Env)) { if ($e -match '^HARS_BIND=.*:(\d+)$') { $runPort = $Matches[1] } } }
     }
 
     # Check the port before stopping anything.

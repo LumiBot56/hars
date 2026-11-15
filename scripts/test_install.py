@@ -26,7 +26,7 @@ inspect)
     [ -n "${FAKE_MOUNT+x}" ] || exit 1
     case $* in
     *Mounts*) printf '%s\n' "$FAKE_MOUNT" ;;
-    *Env*) cat "$FAKE/container_env" 2>/dev/null ;;
+    *Env*) [ -n "${FAKE_STOPPED:-}" ] || cat "$FAKE/container_env" 2>/dev/null ;;
     esac
     exit 0 ;;
 run)
@@ -195,6 +195,14 @@ class InstallTests(unittest.TestCase):
                                      FAKE_MOUNT=f"{self.data()}/config")
         self.assertEqual(result.returncode, 1)
         self.assertIn("port 8130 is in use", result.stderr)
+        self.assertNotIn("stop hars", calls)
+
+    def test_a_stopped_hars_does_not_hold_its_port(self):
+        self.install()
+        result, calls = self.install(FAKE_BUSY="8123", FAKE_STOPPED="1",
+                                     FAKE_MOUNT=f"{self.data()}/config")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("port 8123 is in use", result.stderr)
         self.assertNotIn("stop hars", calls)
 
     def test_an_import_into_an_existing_install_is_refused_first(self):

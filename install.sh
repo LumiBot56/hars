@@ -66,8 +66,8 @@ main() {
 			die "hars is already installed in $DIR, and HARS_IMPORT only goes into a new install.
        Run the install command without HARS_IMPORT, or import by hand: see docs/INSTALL.md, \"Importing by hand\"."
 		REPLACE=1
-		# The port the running hars really listens on (hars.env may have been edited since).
-		RUN_PORT=$(dk inspect -f '{{range .Config.Env}}{{println .}}{{end}}' hars |
+		# The port hars holds while it runs (hars.env may have been edited since).
+		RUN_PORT=$(dk inspect -f '{{if .State.Running}}{{range .Config.Env}}{{println .}}{{end}}{{end}}' hars |
 			sed -n 's/^HARS_BIND=.*:\([0-9][0-9]*\)$/\1/p' | tail -n 1)
 	fi
 
