@@ -108,7 +108,16 @@ This is the reference for "behaves like HA":
 3. **Entity fixtures**: sanitised attribute snapshots of every inventory
    entity (capability flags, colour/temperature limits, units, device classes).
 
+4. **Vectors**: inputs run through HA's own code, with what HA produced saved
+   next to the Rust module that must reproduce it. The script that ran HA is
+   committed in `scripts/vectors/` so the vectors can be remade (see its
+   README).
+
 Fixtures are sanitised (no tokens, coordinates rounded) before they are committed.
+
+- [ ] Generators for the vector sets made before scripts were kept (the
+      table in `scripts/vectors/README.md`), each rerun to confirm it
+      reproduces what is committed. Needed before the pinned HA version moves.
 
 ---
 
