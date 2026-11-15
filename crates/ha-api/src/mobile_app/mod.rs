@@ -30,6 +30,115 @@ pub(crate) fn routes(shared: Shared) -> Router {
         .with_state(shared)
 }
 
+/// `POST /api/mobile_app/registrations` (behind `require_auth`).
+pub(crate) fn registration_routes(shared: Shared) -> Router {
+    Router::new()
+        .route(
+            "/api/mobile_app/registrations",
+            axum::routing::post(register),
+        )
+        .with_state(shared)
+}
+
+/// `RegistrationsView.post`: HA's schema (`RequestDataValidator`, extra
+/// keys dropped), then the registration flow; `201` with the new webhook
+/// id and secret.
+async fn register(
+    State(shared): State<Shared>,
+    axum::Extension(principal): axum::Extension<ha_auth::Principal>,
+    body: axum::body::Bytes,
+) -> Response {
+    let message = |status: StatusCode, msg: String| {
+        (status, axum::Json(json!({"message": msg}))).into_response()
+    };
+    let Ok(v) = serde_json::from_slice::<Value>(&body) else {
+        return message(StatusCode::BAD_REQUEST, "Invalid JSON.".into());
+    };
+    let data = match registration_schema(&v) {
+        Ok(d) => d,
+        Err(why) => {
+            return message(
+                StatusCode::BAD_REQUEST,
+                format!("Message format incorrect: {why}"),
+            );
+        }
+    };
+    let Some(app) = &shared.config.mobile_app else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match app.register(&principal.user_id, data).await {
+        Some((webhook_id, secret)) => (
+            StatusCode::CREATED,
+            axum::Json(json!({
+                "cloudhook_url": null,
+                "remote_ui_url": null,
+                "secret": secret,
+                "webhook_id": webhook_id,
+            })),
+        )
+            .into_response(),
+        None => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// The registration schema. The error is the first voluptuous reports
+/// (`str(MultipleInvalid)`): a bad value, else a missing key in schema
+/// order.
+fn registration_schema(v: &Value) -> Result<Map<String, Value>, String> {
+    let Some(m) = v.as_object() else {
+        return Err("expected a dictionary".into());
+    };
+    const STRINGS: [(&str, bool); 9] = [
+        ("app_id", true),
+        ("app_name", true),
+        ("app_version", true),
+        ("device_name", true),
+        ("manufacturer", true),
+        ("model", true),
+        ("device_id", false),
+        ("os_name", true),
+        ("os_version", false),
+    ];
+    let mut out = Map::new();
+    let mut bad = None;
+    for (k, v) in m {
+        let checked = match k.as_str() {
+            "app_data" => app_data_checked(v).map(Value::Object),
+            "supports_encryption" => crate::cv::boolean(v).map(Value::Bool).ok_or_else(|| {
+                format!(
+                    "invalid boolean value {} for dictionary value @ data['{k}']",
+                    py_str(v)
+                )
+            }),
+            k if STRINGS.iter().any(|(s, _)| *s == k) => crate::cv::string(v)
+                .map(Value::String)
+                .map_err(|why| format!("{why} for dictionary value @ data['{k}']")),
+            // `REMOVE_EXTRA`.
+            _ => continue,
+        };
+        match checked {
+            Ok(v) => {
+                out.insert(k.clone(), v);
+            }
+            Err(e) => {
+                bad.get_or_insert(e);
+            }
+        }
+    }
+    if let Some(e) = bad {
+        return Err(e);
+    }
+    for (k, required) in STRINGS {
+        if required && !out.contains_key(k) {
+            return Err(format!("required key not provided @ data['{k}']"));
+        }
+    }
+    out.entry("app_data").or_insert_with(|| json!({}));
+    out.entry("supports_encryption")
+        .or_insert(Value::Bool(false));
+    Ok(out)
+}
+
 /// What a command answers.
 #[derive(Debug)]
 pub(crate) enum Reply {
@@ -207,6 +316,11 @@ fn prefix(id: &str) -> &str {
 
 /// `handle_webhook`: the envelope, then the command.
 pub(crate) async fn handle(shared: &Shared, reg: &Arc<Registration>, body: &[u8]) -> Reply {
+    // Held while the command runs: an unload (re-pair) waits for it, and
+    // a registration already unloaded answers as an unknown webhook.
+    let Some(_live) = reg.enter().await else {
+        return Reply::Bare(StatusCode::OK);
+    };
     let Ok(req) = serde_json::from_slice::<Value>(body) else {
         return empty_okay(StatusCode::BAD_REQUEST);
     };
@@ -671,24 +785,53 @@ fn update_registration(shared: &Shared, reg: &Registration, payload: &Value) -> 
 /// (`cv.url`) together or not at all, `push_websocket_channel`
 /// (`cv.boolean`), anything else kept as is.
 fn schema_app_data(v: &Value) -> Option<Map<String, Value>> {
-    let mut m = v.as_object()?.clone();
+    app_data_checked(v).ok()
+}
+
+/// [`schema_app_data`] with voluptuous's error at `data['app_data']…`.
+fn app_data_checked(v: &Value) -> Result<Map<String, Value>, String> {
+    let at = "@ data['app_data']";
+    let Some(m) = v.as_object() else {
+        return Err(format!("expected a dictionary for dictionary value {at}"));
+    };
+    let mut m = m.clone();
     if m.contains_key("push_token") != m.contains_key("push_url") {
-        return None;
+        return Err(format!(
+            "some but not all values in the same group of inclusion 'push_cloud' {at}[<push_cloud>]"
+        ));
     }
     if let Some(t) = m.get("push_token") {
-        let t = crate::cv::string(t).ok()?;
+        let t = crate::cv::string(t)
+            .map_err(|why| format!("{why} for dictionary value {at}['push_token']"))?;
         m.insert("push_token".into(), Value::String(t));
     }
-    if let Some(u) = m.get("push_url") {
-        if !is_url(u.as_str()?) {
-            return None;
-        }
+    if let Some(u) = m.get("push_url")
+        && !u.as_str().is_some_and(is_url)
+    {
+        return Err(format!("invalid url for dictionary value {at}['push_url']"));
     }
     if let Some(b) = m.get("push_websocket_channel") {
-        let b = crate::cv::boolean(b)?;
+        let b = crate::cv::boolean(b).ok_or_else(|| {
+            format!(
+                "invalid boolean value {} for dictionary value {at}['push_websocket_channel']",
+                py_str(b)
+            )
+        })?;
         m.insert("push_websocket_channel".into(), Value::Bool(b));
     }
-    Some(m)
+    Ok(m)
+}
+
+/// Python's `str()` of a JSON value (for voluptuous's messages).
+fn py_str(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        v => {
+            let mut out = String::new();
+            crate::ws::py_repr(&mut out, v);
+            out
+        }
+    }
 }
 
 /// `cv.url`: an `http`/`https` URL with a host.

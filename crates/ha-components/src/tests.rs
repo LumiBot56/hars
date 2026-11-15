@@ -116,7 +116,7 @@ fn duplicate_names_get_suffixes_and_bad_stores_dont_stop_the_server() {
     std::fs::write(dir.join(".storage").join(PERSON_KEY), "{bad").unwrap();
     assert!(Components::load_strict(&dir).is_err());
     let components = Components::load(&dir);
-    assert!(components.persons.is_empty());
+    assert!(components.persons().is_empty());
     let hass = Hass::new();
     components.setup(&hass, &Registries::default());
     assert!(
@@ -184,8 +184,8 @@ fn old_person_stores_load_like_ha() {
         Components::load_strict(&dir).unwrap(),
         Components::load(&dir),
     ] {
-        assert_eq!(c.persons.len(), 1);
-        assert_eq!(c.persons[0]["device_trackers"], json!([]));
+        assert_eq!(c.persons().len(), 1);
+        assert_eq!(c.persons()[0]["device_trackers"], json!([]));
     }
     let hass = Hass::new();
     Components::load(&dir).setup(&hass, &Registries::default());
@@ -411,5 +411,58 @@ async fn zones_are_settled_when_start_returns() {
     // The task doesn't write either again once it catches up.
     settle().await;
     assert!(feed.try_recv().is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A new tracker joins the user's person, and the store is written (at
+/// the latest when flushed at stop).
+#[tokio::test]
+async fn trackers_join_the_users_person_and_are_saved() {
+    let dir = std::env::temp_dir().join(format!("hars-person-add-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (hass, components) = tracking_setup(&dir);
+    components.save_to(&dir);
+    components.start(&hass);
+    components.add_user_device_tracker(
+        &hass,
+        "00112233445566778899aabbccddeeff",
+        "device_tracker.new",
+    );
+    // Again: no duplicate.
+    components.add_user_device_tracker(
+        &hass,
+        "00112233445566778899aabbccddeeff",
+        "device_tracker.new",
+    );
+    // Another user's id changes nothing.
+    components.add_user_device_tracker(&hass, "someone", "device_tracker.other");
+    assert_eq!(
+        components.persons()[0]["device_trackers"],
+        json!(["device_tracker.phone", "device_tracker.new"])
+    );
+    assert_eq!(
+        state_of(&hass, "person.adam")["attributes"]["device_trackers"],
+        json!(["device_tracker.phone", "device_tracker.new"])
+    );
+    // The person follows it now.
+    hass.set_state(
+        EntityId::parse("device_tracker.new").unwrap(),
+        "home",
+        json!({"source_type": "router"})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    settle().await;
+    assert_eq!(state_of(&hass, "person.adam")["state"], "home");
+    components.flush().await;
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(".storage/person")).unwrap())
+            .unwrap();
+    assert_eq!(saved["version"], 2);
+    assert_eq!(
+        saved["data"]["items"][0]["device_trackers"],
+        json!(["device_tracker.phone", "device_tracker.new"])
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

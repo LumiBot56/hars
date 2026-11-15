@@ -24,6 +24,7 @@ fn vector(name: &str) -> Value {
         "startup" => include_str!("vectors/startup.json"),
         "restore" => include_str!("vectors/restore_state_phone.json"),
         "location" => include_str!("vectors/location.json"),
+        "registration" => include_str!("vectors/registration.json"),
         _ => unreachable!(),
     };
     serde_json::from_str(text).unwrap()
@@ -112,7 +113,7 @@ fn app_with(entries: &[Map<String, Value>]) -> App {
     let mobile_app = Arc::new(MobileApp::new(entries, vec![DELETED.into()]));
     let config_entries =
         ha_integrations::config_entries::ConfigEntries::in_memory(&hass, entries.to_vec());
-    mobile_app.setup(&hass, registry.clone(), config_entries.clone());
+    mobile_app.setup(&hass, registry.clone(), config_entries.clone(), None);
     let config = crate::ApiConfig {
         registry: Some(registry.clone()),
         mobile_app: Some(mobile_app),
@@ -867,5 +868,328 @@ async fn a_sealed_null_still_saves_the_flag() {
     assert_eq!(
         app.entries.list().unwrap()[0]["data"]["no_legacy_encryption"],
         true
+    );
+}
+
+/// An access token for the test owner, and their user id.
+fn owner_token(auth: &ha_auth::Auth) -> (String, String) {
+    const CLIENT: &str = "http://127.0.0.1:8123/";
+    let flow = auth.start_login_flow(CLIENT, None);
+    let user = auth.check_password("adam", "secret").unwrap();
+    let code = auth.finish_login_flow(&flow, CLIENT, &user, None).unwrap();
+    let t = auth.exchange_code(Some(CLIENT), Some(&code), None).unwrap();
+    let user_id = auth
+        .validate_access_token(&t.access_token, None)
+        .unwrap()
+        .user_id;
+    (t.access_token, user_id)
+}
+
+/// `POST /api/mobile_app/registrations` through the whole router: HA's
+/// `registration.json` and `repair.json` outcomes.
+#[tokio::test]
+async fn registrations_as_ha() {
+    let hass = Hass::new();
+    hass.start();
+    let auth = crate::test_util::auth(true);
+    let (token, user_id) = owner_token(&auth);
+    // The user's person, who gets the new tracker.
+    let dir = std::env::temp_dir().join(format!("hars-reg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join(".storage")).unwrap();
+    std::fs::write(
+        dir.join(".storage/person"),
+        json!({"version": 2, "minor_version": 1, "key": "person", "data": {"items": [
+            {"id": "adam", "name": "adam", "user_id": user_id, "device_trackers": []}]}})
+        .to_string(),
+    )
+    .unwrap();
+    let components = Arc::new(ha_components::Components::load_strict(&dir).unwrap());
+    components.setup(&hass, &Default::default());
+    let mut owned = entry();
+    owned["data"]["user_id"] = json!(user_id);
+    owned.insert(
+        "unique_id".into(),
+        json!("io.robbie.HomeAssistant-11111111-2222-4333-8444-555555555555"),
+    );
+    let registries = ha_registry::Registries {
+        entities: serde_json::from_value(vector("entities")).unwrap(),
+        devices: ha_registry::rows![serde_json::from_value(vector("device")).unwrap()],
+        ..Default::default()
+    };
+    let registry = ha_registry::Registry::in_memory(&hass, registries);
+    let entries =
+        ha_integrations::config_entries::ConfigEntries::in_memory(&hass, vec![owned.clone()]);
+    let looked = entries.clone();
+    registry.set_entry_lookup(Arc::new(move |id: &str| looked.info(id)));
+    let app = Arc::new(MobileApp::load(&dir, &[owned]));
+    app.setup(
+        &hass,
+        registry.clone(),
+        entries.clone(),
+        Some(components.clone()),
+    );
+    let config = crate::ApiConfig {
+        config_dir: "/config".into(),
+        registry: Some(registry.clone()),
+        mobile_app: Some(app.clone()),
+        components: components.clone(),
+        ..Default::default()
+    };
+    let router = crate::router(hass.clone(), auth, &config);
+    let post = |body: Value, auth: bool| {
+        let router = router.clone();
+        let token = token.clone();
+        async move {
+            let mut req = Request::post("/api/mobile_app/registrations")
+                .header("content-type", "application/json");
+            if auth {
+                req = req.header("authorization", format!("Bearer {token}"));
+            }
+            let req = req
+                .extension(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                    [127, 0, 0, 1],
+                    1,
+                ))))
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            let res = router.oneshot(req).await.unwrap();
+            let status = res.status().as_u16();
+            let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (status, String::from_utf8(body.to_vec()).unwrap())
+        }
+    };
+    let v = vector("registration");
+    let iphone = v["cases"][2]["request"].clone();
+
+    let (status, body) = post(iphone.clone(), false).await;
+    assert_eq!((status, body.as_str()), (401, "401: Unauthorized"));
+    let mut missing = iphone.clone();
+    missing.as_object_mut().unwrap().remove("model");
+    let (status, body) = post(missing, true).await;
+    assert_eq!(status, 400);
+    assert_eq!(body, v["cases"][1]["body"].as_str().unwrap());
+
+    // A new phone: a new entry, its tracker on the user's person, and a
+    // webhook that answers with the new secret.
+    let (status, body) = post(iphone, true).await;
+    assert_eq!(status, 201);
+    let reply: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        reply.as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["cloudhook_url", "remote_ui_url", "secret", "webhook_id"]
+    );
+    let (webhook, secret) = (
+        reply["webhook_id"].as_str().unwrap().to_owned(),
+        reply["secret"].as_str().unwrap().to_owned(),
+    );
+    let all = entries.list().unwrap();
+    assert_eq!(all.len(), 2);
+    let new = all
+        .iter()
+        .find(|e| e["data"]["webhook_id"] == webhook.as_str())
+        .unwrap();
+    let want = &v["cases"][3]["new_entry"];
+    assert_eq!(new["title"], want["title"]);
+    assert_eq!(new["unique_id"], want["unique_id"]);
+    assert_eq!(new["source"], "registration");
+    let mut keys: Vec<&str> = new["data"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort();
+    let mut want_keys: Vec<&str> = want["data_keys_in_order"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| k.as_str().unwrap())
+        .collect();
+    want_keys.sort();
+    assert_eq!(keys, want_keys);
+    assert_eq!(
+        components.persons()[0]["device_trackers"],
+        json!(["device_tracker.phone_2"])
+    );
+    let sealed = Key::hex(&secret).unwrap().seal(b"{}");
+    let shared_router = crate::router(hass.clone(), crate::test_util::auth(true), &config);
+    let res = shared_router
+        .oneshot(
+            Request::post(format!("/api/webhook/{webhook}"))
+                .body(Body::from(
+                    json!({"type": "get_zones", "encrypted": true, "encrypted_data": sealed})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let env: Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        Key::hex(&secret)
+            .unwrap()
+            .open(env["encrypted_data"].as_str().unwrap())
+            .is_some()
+    );
+
+    // A request to the old webhook that is already past routing.
+    let Webhook::Registered(stale) = app.webhook(WEBHOOK) else {
+        panic!("registered");
+    };
+    // Re-pair the imported phone (same app + device id): the old entry and
+    // webhook go, the tracker moves to the new entry, the old sensors'
+    // rows go.
+    let mut same = v["cases"][2]["request"].clone();
+    same["device_id"] = json!("11111111-2222-4333-8444-555555555555");
+    same["app_data"] = json!({});
+    let (status, body) = post(same, true).await;
+    assert_eq!(status, 201);
+    let new_webhook = serde_json::from_str::<Value>(&body).unwrap()["webhook_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let all = entries.list().unwrap();
+    assert_eq!(all.len(), 2);
+    assert!(
+        !all.iter()
+            .any(|e| e["entry_id"] == "01JFAKEMOBILEAPPENTRY00000")
+    );
+    assert!(matches!(app.webhook(WEBHOOK), Webhook::Unknown));
+    let new_entry = all
+        .iter()
+        .find(|e| e["data"]["webhook_id"] == new_webhook.as_str())
+        .unwrap();
+    let snap = registry.snapshot();
+    let tracker = snap
+        .entities
+        .iter()
+        .find(|e| e.entity_id == "device_tracker.phone")
+        .unwrap();
+    assert_eq!(
+        tracker.config_entry_id.as_ref(),
+        new_entry["entry_id"].as_str().map(str::to_owned).as_ref()
+    );
+    assert!(
+        !snap
+            .entities
+            .iter()
+            .any(|e| e.entity_id == "sensor.phone_battery_level")
+    );
+    assert!(
+        hass.states()
+            .get(&EntityId::parse("sensor.phone_battery_level").unwrap())
+            .is_none()
+    );
+    let device = snap
+        .devices
+        .iter()
+        .find(|d| d.id == "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0")
+        .unwrap();
+    assert_eq!(
+        device.config_entries,
+        [new_entry["entry_id"].as_str().unwrap()]
+    );
+    // The old webhook id is saved as deleted at once (410 after a restart).
+    let store: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(".storage/mobile_app")).unwrap())
+            .unwrap();
+    assert_eq!(store["data"]["deleted_ids"], json!([WEBHOOK]));
+    let restarted = MobileApp::load(&dir, &[]);
+    assert!(matches!(restarted.webhook(WEBHOOK), Webhook::Deleted));
+    // Review regression: a request already past routing to the old webhook
+    // can't recreate anything for the removed entry.
+    let shared = Shared {
+        hass: hass.clone(),
+        auth: crate::test_util::auth(true),
+        config: Arc::new(config.clone()),
+    };
+    let sealed = Key::hex(SECRET).unwrap().seal(
+        json!({"name": "Ghost", "type": "sensor", "unique_id": "ghost", "state": 1})
+            .to_string()
+            .as_bytes(),
+    );
+    let body = json!({"type": "register_sensor", "encrypted": true, "encrypted_data": sealed});
+    let reply = handle(&shared, &stale, body.to_string().as_bytes()).await;
+    assert!(matches!(reply, Reply::Bare(StatusCode::OK)));
+    assert!(
+        hass.states()
+            .get(&EntityId::parse("sensor.phone_ghost").unwrap())
+            .is_none()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Review regression: an unload waits for a command already running.
+#[tokio::test]
+async fn retiring_waits_for_running_commands() {
+    let reg = Arc::new(Registration::from_entry(&entry()).unwrap());
+    let guard = reg.enter().await.unwrap();
+    let r = reg.clone();
+    let retiring = tokio::spawn(async move { r.retire().await });
+    tokio::task::yield_now().await;
+    assert!(!retiring.is_finished());
+    drop(guard);
+    retiring.await.unwrap();
+    assert!(reg.enter().await.is_none());
+}
+
+/// HA's `RequestDataValidator` messages (from HA's own schema).
+#[test]
+fn registration_errors_as_ha() {
+    let base = json!({"app_id": "a", "app_name": "a", "app_version": "1", "device_name": "d",
+                      "manufacturer": "m", "model": "x", "os_name": "iOS"});
+    let err = |extra: Value| {
+        let mut v = base.clone();
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        registration_schema(&v).unwrap_err()
+    };
+    for (extra, want) in [
+        (
+            json!({"supports_encryption": "bogus"}),
+            "invalid boolean value bogus for dictionary value @ data['supports_encryption']",
+        ),
+        (
+            json!({"app_data": {"push_token": "x"}}),
+            "some but not all values in the same group of inclusion 'push_cloud' @ data['app_data'][<push_cloud>]",
+        ),
+        (
+            json!({"app_data": {"push_url": "ftp://x", "push_token": "t"}}),
+            "invalid url for dictionary value @ data['app_data']['push_url']",
+        ),
+        (
+            json!({"app_data": 5}),
+            "expected a dictionary for dictionary value @ data['app_data']",
+        ),
+        (
+            json!({"app_data": {"push_websocket_channel": "maybe"}}),
+            "invalid boolean value maybe for dictionary value @ data['app_data']['push_websocket_channel']",
+        ),
+        (
+            json!({"app_id": null}),
+            "string value is None for dictionary value @ data['app_id']",
+        ),
+        (
+            json!({"app_id": [1]}),
+            "value should be a string for dictionary value @ data['app_id']",
+        ),
+    ] {
+        assert_eq!(err(extra.clone()), want, "{extra}");
+    }
+    // Extra keys are dropped; defaults filled.
+    let mut v = base.clone();
+    v["extra"] = json!("dropped");
+    let ok = registration_schema(&v).unwrap();
+    assert!(ok.get("extra").is_none());
+    assert_eq!(
+        (ok["app_data"].clone(), ok["supports_encryption"].clone()),
+        (json!({}), json!(false))
     );
 }

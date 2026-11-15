@@ -114,6 +114,7 @@ async fn run(thp_disabled: std::io::Result<bool>) -> anyhow::Result<()> {
     components.setup(&hass, &registries);
     let components = std::sync::Arc::new(components);
     components.track(&hass);
+    components.save_to(&config_dir);
     api_config.components = components;
     let config_entries = {
         let (dir, hass) = (config_dir.clone(), hass.clone());
@@ -150,7 +151,12 @@ async fn run(thp_disabled: std::io::Result<bool>) -> anyhow::Result<()> {
         api_config.integrations.push("mobile_app");
     }
     // The apps' sensors, restored, before start.
-    mobile_app.setup(&hass, registry.clone(), config_entries.clone());
+    mobile_app.setup(
+        &hass,
+        registry.clone(),
+        config_entries.clone(),
+        Some(api_config.components.clone()),
+    );
     api_config.mobile_app = Some(std::sync::Arc::new(mobile_app));
     // `configuration.yaml`'s automations (written now; triggers attach at
     // `homeassistant_started`).
@@ -310,6 +316,7 @@ async fn run(thp_disabled: std::io::Result<bool>) -> anyhow::Result<()> {
     hass.restore().dump(&hass).await;
     registry.flush().await;
     config_entries.flush().await;
+    api_config.components.flush().await;
     hass.finish_stop();
     tracing::info!("hars stopped");
     Ok(())

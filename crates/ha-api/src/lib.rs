@@ -17,7 +17,7 @@ mod mobile_app;
 mod manifests_data;
 mod rest;
 pub mod system_log;
-mod ws;
+pub(crate) mod ws;
 
 pub use frontend::Frontend;
 pub use frontend_data::FrontendData;
@@ -176,6 +176,7 @@ pub fn router(hass: Hass, auth: Auth, config: &ApiConfig) -> Router {
     let api = rest::router(hass)
         .merge(config_route)
         .merge(automation::routes(config.config_dir.clone().into()))
+        .merge(mobile_app::registration_routes(shared.clone()))
         .route_layer(axum::middleware::from_fn_with_state(
             auth.clone(),
             auth::require_auth,
