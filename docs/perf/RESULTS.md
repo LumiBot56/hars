@@ -206,3 +206,69 @@ it file-backed: with `PERF_DETAIL=1`, `Pss_File` is 6,685 → 7,020 kB and
 `Anonymous` 2,088 → 2,052 kB, so it is the larger binary's pages, which the
 kernel can drop, not heap. Start-up time is noise between runs. Idle stays
 idle. Within every budget.
+
+### `render_template` and minijinja, 2026-11-15
+
+The first slice of Jinja templates (`ha_core::template` on minijinja 3.1.0
+with the `vendor/minijinja` fuel patch, features `builtins`, `macros`,
+`loop_controls`, `adjacent_loop_items`, `fuel`, `preserve_order`) and the
+WebSocket `render_template` command, merged with onboarding.
+`PERF_GATE=1 PERF_DETAIL=1 scripts/perf-docker.sh 10 30` (glibc build in
+`rust:1`, Docker on an Apple-silicon Mac, 2 vCPUs), two runs. A fresh
+install, `sun` only; no template is rendered, so the environments are
+never built. `main` is main with onboarding, from the entry above.
+
+| build | binary | start→/api/ | idle RSS | idle PSS | idle CPU | wakeups/s | threads |
+|---|---|---|---|---|---|---|---|
+| main | 8,476,032 B (8.08 MiB) | 9–29 ms | 9.8–10.0 MiB | 8.8–9.0 MiB | 0.000 % | 0.00 | 4 |
+| branch | 9,197,760 B (8.77 MiB) | 11–13 ms | 9.8–10.0 MiB | 8.9–9.0 MiB | 0.000 % | 0.00–0.17 | 4 |
+
+The binary grows 721,728 bytes. Idle RSS is within main's range; the
+binary's file-backed pages are `Pss_File` 6,968–6,975 kB (main 7,020 kB),
+anonymous memory 2,184–2,344 kB. The first run's 0.17 wakeups/s (5 in 30
+s) didn't recur in the second (0.00); a `render_template` subscription
+holds no task, timer or listener, because templates can't read states or
+the clock yet, and nothing renders while idle.
+
+Before main moved, the same command against 7b365dd (8,279,296 B, 9.6 MiB)
+measured the first version at 8,869,888 B (+590,592) and, after the review
+fixes below, 9,001,024 B (+721,728), both at 9.9 MiB idle RSS.
+
+How the size was trimmed (macOS release builds against 7b365dd, same
+toolchain and profile):
+
+| build | bytes | vs 7b365dd |
+|---|---|---|
+| 7b365dd | 7,363,584 | |
+| minijinja at the profile's `opt-level = 3` | 8,142,112 | +778,528 |
+| minijinja at `opt-level = "z"` (kept) | 7,813,776 | +450,192 |
+| the same with minijinja's default features | 7,863,664 | +500,080 |
+
+`[profile.release.package.minijinja] opt-level = "z"` saves 328,336 bytes;
+leaving out `debug`, `multi_template` and `std_collections` saves 49,888.
+Rendering stays cheap at `"z"`: the default dashboard's
+`## Welcome {{ user }}` takes 5.8 µs to compile and render and 1.1 µs to
+render again (4.3 µs and 1.1 µs at `opt-level = 3`; Apple M4, release,
+20,000 runs). Templates render once per subscription, never per state
+write, so size wins. The growth is over the 256 KiB note threshold: it
+buys Jinja itself, which the frontend uses for markdown cards and the
+default dashboard's heading, and which automations and template entities
+will need. Within every budget.
+
+#### Review round: fuel, Python-semantics filters, render threads
+
+The same command and container after the review fixes: minijinja's `fuel`
+and `preserve_order` features, the deep-size fuel patch
+(`vendor/minijinja`), Jinja's filters and tests with Python's rules
+(`template/jinja.rs`), and renders on blocking threads behind two permits.
+
+| build | binary | start→/api/ | idle RSS | idle PSS | idle CPU | wakeups/s | threads | run |
+|---|---|---|---|---|---|---|---|---|
+| branch, first version | 8.46 MiB (8,869,888 B) | 10 ms | 9.9 MiB | 9.0 MiB | 0.000 % | 0.00 | 4 | 10s warm-up, 30s quiet |
+| branch, after review | 8.58 MiB (9,001,024 B) | 11 ms | 9.9 MiB | 9.0 MiB | 0.000 % | 0.00 | 4 | 10s warm-up, 30s quiet |
+
++131,136 bytes for the fixes (macOS: 7,813,776 → 7,929,824, +116,048);
+721,728 bytes over 7b365dd in all, the same as over main with onboarding. Idle RSS is unchanged: file-backed PSS
+6,973 kB, anonymous 2,272 kB. A render now costs 1.2 µs cached and 6.2 µs
+with compiling (was 1.1 and 5.8), and a template that runs to its whole
+budget stops after 27 ms (Apple M4, release).

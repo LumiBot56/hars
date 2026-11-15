@@ -20,6 +20,11 @@ ha-integrations = { path = "crates/ha-integrations" }
 ha-recorder = { path = "crates/ha-recorder" }
 ha-registry = { path = "crates/ha-registry" }
 
+# minijinja 3.1.0 with one change: fuel charges a value's deep size when
+# it is made (vendor/minijinja/HARS.md).
+[patch.crates-io]
+minijinja = { path = "vendor/minijinja" }
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 
@@ -33,6 +38,12 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# Templates render on a subscription, not per state write: minijinja is
+# built for size: 328,336 bytes smaller than opt-level 3, 1.1 µs per render
+# either way (docs/perf/RESULTS.md).
+[profile.release.package.minijinja]
+opt-level = "z"
 
 # Fast-to-build, still-optimised profile for profiling/benchmarks.
 [profile.profiling]

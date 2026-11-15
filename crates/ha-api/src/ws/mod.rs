@@ -20,6 +20,7 @@ mod manifest;
 mod mobile_app;
 mod recorder;
 mod sensor;
+pub(crate) mod template;
 mod weather;
 
 pub use config::WHOAMI_URL;
@@ -55,6 +56,11 @@ const MAX_PENDING: usize = 4096;
 const MAX_BATCH: usize = 256;
 /// aiohttp's default `max_msg_size`, which HA keeps.
 const MAX_MESSAGE: usize = 4 * 1024 * 1024;
+/// Messages that may wait while a command (`render_template`) is busy. The
+/// frontend's start-up burst is a few dozen.
+const MAX_QUEUED: usize = 1024;
+/// The frames behind them, at most two of the largest.
+const MAX_QUEUED_BYTES: usize = 2 * MAX_MESSAGE;
 /// `WebSocketResponse(heartbeat=55)`: a WebSocket ping this often. A client
 /// that hasn't answered the previous ping by the next one is gone (a phone
 /// that lost its network), and its subscriptions are dropped.
@@ -178,6 +184,14 @@ pub(crate) struct Conn {
     /// however many types it wants. It runs only while the map is non-empty.
     events: EventSubs,
     event_listener: Option<AbortHandle>,
+    /// A command still at work (`render_template`): the connection reads
+    /// nothing more until it ends, as HA handles it before the next
+    /// message. Messages already read wait in `queue`.
+    busy: Option<template::Busy>,
+    /// Each with its share of the frame's bytes.
+    queue: std::collections::VecDeque<(Value, usize)>,
+    /// The frame bytes of the messages in `queue`.
+    queued_bytes: usize,
 }
 
 async fn run(mut socket: WebSocket, shared: Shared, ip: Option<IpAddr>) {
@@ -225,18 +239,36 @@ async fn run(mut socket: WebSocket, shared: Shared, ip: Option<IpAddr>) {
         subs: HashMap::new(),
         events: Default::default(),
         event_listener: None,
+        busy: None,
+        queue: Default::default(),
+        queued_bytes: 0,
     };
 
     let mut heartbeat =
         tokio::time::interval_at(tokio::time::Instant::now() + HEARTBEAT, HEARTBEAT);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut awaiting_pong = false;
+    // The command at work, moved out of `conn` so the loop can wait on it.
+    let mut busy = None;
     let writer_done = loop {
+        if busy.is_none() {
+            busy = conn.busy.take();
+        }
         tokio::select! {
+            done = template::finished(&mut busy) => {
+                busy = None;
+                conn.done(done);
+                conn.drain();
+            }
+            // Read even while a command is busy, so a close, the end of the
+            // stream or a pong is seen at once; messages wait in the queue.
             incoming = stream.next() => match incoming {
                 Some(Ok(Message::Text(text))) => {
-                    if !conn.handle_frame(&text) {
+                    if !conn.enqueue(&text) {
                         break false;
+                    }
+                    if busy.is_none() {
+                        conn.drain();
                     }
                 }
                 Some(Ok(Message::Pong(_))) => awaiting_pong = false,
@@ -271,6 +303,9 @@ async fn run(mut socket: WebSocket, shared: Shared, ip: Option<IpAddr>) {
             _ = &mut writer => break true,
         }
     };
+    if let Some(busy) = busy {
+        busy.abort();
+    }
     conn.close();
     if !writer_done {
         // Say goodbye if the writer can, but never wait on a stuck client. The
@@ -402,13 +437,56 @@ fn auth_token(msg: &Value) -> Result<&str, String> {
 impl Conn {
     /// One client frame: a message, or (clients may batch) an array of them.
     /// `false` means disconnect: invalid JSON gets no reply in HA either.
+    #[cfg(test)]
     fn handle_frame(&mut self, text: &str) -> bool {
-        match serde_json::from_str::<Value>(text) {
-            Ok(Value::Array(msgs)) => msgs.into_iter().for_each(|m| self.handle(m)),
-            Ok(msg) => self.handle(msg),
+        if !self.enqueue(text) {
+            return false;
+        }
+        self.drain();
+        true
+    }
+
+    /// Queue a frame's messages. `false` means disconnect: invalid JSON
+    /// (no reply in HA either), or more waiting behind a busy command than
+    /// [`MAX_QUEUED`] messages or [`MAX_QUEUED_BYTES`].
+    fn enqueue(&mut self, text: &str) -> bool {
+        let msgs = match serde_json::from_str::<Value>(text) {
+            Ok(Value::Array(msgs)) => msgs,
+            Ok(msg) => vec![msg],
             Err(_) => return false,
+        };
+        // A frame's bytes, shared out over its messages, leave the count
+        // as each message is handled.
+        let share = text.len().div_ceil(msgs.len().max(1));
+        self.queued_bytes += share * msgs.len();
+        self.queue.extend(msgs.into_iter().map(|m| (m, share)));
+        if self.queue.len() > MAX_QUEUED || self.queued_bytes > MAX_QUEUED_BYTES {
+            tracing::error!(
+                "websocket client sent {} messages while one was busy; disconnecting",
+                self.queue.len()
+            );
+            return false;
         }
         true
+    }
+
+    /// Handle queued messages until one leaves the connection busy.
+    fn drain(&mut self) {
+        while self.busy.is_none() {
+            let Some((msg, bytes)) = self.queue.pop_front() else {
+                return;
+            };
+            self.queued_bytes -= bytes;
+            self.handle(msg);
+        }
+    }
+
+    /// The busy command ended: keep its subscription, if it made one.
+    fn done(&mut self, subscribed: Option<u64>) {
+        self.busy = None;
+        if let Some(id) = subscribed {
+            self.subs.insert(id, Subscription::Idle);
+        }
     }
 
     /// `ActiveConnection.async_handle`.
@@ -518,6 +596,13 @@ impl Conn {
     }
 
     fn close(&mut self) {
+        // Work for a connection that is gone: stop it, and drop what it
+        // holds (a render already running ends at its fuel budget).
+        if let Some(busy) = self.busy.take() {
+            busy.abort();
+        }
+        self.queue.clear();
+        self.queued_bytes = 0;
         let ids: Vec<u64> = self.subs.keys().copied().collect();
         for id in ids {
             self.unsubscribe(id, |_| {});
@@ -615,34 +700,7 @@ pub(crate) fn py_repr(out: &mut String, v: &Value) {
     }
 }
 
-/// Python's `repr` of a `str`: single quotes unless only `'` is inside,
-/// escapes for `\\`, the quote and control characters.
-pub(crate) fn py_repr_str(out: &mut String, s: &str) {
-    let quote = if s.contains('\'') && !s.contains('"') {
-        '"'
-    } else {
-        '\''
-    };
-    out.push(quote);
-    for c in s.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if c == quote => {
-                out.push('\\');
-                out.push(c);
-            }
-            c if (c as u32) < 0x100 && c.is_control() => {
-                out.push_str(&format!("\\x{:02x}", c as u32));
-            }
-            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push(quote);
-}
+pub(crate) use ha_core::py::repr_str as py_repr_str;
 
 pub(crate) fn only_keys(msg: &Map<String, Value>, allowed: &[&str]) -> Result<(), Invalid> {
     let extra = msg

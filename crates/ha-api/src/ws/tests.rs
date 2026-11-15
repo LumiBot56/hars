@@ -635,6 +635,7 @@ fn bare_conn(hass: &Hass) -> (super::Conn, tokio::sync::mpsc::Receiver<super::Fr
             hass: hass.clone(),
             auth,
             config: Default::default(),
+            templates: Default::default(),
             core_config: Default::default(),
         },
         principal,
@@ -648,12 +649,33 @@ fn bare_conn(hass: &Hass) -> (super::Conn, tokio::sync::mpsc::Receiver<super::Fr
         subs: Default::default(),
         events: Default::default(),
         event_listener: None,
+        busy: None,
+        queue: Default::default(),
+        queued_bytes: 0,
     };
     (conn, rx)
 }
 
 fn handle(conn: &mut super::Conn, msg: Value) {
     conn.handle(msg);
+}
+
+/// Wait for the command the connection is busy with, as its read loop does.
+async fn settle(conn: &mut super::Conn) {
+    let mut busy = conn.busy.take();
+    if busy.is_some() {
+        let done = super::template::finished(&mut busy).await;
+        conn.done(done);
+        conn.drain();
+    }
+}
+
+fn sent(rx: &mut tokio::sync::mpsc::Receiver<super::Frame>) -> Vec<Value> {
+    let mut sent = Vec::new();
+    while let Ok(super::Frame::Json(m)) = rx.try_recv() {
+        sent.push(serde_json::from_str::<Value>(&m).unwrap());
+    }
+    sent
 }
 
 #[tokio::test]
@@ -2724,4 +2746,354 @@ async fn logbook_stream_windows_and_checks() {
         true
     );
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// `render_template` conversations from `scripts/vectors/render_template.py`:
+/// HA 2026.6.1's `handle_render_template` on a fresh `HomeAssistant` each,
+/// with every message it sent back, in order.
+#[tokio::test]
+async fn render_template_as_ha() {
+    let _alone = RENDER_PERMITS.lock().await;
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/ws/vectors/render_template.json"
+    );
+    let conversations: Vec<Value> =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert!(conversations.len() > 40);
+    for conversation in conversations {
+        let name = conversation["name"].as_str().unwrap();
+        let s = server().await;
+        let mut c = Client::authed(&s, &token(&s.auth).0).await;
+        for step in conversation["steps"].as_array().unwrap() {
+            c.send(step["send"].clone()).await;
+            for want in step["replies"].as_array().unwrap() {
+                assert_eq!(&c.recv().await, want, "{name}: after {}", step["send"]);
+            }
+        }
+        // Nothing else follows.
+        let pong = c.call(json!({"id": 1000, "type": "ping"})).await;
+        assert_eq!(pong, json!({"id": 1000, "type": "pong"}), "{name}");
+    }
+}
+
+/// A template that reads nothing holds nothing: no task, no listener, no
+/// timer once rendered; only the id, so `unsubscribe_events` finds it.
+#[tokio::test]
+async fn a_rendered_template_holds_nothing() {
+    let _alone = RENDER_PERMITS.lock().await;
+    let hass = Hass::new();
+    let (mut conn, mut rx) = bare_conn(&hass);
+    handle(
+        &mut conn,
+        json!({"id": 1, "type": "render_template", "template": "## Welcome {{ user }}",
+               "variables": {"user": "Ann"}, "strict": true}),
+    );
+    settle(&mut conn).await;
+    assert!(matches!(conn.subs.get(&1), Some(super::Subscription::Idle)));
+    assert!(conn.event_listener.is_none() && conn.busy.is_none());
+    let sent = sent(&mut rx);
+    assert_eq!(sent.len(), 2, "the result and one event");
+    assert_eq!(sent[1]["event"]["result"], "## Welcome Ann");
+}
+
+/// A connection's messages are handled in order: what follows a
+/// `render_template` (even in the same frame, and with a `timeout`) waits
+/// until its replies are out, as in HA when it renders straight away.
+#[tokio::test]
+async fn messages_after_a_render_wait_for_it() {
+    let _alone = RENDER_PERMITS.lock().await;
+    let hass = Hass::new();
+    let (mut conn, mut rx) = bare_conn(&hass);
+    let frame = json!([
+        {"id": 1, "type": "render_template", "template": "{{ 1 }}", "timeout": 5},
+        {"id": 2, "type": "unsubscribe_events", "subscription": 1},
+        {"id": 3, "type": "ping"},
+    ]);
+    assert!(conn.handle_frame(&frame.to_string()));
+    assert!(conn.busy.is_some());
+    assert!(
+        sent(&mut rx).is_empty(),
+        "nothing before the render is done"
+    );
+    settle(&mut conn).await;
+    let sent = sent(&mut rx);
+    let ids: Vec<_> = sent
+        .iter()
+        .map(|m| (m["id"].clone(), m["type"].clone()))
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            (json!(1), json!("result")),
+            (json!(1), json!("event")),
+            (json!(2), json!("result")),
+            (json!(3), json!("pong")),
+        ]
+    );
+    assert_eq!(sent[2]["success"], true);
+    assert!(conn.subs.is_empty());
+}
+
+/// Renders hold one of a fixed number of permits, from before they start
+/// until their thread is done, even after a `timeout` gave up waiting: a
+/// client sending expensive templates with tiny timeouts can't pile up
+/// threads. The permit is back once the render reaches its fuel budget.
+#[tokio::test(flavor = "multi_thread")]
+async fn timed_out_renders_keep_their_permit_until_they_stop() {
+    let _alone = RENDER_PERMITS.lock().await;
+    let hass = Hass::new();
+    let (mut conn, mut rx) = bare_conn(&hass);
+    let heavy = "{% for i in range(100000) %}{% for j in range(100000) %}{% endfor %}{% endfor %}";
+    for id in 1..=3 {
+        handle(
+            &mut conn,
+            json!({"id": id, "type": "render_template", "template": heavy, "timeout": -1}),
+        );
+        settle(&mut conn).await;
+        let reply = sent(&mut rx);
+        assert_eq!(reply[0]["error"]["code"], "template_error", "{reply:?}");
+        assert!(
+            super::template::renders_free() < super::template::RENDERS_AT_ONCE,
+            "the render still runs and holds its permit"
+        );
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while super::template::renders_free() < super::template::RENDERS_AT_ONCE {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "renders never stopped"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// When a connection closes, its pending render is dropped: it never
+/// starts, sends nothing, and lets go of its template.
+#[tokio::test]
+async fn closing_drops_a_waiting_render() {
+    let _alone = RENDER_PERMITS.lock().await;
+    let hass = Hass::new();
+    let (mut conn, mut rx) = bare_conn(&hass);
+    // Every permit taken: the render waits for one.
+    let held = super::template::take_all_renders().await;
+    handle(
+        &mut conn,
+        json!({"id": 1, "type": "render_template", "template": "{{ 1 }}"}),
+    );
+    let template = conn.shared.templates.get("{{ 1 }}");
+    tokio::task::yield_now().await;
+    assert!(
+        std::sync::Arc::strong_count(&template) > 2,
+        "the render holds it"
+    );
+    conn.close();
+    drop(held);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        sent(&mut rx).is_empty(),
+        "nothing sent for a closed connection"
+    );
+    assert_eq!(
+        std::sync::Arc::strong_count(&template),
+        2,
+        "the cache and us"
+    );
+    assert!(conn.busy.is_none());
+}
+
+/// Rendering happens on a blocking thread: an expensive template (here
+/// one that runs to its fuel budget) doesn't hold up the async runtime,
+/// even a single-threaded one.
+#[tokio::test(flavor = "current_thread")]
+async fn renders_leave_the_runtime_free() {
+    let _alone = RENDER_PERMITS.lock().await;
+    let hass = Hass::new();
+    let (mut conn, mut rx) = bare_conn(&hass);
+    let ticks = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let counter = ticks.clone();
+    let ticker = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+    let heavy = "{% for i in range(100000) %}{% for j in range(100000) %}{% endfor %}{% endfor %}";
+    handle(
+        &mut conn,
+        json!({"id": 1, "type": "render_template", "template": heavy, "report_errors": true}),
+    );
+    settle(&mut conn).await;
+    ticker.abort();
+    let reply = sent(&mut rx);
+    assert!(
+        reply[0]["event"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("budget"),
+        "{reply:?}"
+    );
+    assert!(
+        ticks.load(std::sync::atomic::Ordering::Relaxed) > 2,
+        "the runtime kept running"
+    );
+}
+
+/// Only short templates are kept: 128 long ones would hold megabytes.
+#[tokio::test]
+async fn long_templates_are_not_kept() {
+    let _alone = RENDER_PERMITS.lock().await;
+    let hass = Hass::new();
+    let (mut conn, mut rx) = bare_conn(&hass);
+    let long = format!("{{{{ 1 }}}}{}", " ".repeat(9 * 1024));
+    for (id, template) in [(1, "{{ 1 }}".to_owned()), (2, long)] {
+        handle(
+            &mut conn,
+            json!({"id": id, "type": "render_template", "template": template}),
+        );
+        settle(&mut conn).await;
+    }
+    assert_eq!(sent(&mut rx).len(), 4);
+    assert_eq!(conn.shared.templates.len(), 1);
+}
+
+/// A client that sends a render and goes away while every render permit
+/// is taken: the connection still reads the close (it reads while busy),
+/// so the waiting render is dropped and never runs once permits come back.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_client_that_closes_while_its_render_waits_drops_it() {
+    let _alone = RENDER_PERMITS.lock().await;
+    let s = server().await;
+    let held = super::template::take_all_renders().await;
+    let mut c = Client::authed(&s, &token(&s.auth).0).await;
+    // Runs to its fuel budget, holding a permit, if it ever starts.
+    let heavy = "{% for i in range(100000) %}{% for j in range(100000) %}{% endfor %}{% endfor %}";
+    c.send(json!({"id": 2, "type": "render_template", "template": heavy}))
+        .await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    c.ws.close(None).await.unwrap();
+    drop(c);
+    // Well before a missed heartbeat (400 ms in tests) would end it anyway.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    drop(held);
+    let until = tokio::time::Instant::now() + Duration::from_millis(500);
+    while tokio::time::Instant::now() < until {
+        assert_eq!(
+            super::template::renders_free(),
+            super::template::RENDERS_AT_ONCE,
+            "the render of a closed connection started"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+/// A connection waiting for a render still answers heartbeats, so it isn't
+/// dropped as dead while the render waits for a permit.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_busy_connection_keeps_its_heartbeat() {
+    let _alone = RENDER_PERMITS.lock().await;
+    let s = server().await;
+    let held = super::template::take_all_renders().await;
+    let mut c = Client::authed(&s, &token(&s.auth).0).await;
+    c.send(json!({"id": 2, "type": "render_template", "template": "{{ 6 * 7 }}"}))
+        .await;
+    // Several heartbeats (200 ms in tests) pass before a permit is free;
+    // the client answers each ping as it waits.
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        drop(held);
+    });
+    assert_eq!(c.recv().await["success"], true);
+    assert_eq!(c.recv().await["event"]["result"], 42);
+}
+
+/// What waits behind a busy command is bounded: past it the client is
+/// cut off, as one that falls behind is.
+#[tokio::test]
+async fn the_queue_behind_a_busy_command_is_bounded() {
+    let _alone = RENDER_PERMITS.lock().await;
+    let hass = Hass::new();
+    let (mut conn, _rx) = bare_conn(&hass);
+    let held = super::template::take_all_renders().await;
+    assert!(conn.handle_frame(
+        &json!({"id": 1, "type": "render_template", "template": "{{ 1 }}"}).to_string()
+    ));
+    assert!(conn.busy.is_some());
+    let pings: Vec<Value> = (2..=super::MAX_QUEUED as u64 + 1)
+        .map(|id| json!({"id": id, "type": "ping"}))
+        .collect();
+    assert!(
+        conn.handle_frame(&Value::Array(pings).to_string()),
+        "up to the limit"
+    );
+    assert!(
+        !conn.handle_frame(&json!({"id": 5000, "type": "ping"}).to_string()),
+        "one more is too many"
+    );
+    drop(held);
+}
+
+/// The queue's byte limit counts what is waiting, not all that was ever
+/// sent: a client that keeps a small backlog behind busy commands can send
+/// any amount over time.
+#[tokio::test]
+async fn the_queue_counts_only_what_waits() {
+    let _alone = RENDER_PERMITS.lock().await;
+    let hass = Hass::new();
+    let (mut conn, _rx) = bare_conn(&hass);
+    let padding = "x".repeat(3 * 1024 * 1024);
+    let frame = |id: u64| {
+        json!([
+            {"id": id, "type": "render_template", "template": "{{ 1 }}"},
+            {"id": id + 1, "type": "ping", "pad": padding},
+        ])
+        .to_string()
+    };
+    // A render, then 3 MiB waiting behind it; the next frame comes in while
+    // the queue still holds the previous one's tail, again and again: 18
+    // MiB in all, never more than 6 MiB waiting.
+    assert!(conn.handle_frame(&frame(1)));
+    for id in (3..12).step_by(2) {
+        assert!(conn.handle_frame(&frame(id)), "frame {id}");
+        settle(&mut conn).await;
+    }
+    assert!(conn.queued_bytes < 7 * 1024 * 1024);
+}
+
+/// The tests that take or count render permits run one at a time.
+static RENDER_PERMITS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// HA has no admin or permission check on `render_template`.
+#[tokio::test]
+async fn read_only_users_render_templates() {
+    let _alone = RENDER_PERMITS.lock().await;
+    let s = server().await;
+    s.auth.add_user("reader", "pw").unwrap();
+    let client = "http://127.0.0.1:8123/";
+    let flow = s.auth.start_login_flow(client, None);
+    let code = s
+        .auth
+        .finish_login_flow(
+            &flow,
+            client,
+            &s.auth.check_password("reader", "pw").unwrap(),
+            None,
+        )
+        .unwrap();
+    let t = s
+        .auth
+        .exchange_code(Some(client), Some(&code), None)
+        .unwrap();
+    let id = s
+        .auth
+        .validate_access_token(&t.access_token, None)
+        .unwrap()
+        .user_id;
+    s.auth.set_user_groups(&id, &[ha_auth::GROUP_ID_READ_ONLY]);
+    let mut c = Client::authed(&s, &t.access_token).await;
+    let r = c
+        .call(json!({"id": 2, "type": "render_template", "template": "{{ 6 * 7 }}"}))
+        .await;
+    assert_eq!(r["success"], true);
+    assert_eq!(c.recv().await["event"]["result"], 42);
 }

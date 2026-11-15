@@ -22,6 +22,11 @@ rule have no script yet; they are listed
 | Generator | Writes | HA code it runs |
 |---|---|---|
 | `onboarding.py` | `ha-api/src/onboarding/vectors/` | HA 2026.6.1's core with `http`, `auth`, `websocket_api`, `person`, `sun`, `analytics`, `onboarding` and `config`'s `config/core/*` and `config_entries/*` commands, booted in a temporary directory: every call the onboarding pages make, the states and the `.storage` files left (aiohasupervisor 0.4.3, PyMetno 0.13.0) |
+| `render_template.py` | `ha-core/src/template/vectors/` (renders, `_parse_result`, the environment's names, and Jinja's filters and tests over values of every kind) and `ha-api/src/ws/vectors/render_template.json` (whole `render_template` conversations) | HA 2026.6.1's `helpers/template` and `websocket_api` `handle_render_template` on Jinja 3.1.6, on a fresh `HomeAssistant` per case |
+
+`render_template.py` writes two crates' vectors because they are two halves
+of one behaviour: the engine's answers and the command's messages around
+them.
 
 ## Writing one
 
@@ -56,6 +61,15 @@ python3.14 -m venv .venv-onboarding  # Python 3.14.2+ installed
 .venv-onboarding/bin/pip install homeassistant==2026.6.1 aiohasupervisor==0.4.3 PyMetno==0.13.0
 .venv-onboarding/bin/python -I scripts/vectors/onboarding.py
 cargo test -p ha-api onboarding
+```
+
+For `render_template.py` (HA's own requirements bring Jinja 3.1.6):
+
+```sh
+python3.14 -m venv .venv-template  # Python 3.14.2+ installed
+.venv-template/bin/pip install homeassistant==2026.6.1
+.venv-template/bin/python -I scripts/vectors/render_template.py
+cargo test -p ha-core template && cargo test -p ha-api render_template
 ```
 
 ## Skeleton

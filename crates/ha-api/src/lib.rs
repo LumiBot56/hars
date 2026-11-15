@@ -103,6 +103,8 @@ pub(crate) struct Shared {
     pub hass: Hass,
     pub auth: Auth,
     pub config: Arc<ApiConfig>,
+    /// `render_template`'s compiled templates.
+    pub templates: Arc<ws::template::Cache>,
     /// Held while the core config is read, changed and saved, so one
     /// update can't undo another.
     pub core_config: Arc<tokio::sync::Mutex<()>>,
@@ -196,6 +198,7 @@ pub fn router(hass: Hass, auth: Auth, config: &ApiConfig) -> Router {
         hass: hass.clone(),
         auth: auth.clone(),
         config: Arc::new(config.clone()),
+        templates: Default::default(),
         core_config: Arc::default(),
     };
     // HA registers the onboarding views only while a step is left
