@@ -488,6 +488,34 @@ TEMPLATES = [
     "{{ states.light.kitchen.attributes | length }} {{ states.light.kitchen.attributes.supported_color_modes | first }}",
     "{{ states.light | map(attribute='last_changed') | max }}",
     "{{ states.sensor.temperature.state | float | round(1) }} {{ states('sensor.power') | int(0) }}",
+    # PEP 495: between zones, a time whose offset depends on `fold` equals
+    # nothing; ordering is unaffected.
+    "{{ as_local(as_datetime('2026-10-25T01:30:00+00:00')) == as_datetime('2026-10-25T01:30:00+00:00') }}",
+    "{{ as_local(as_datetime('2026-10-25T01:30:00+00:00')) != as_datetime('2026-10-25T01:30:00+00:00') }}",
+    "{{ as_datetime('2026-10-25T01:30:00+00:00') == as_local(as_datetime('2026-10-25T01:30:00+00:00')) }}",
+    "{{ as_local(as_datetime('2026-10-25T00:30:00+00:00')) == as_datetime('2026-10-25T00:30:00+00:00') }}",
+    "{{ as_local(as_datetime('2026-10-25T00:30:00+00:00')) != as_datetime('2026-10-25T00:30:00+00:00') }}",
+    "{{ as_local(as_datetime('2026-10-25T01:30:00Z')) <= as_datetime('2026-10-25T01:30:00Z') }} {{ as_local(as_datetime('2026-10-25T01:30:00Z')) < as_datetime('2026-10-25T01:30:01Z') }}",
+    "{{ as_local(as_datetime('2026-10-25T02:30:00Z')) == as_datetime('2026-10-25T02:30:00Z') }}",
+    "{{ today_at('01:30') == as_datetime('2026-03-29T01:30:00Z') }} {{ today_at('01:30') != as_datetime('2026-03-29T01:30:00Z') }}",
+    # A state compared: `TemplateStateBase.__eq__` collects it.
+    "{{ states.light.kitchen == none }}",
+    "{{ states.light.kitchen != none }}",
+    "{{ none == states.light.kitchen }}",
+    "{{ states.light.kitchen == states.light.kitchen }}",
+    "{{ states.light.kitchen == states.light.porch }}",
+    "{{ states.light.kitchen == (states.light | first) }}",
+    "{{ states.light.kitchen in [states.light.kitchen] }}",
+    # `%j` past the end of the year.
+    "{{ strptime('2025 366', '%Y %j').isoformat() }} {{ strptime('2024 366', '%Y %j') }}",
+    # Multipliers too small to matter, and too large.
+    "{{ timedelta(seconds=1) * 1e-100 }} {{ timedelta(seconds=-1) * 1e-100 }} {{ timedelta(seconds=1) * -1e-100 }} {{ timedelta(seconds=1) * 5e-324 }}",
+    "{{ timedelta(seconds=1) / 1e300 }} {{ timedelta(seconds=-1) / 1e300 }} {{ timedelta(seconds=1) / -1e300 }}",
+    "{{ timedelta(microseconds=3) * 0.5 }} {{ timedelta(microseconds=1) * 0.5 }} {{ timedelta(days=1) * 1e-11 }} {{ timedelta(seconds=1) * 1e9 }}",
+    "{{ timedelta(seconds=1) * 1e300 }}",
+    "{{ timedelta(seconds=1) / 1e-300 }}",
+    "{{ timedelta(seconds=1) * 1e15 }}",
+    "{{ timedelta(days=999999999) * 2.0 }}",
 ]
 
 # Conversations against the home: messages sent on one connection, in order.

@@ -288,6 +288,20 @@ pub trait Object: fmt::Debug + Send + Sync {
         None
     }
 
+    /// hars patch: an attribute or item looked up by the engine (`x.y`,
+    /// `x[k]`), with the render's state, so an object can pay fuel for
+    /// what it copies before it copies it. `None` (the default) leaves the
+    /// lookup to [`get_value`](Self::get_value); `Some(Ok(None))` is a
+    /// missing key.
+    fn get_value_paid(
+        self: &Arc<Self>,
+        state: &State<'_, '_>,
+        key: &Value,
+    ) -> Option<Result<Option<Value>, Error>> {
+        let _ = (state, key);
+        None
+    }
+
     /// hars patch: an operator with this object on one side, as Python's
     /// operator methods (`__add__`, `__radd__`, `__eq__`, `__lt__`, …) do.
     /// `reflected` is true when the object is the right-hand side. `None`
@@ -973,6 +987,12 @@ type_erase! {
         ) -> Result<Value, Error>;
 
         fn custom_cmp(&self, other: &DynObject) -> Option<Ordering>;
+
+        fn get_value_paid(
+            &self,
+            state: &State<'_, '_>,
+            key: &Value
+        ) -> Option<Result<Option<Value>, Error>>;
 
         fn binop(&self, op: BinOp, other: &Value, reflected: bool) -> Option<Result<Value, Error>>;
 

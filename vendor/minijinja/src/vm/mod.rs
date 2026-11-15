@@ -450,6 +450,11 @@ impl<'env> Executor<'env> {
             #[cfg(feature = "fuel")]
             if let Some(ref tracker) = state.fuel_tracker {
                 ctx_ok!(tracker.track(instr));
+                // hars patch: fuel owed by objects' lookups.
+                let debt = crate::value::take_fuel_debt();
+                if debt > 0 {
+                    ctx_ok!(tracker.consume(debt));
+                }
                 let bytes = out.take_uncharged_bytes();
                 if bytes > 0 {
                     ctx_ok!(tracker.consume(fuel::cost_of(bytes, fuel::BYTE_COST)));
@@ -532,12 +537,20 @@ impl<'env> Executor<'env> {
                 }
                 Instruction::GetAttr(name) => {
                     a = stack.pop();
+                    // hars patch: an object may pay for what it copies first.
+                    let paid = a
+                        .as_object()
+                        .and_then(|o| o.get_value_paid(state, &Value::from(*name)));
                     // This is a common enough operation that it's interesting to consider a fast
                     // path here.  This is slightly faster than the regular attr lookup because we
                     // do not need to pass down the error object for the more common success case.
                     // Only when we cannot look up something, we start to consider the undefined
                     // special case.
-                    stack.push(match a.get_attr_fast(name) {
+                    let found = match paid {
+                        Some(rv) => ctx_ok!(rv),
+                        None => a.get_attr_fast(name),
+                    };
+                    stack.push(match found {
                         Some(value) => assert_valid!(value),
                         None => {
                             // hars patch: the embedder hears what was missing.
@@ -563,7 +576,12 @@ impl<'env> Executor<'env> {
                     a = stack.pop();
                     b = stack.pop();
                     ctx_ok!(ops::charge_fuel_for_get_item(state, &b, &a));
-                    stack.push(match b.get_item_opt(&a) {
+                    // hars patch: an object may pay for what it copies first.
+                    let found = match b.as_object().and_then(|o| o.get_value_paid(state, &a)) {
+                        Some(rv) => ctx_ok!(rv),
+                        None => b.get_item_opt(&a),
+                    };
+                    stack.push(match found {
                         Some(value) => assert_valid!(value),
                         None => {
                             // hars patch: the embedder hears what was missing.

@@ -289,8 +289,9 @@ How it is kept:
   the [roadmap](ROADMAP.md).
 - **One patched dependency.** `vendor/minijinja` is minijinja 3.1.0 with a
   change to its fuel accounting, so a template's budget covers everything
-  it makes, and two hooks: objects answering operators (Python's
-  `datetime` arithmetic) and the wording of a missing attribute's message
+  it makes, and hooks for objects: answering operators (Python's
+  `datetime` arithmetic), paying for what they copy (a state's
+  attributes), and wording a missing attribute's message
   ([`vendor/minijinja/HARS.md`](../vendor/minijinja/HARS.md));
   `[patch.crates-io]` in `Cargo.toml` points at it.
 

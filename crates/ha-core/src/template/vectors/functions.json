@@ -12372,5 +12372,663 @@
    "domains": [],
    "time": false
   }
+ },
+ {
+  "template": "{{ as_local(as_datetime('2026-10-25T01:30:00+00:00')) == as_datetime('2026-10-25T01:30:00+00:00') }}",
+  "strict": false,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ as_local(as_datetime('2026-10-25T01:30:00+00:00')) == as_datetime('2026-10-25T01:30:00+00:00') }}",
+  "strict": true,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ as_local(as_datetime('2026-10-25T01:30:00+00:00')) != as_datetime('2026-10-25T01:30:00+00:00') }}",
+  "strict": false,
+  "result": {
+   "json": true
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ as_local(as_datetime('2026-10-25T01:30:00+00:00')) != as_datetime('2026-10-25T01:30:00+00:00') }}",
+  "strict": true,
+  "result": {
+   "json": true
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ as_datetime('2026-10-25T01:30:00+00:00') == as_local(as_datetime('2026-10-25T01:30:00+00:00')) }}",
+  "strict": false,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ as_datetime('2026-10-25T01:30:00+00:00') == as_local(as_datetime('2026-10-25T01:30:00+00:00')) }}",
+  "strict": true,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ as_local(as_datetime('2026-10-25T00:30:00+00:00')) == as_datetime('2026-10-25T00:30:00+00:00') }}",
+  "strict": false,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ as_local(as_datetime('2026-10-25T00:30:00+00:00')) == as_datetime('2026-10-25T00:30:00+00:00') }}",
+  "strict": true,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ as_local(as_datetime('2026-10-25T00:30:00+00:00')) != as_datetime('2026-10-25T00:30:00+00:00') }}",
+  "strict": false,
+  "result": {
+   "json": true
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ as_local(as_datetime('2026-10-25T00:30:00+00:00')) != as_datetime('2026-10-25T00:30:00+00:00') }}",
+  "strict": true,
+  "result": {
+   "json": true
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ as_local(as_datetime('2026-10-25T01:30:00Z')) <= as_datetime('2026-10-25T01:30:00Z') }} {{ as_local(as_datetime('2026-10-25T01:30:00Z')) < as_datetime('2026-10-25T01:30:01Z') }}",
+  "strict": false,
+  "result": {
+   "json": "True True"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ as_local(as_datetime('2026-10-25T01:30:00Z')) <= as_datetime('2026-10-25T01:30:00Z') }} {{ as_local(as_datetime('2026-10-25T01:30:00Z')) < as_datetime('2026-10-25T01:30:01Z') }}",
+  "strict": true,
+  "result": {
+   "json": "True True"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ as_local(as_datetime('2026-10-25T02:30:00Z')) == as_datetime('2026-10-25T02:30:00Z') }}",
+  "strict": false,
+  "result": {
+   "json": true
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ as_local(as_datetime('2026-10-25T02:30:00Z')) == as_datetime('2026-10-25T02:30:00Z') }}",
+  "strict": true,
+  "result": {
+   "json": true
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ today_at('01:30') == as_datetime('2026-03-29T01:30:00Z') }} {{ today_at('01:30') != as_datetime('2026-03-29T01:30:00Z') }}",
+  "strict": false,
+  "result": {
+   "json": "False True"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": true
+  }
+ },
+ {
+  "template": "{{ today_at('01:30') == as_datetime('2026-03-29T01:30:00Z') }} {{ today_at('01:30') != as_datetime('2026-03-29T01:30:00Z') }}",
+  "strict": true,
+  "result": {
+   "json": "False True"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": true
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen == none }}",
+  "strict": false,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen == none }}",
+  "strict": true,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen != none }}",
+  "strict": false,
+  "result": {
+   "json": true
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen != none }}",
+  "strict": true,
+  "result": {
+   "json": true
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ none == states.light.kitchen }}",
+  "strict": false,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ none == states.light.kitchen }}",
+  "strict": true,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen == states.light.kitchen }}",
+  "strict": false,
+  "result": {
+   "json": true
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen == states.light.kitchen }}",
+  "strict": true,
+  "result": {
+   "json": true
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen == states.light.porch }}",
+  "strict": false,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen",
+    "light.porch"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen == states.light.porch }}",
+  "strict": true,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen",
+    "light.porch"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen == (states.light | first) }}",
+  "strict": false,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [
+    "light"
+   ],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen == (states.light | first) }}",
+  "strict": true,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [
+    "light"
+   ],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen in [states.light.kitchen] }}",
+  "strict": false,
+  "result": {
+   "json": true
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen in [states.light.kitchen] }}",
+  "strict": true,
+  "result": {
+   "json": true
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ strptime('2025 366', '%Y %j').isoformat() }} {{ strptime('2024 366', '%Y %j') }}",
+  "strict": false,
+  "result": {
+   "json": "2026-01-01T00:00:00 2024-12-31 00:00:00"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ strptime('2025 366', '%Y %j').isoformat() }} {{ strptime('2024 366', '%Y %j') }}",
+  "strict": true,
+  "result": {
+   "json": "2026-01-01T00:00:00 2024-12-31 00:00:00"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ timedelta(seconds=1) * 1e-100 }} {{ timedelta(seconds=-1) * 1e-100 }} {{ timedelta(seconds=1) * -1e-100 }} {{ timedelta(seconds=1) * 5e-324 }}",
+  "strict": false,
+  "result": {
+   "json": "0:00:00 0:00:00 0:00:00 0:00:00"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ timedelta(seconds=1) * 1e-100 }} {{ timedelta(seconds=-1) * 1e-100 }} {{ timedelta(seconds=1) * -1e-100 }} {{ timedelta(seconds=1) * 5e-324 }}",
+  "strict": true,
+  "result": {
+   "json": "0:00:00 0:00:00 0:00:00 0:00:00"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ timedelta(seconds=1) / 1e300 }} {{ timedelta(seconds=-1) / 1e300 }} {{ timedelta(seconds=1) / -1e300 }}",
+  "strict": false,
+  "result": {
+   "json": "0:00:00 0:00:00 0:00:00"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ timedelta(seconds=1) / 1e300 }} {{ timedelta(seconds=-1) / 1e300 }} {{ timedelta(seconds=1) / -1e300 }}",
+  "strict": true,
+  "result": {
+   "json": "0:00:00 0:00:00 0:00:00"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ timedelta(microseconds=3) * 0.5 }} {{ timedelta(microseconds=1) * 0.5 }} {{ timedelta(days=1) * 1e-11 }} {{ timedelta(seconds=1) * 1e9 }}",
+  "strict": false,
+  "result": {
+   "json": "0:00:00.000002 0:00:00 0:00:00.000001 11574 days, 1:46:40"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ timedelta(microseconds=3) * 0.5 }} {{ timedelta(microseconds=1) * 0.5 }} {{ timedelta(days=1) * 1e-11 }} {{ timedelta(seconds=1) * 1e9 }}",
+  "strict": true,
+  "result": {
+   "json": "0:00:00.000002 0:00:00 0:00:00.000001 11574 days, 1:46:40"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ timedelta(seconds=1) * 1e300 }}",
+  "strict": false,
+  "error": "OverflowError: Python int too large to convert to C int",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ timedelta(seconds=1) * 1e300 }}",
+  "strict": true,
+  "error": "OverflowError: Python int too large to convert to C int",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ timedelta(seconds=1) / 1e-300 }}",
+  "strict": false,
+  "error": "OverflowError: Python int too large to convert to C int",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ timedelta(seconds=1) / 1e-300 }}",
+  "strict": true,
+  "error": "OverflowError: Python int too large to convert to C int",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ timedelta(seconds=1) * 1e15 }}",
+  "strict": false,
+  "error": "OverflowError: Python int too large to convert to C int",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ timedelta(seconds=1) * 1e15 }}",
+  "strict": true,
+  "error": "OverflowError: Python int too large to convert to C int",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ timedelta(days=999999999) * 2.0 }}",
+  "strict": false,
+  "error": "OverflowError: days=1999999998; must have magnitude <= 999999999",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ timedelta(days=999999999) * 2.0 }}",
+  "strict": true,
+  "error": "OverflowError: days=1999999998; must have magnitude <= 999999999",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
  }
 ]

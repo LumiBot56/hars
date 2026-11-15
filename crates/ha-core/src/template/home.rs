@@ -9,22 +9,22 @@
 //! [`Home`], the time zone, what was read, and a sorted snapshot of the
 //! state machine taken the first time a template iterates or counts states
 //! (one `Arc` per state, no copies). Single lookups read the state machine
-//! itself. Each state's attributes are converted to template values at most
-//! once per render.
+//! itself. A state's attributes are never copied as a whole: each value is
+//! copied when it is read, and paid for (its size) before it is.
 //!
 //! Deliberate differences: iterating `states` (or a domain) goes in
 //! entity id order (HA: the order entities were added); `context` reads
 //! only `id`, `user_id` and `parent_id`; `as_dict` and the other methods of
 //! HA's `State` aren't served (an error, not a value).
 
+use super::Charged;
 use super::jinja::{py_eq, py_error, type_name};
-use super::{Charged, Dict};
 use crate::{EntityId, Hass, State as HaState};
-use minijinja::value::{Enumerator, Object, ObjectRepr, Value, ValueKind};
+use minijinja::value::{BinOp, Enumerator, Object, ObjectExt, ObjectRepr, Value, ValueKind};
 use minijinja::{Environment, Error, ErrorKind, State};
 use smol_str::SmolStr;
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
@@ -94,7 +94,6 @@ struct Ctx {
     /// attribute lookup, a comparison), and the log's length then.
     poison: Option<(String, usize)>,
     snapshot: Option<Arc<[Arc<HaState>]>>,
-    attributes: HashMap<usize, (Arc<HaState>, Value)>,
 }
 
 thread_local! {
@@ -235,22 +234,111 @@ fn lookup(hass: &Hass, entity_id: &str) -> Option<Arc<HaState>> {
     state
 }
 
-/// The attributes as a template value, converted once per render.
-fn attributes(state: &Arc<HaState>) -> Value {
-    let key = Arc::as_ptr(state) as usize;
-    if let Some(v) = CTX.with_borrow(|c| c.attributes.get(&key).map(|(_, v)| v.clone())) {
-        return v;
-    }
-    let v = Value::from_object(Dict {
-        entries: super::convert_map(&state.attributes),
-        root: false,
-        type_name: READ_ONLY_DICT,
-    });
-    CTX.with_borrow_mut(|c| c.attributes.insert(key, (state.clone(), v.clone())));
-    v
-}
+/// A state's attributes (`ReadOnlyDict`), sharing the state: a value is
+/// made from the state's JSON when it is read, paid for first.
+#[derive(Debug)]
+pub(super) struct Attributes(Arc<HaState>);
 
 const READ_ONLY_DICT: &str = "homeassistant.util.read_only_dict.ReadOnlyDict object";
+
+/// The fuel a copy of `v` costs: one per value and per 64 bytes of
+/// strings, as the engine charges what it makes. Stops counting past a
+/// render's whole budget.
+fn json_cost(v: &serde_json::Value) -> u64 {
+    let mut cost = 0u64;
+    let mut pending = vec![v];
+    while let Some(v) = pending.pop() {
+        cost += 1;
+        if cost > super::FUEL {
+            break;
+        }
+        match v {
+            serde_json::Value::String(s) => cost += s.len() as u64 / 64,
+            serde_json::Value::Array(items) => pending.extend(items),
+            serde_json::Value::Object(m) => {
+                for (k, item) in m {
+                    cost += k.len() as u64 / 64;
+                    pending.push(item);
+                }
+            }
+            _ => {}
+        }
+    }
+    cost
+}
+
+impl Attributes {
+    /// The value at `key`, if there is one (and its cost).
+    fn find(&self, key: &Value) -> Option<&serde_json::Value> {
+        key.as_str()
+            .filter(|_| key.kind() == ValueKind::String)
+            .and_then(|k| self.0.attributes.get(k))
+    }
+
+    fn missing(key: &Value) {
+        let mut message = String::new();
+        match key.as_str().filter(|_| key.kind() == ValueKind::String) {
+            Some(name) => {
+                message.push('\'');
+                message.push_str(READ_ONLY_DICT);
+                message.push_str("' has no attribute ");
+                crate::py::repr_str(&mut message, name);
+            }
+            None => {
+                message.push_str(READ_ONLY_DICT);
+                message.push_str(" has no element ");
+                message.push_str(&key.to_string());
+            }
+        }
+        super::note_miss(message);
+    }
+}
+
+impl Object for Attributes {
+    fn repr(self: &Arc<Self>) -> ObjectRepr {
+        ObjectRepr::Map
+    }
+
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        match self.find(key) {
+            Some(v) => {
+                // Read by a filter: paid before the next instruction.
+                minijinja::value::charge_later(json_cost(v));
+                Some(super::convert(v))
+            }
+            None => {
+                Attributes::missing(key);
+                None
+            }
+        }
+    }
+
+    fn get_value_paid(
+        self: &Arc<Self>,
+        state: &State<'_, '_>,
+        key: &Value,
+    ) -> Option<Result<Option<Value>, Error>> {
+        Some(match self.find(key) {
+            Some(v) => state
+                .consume_fuel(json_cost(v))
+                .map(|()| Some(super::convert(v))),
+            None => {
+                Attributes::missing(key);
+                Ok(None)
+            }
+        })
+    }
+
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        self.mapped_enumerator(|this| {
+            Box::new(this.0.attributes.keys().map(|k| Value::from(k.as_str())))
+        })
+    }
+
+    fn enumerator_len(self: &Arc<Self>) -> Option<usize> {
+        Some(self.0.attributes.len())
+    }
+}
 
 /// `valid_domain`.
 fn valid_domain(s: &str) -> bool {
@@ -517,7 +605,7 @@ impl Object for TemplateState {
         let v = match name {
             "entity_id" => return Some(Value::from(s.entity_id.as_str())),
             "state" => Value::from(s.state.as_str()),
-            "attributes" => attributes(s),
+            "attributes" => Value::from_object(Attributes(s.clone())),
             "last_changed" => TemplateState::timestamp(s.last_changed),
             "last_updated" => TemplateState::timestamp(s.last_updated),
             "last_reported" => TemplateState::timestamp(s.last_reported.get()),
@@ -544,6 +632,30 @@ impl Object for TemplateState {
         };
         self.collect();
         Some(v)
+    }
+
+    /// `TemplateStateBase.__eq__` reads the state (collecting it) and asks
+    /// `State`, which has no `__eq__`: Python falls back to identity, and
+    /// HA hands out one cached object per state (one for iterating, one
+    /// for lookups).
+    fn binop(
+        self: &Arc<Self>,
+        op: BinOp,
+        other: &Value,
+        _reflected: bool,
+    ) -> Option<Result<Value, Error>> {
+        if !matches!(op, BinOp::Eq | BinOp::Ne) {
+            return None;
+        }
+        self.collect();
+        let same = match other.downcast_object_ref::<TemplateState>() {
+            Some(o) => {
+                o.collect();
+                Arc::ptr_eq(&o.state, &self.state) && o.collect == self.collect
+            }
+            None => false,
+        };
+        Some(Ok(Value::from(same == (op == BinOp::Eq))))
     }
 
     fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -642,8 +754,10 @@ pub(super) fn py_repr<W: fmt::Write>(
     }
     if let Some(t) = o.downcast_ref::<TemplateState>() {
         // Its size is the state's: paid before it is built.
-        let size = t.state.attributes.len() * 16 + t.state.state.len() + 64;
-        if let Err(e) = out.state.consume_fuel(size as u64 / 64) {
+        let size = t.state.attributes.values().map(json_cost).sum::<u64>()
+            + t.state.state.len() as u64 / 64
+            + 1;
+        if let Err(e) = out.state.consume_fuel(size) {
             return Some(Err(e));
         }
         let mut s = String::new();
@@ -717,16 +831,17 @@ fn states_call(state: &State, args: &[Value]) -> Result<Value, Error> {
     Ok(Value::from(s.state.as_str()))
 }
 
-/// The attribute `name` of a state, if it has it (`attributes.get`).
-fn attribute(s: &Arc<HaState>, name: &Value) -> Result<Option<Value>, Error> {
+/// The attribute `name` of a state, if it has it (`attributes.get`),
+/// paid for before it is copied.
+fn attribute(state: &State, s: &Arc<HaState>, name: &Value) -> Result<Option<Value>, Error> {
     match name.kind() {
-        ValueKind::String => {
-            let key = name.as_str().unwrap_or_default();
-            if !s.attributes.contains_key(key) {
-                return Ok(None);
+        ValueKind::String => match s.attributes.get(name.as_str().unwrap_or_default()) {
+            Some(v) => {
+                state.consume_fuel(json_cost(v))?;
+                Ok(Some(super::convert(v)))
             }
-            Ok(attributes(s).get_item(name).ok())
-        }
+            None => Ok(None),
+        },
         ValueKind::Seq | ValueKind::Map => Err(py_error(format!(
             "TypeError: unhashable type: '{}'",
             type_name(name)
@@ -788,7 +903,7 @@ pub(super) fn add(env: &mut Environment<'static>) {
             return Ok(Value::from(()));
         };
         collect_entity(s.entity_id.as_str());
-        Ok(attribute(&s, &name)?.unwrap_or_else(|| Value::from(())))
+        Ok(attribute(state, &s, &name)?.unwrap_or_else(|| Value::from(())))
     };
     env.add_function("state_attr", state_attr);
     env.add_filter("state_attr", state_attr);
@@ -809,7 +924,7 @@ pub(super) fn add(env: &mut Environment<'static>) {
             return Ok(false);
         };
         collect_entity(s.entity_id.as_str());
-        match attribute(&s, &name)? {
+        match attribute(state, &s, &name)? {
             Some(attr) => py_eq(state, &attr, &value),
             None => Ok(false),
         }

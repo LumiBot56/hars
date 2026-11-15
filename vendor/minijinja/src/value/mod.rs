@@ -237,6 +237,22 @@ pub use crate::value::ops::object_binop;
 /// message. Set once.
 static MISSING: std::sync::OnceLock<fn(&Value, &Value)> = std::sync::OnceLock::new();
 
+std::thread_local! {
+    static FUEL_DEBT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// hars patch: fuel owed for work done where no render state is at hand
+/// (an object's [`get_value`](Object::get_value) called by a filter): the
+/// render on this thread pays it before its next instruction.
+pub fn charge_later(units: u64) {
+    FUEL_DEBT.with(|d| d.set(d.get().saturating_add(units)));
+}
+
+/// hars patch: the fuel owed, cleared.
+pub(crate) fn take_fuel_debt() -> u64 {
+    FUEL_DEBT.with(|d| d.replace(0))
+}
+
 /// hars patch: sets the hook [`missing`] calls.
 pub fn set_missing_hook(hook: fn(&Value, &Value)) {
     let _ = MISSING.set(hook);

@@ -1067,6 +1067,42 @@ fn functions_stop_at_the_budget() {
     }
 }
 
+/// A state's attributes are read in place: a value is paid for (its size)
+/// before it is copied, by attribute syntax and by filters, so a loop over
+/// states holding large attributes stops at the budget instead of copying
+/// them all.
+#[test]
+fn large_attributes_are_paid_for() {
+    let hass = crate::Hass::new();
+    for i in 0..64 {
+        let id = crate::EntityId::parse(&format!("sensor.big{i}")).unwrap();
+        let attributes = json!({"data": "x".repeat(1_000_000), "n": i});
+        hass.set_state(id, "on", attributes.as_object().unwrap().clone());
+    }
+    let home = Home::new(hass);
+    for source in [
+        "{% for s in states.sensor %}{% if s.attributes.data is defined %}x{% endif %}{% endfor %}",
+        "{% for s in states.sensor %}{% if s.attributes['data'] is defined %}x{% endif %}{% endfor %}",
+        "{% for s in states.sensor %}{{ state_attr(s.entity_id, 'data') | length }}{% endfor %}",
+        "{{ states.sensor | selectattr('attributes.data', 'defined') | list | count }}",
+        "{% for s in states.sensor %}{{ s.attributes | length }}{{ s | string | length }}{% endfor %}",
+    ] {
+        let err = Template::new(source)
+            .render_in(Some(&home), None, false)
+            .result
+            .unwrap_err();
+        assert!(err.0.contains("budget"), "{source}: {err}");
+    }
+    // Small reads cost little: the same loop over a small attribute.
+    let r = Template::new("{% for s in states.sensor %}{{ s.attributes.n }},{% endfor %}")
+        .render_in(Some(&home), None, false);
+    assert!(r.result.is_ok(), "{:?}", r.result);
+    assert!(
+        r.info.domains.contains("sensor") && r.info.entities.is_empty(),
+        "iterated states don't collect"
+    );
+}
+
 /// The edges of HA's numbers and times: an answer or Python's error,
 /// never a panic or a hang.
 #[test]

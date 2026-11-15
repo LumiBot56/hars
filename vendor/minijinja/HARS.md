@@ -46,8 +46,9 @@ The changes, each marked `hars patch` in the source:
   `groupby`, `first`, `last` and `length` are public (`#[doc(hidden)]`), so
   hars's wrappers around them keep the fuel accounting.
 
-Two hooks for HA's template values (Python's `datetime` and `timedelta`,
-and the messages of HA's undefined values):
+Three hooks for HA's template values (Python's `datetime` and `timedelta`,
+the messages of HA's undefined values, and paying for a state's
+attributes as they are read):
 
 - `src/value/object.rs` `Object::binop` and `BinOp`, `src/value/ops.rs`
   `object_binop` (re-exported from `value`), and `src/vm/mod.rs`'s
@@ -60,6 +61,11 @@ and the messages of HA's undefined values):
   `GetAttr` and `GetItem` when a defined value hasn't got the attribute
   or item: hars words Jinja's undefined message from it (`'None' has no
   attribute 'state'`).
+- `src/value/object.rs` `Object::get_value_paid`, used by `src/vm/mod.rs`'s
+  `GetAttr` and `GetItem`, and `src/value/mod.rs` `charge_later`, drained
+  before each instruction in `src/vm/mod.rs`: an object that copies data
+  it holds (a state's attributes) pays its fuel before the copy when the
+  engine looks it up, and right after when a filter does.
 
 To update minijinja: copy the new release here, reapply the changes, and
 run `cargo test -p ha-core template` (and, optimised,

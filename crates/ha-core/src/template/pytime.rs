@@ -384,6 +384,12 @@ impl TimeDelta {
     /// Checked against `timedelta`'s range, with its message.
     pub fn new(us: i128) -> Result<TimeDelta, Error> {
         let days = us.div_euclid(i128::from(US_PER_DAY));
+        // `microseconds_to_delta_ex`: the days must fit a C int first.
+        if i32::try_from(days).is_err() {
+            return Err(py_error(
+                "OverflowError: Python int too large to convert to C int".into(),
+            ));
+        }
         if days.abs() > i128::from(MAX_DAYS) {
             return Err(overflow_days(days));
         }
@@ -480,17 +486,13 @@ fn div_round_half_even(a: i128, b: i128) -> Option<i128> {
     })
 }
 
-/// A float as an exact fraction `n / d`, `d` a power of two (or `None`
-/// for infinities, NaN, and magnitudes past `i128`).
-fn as_ratio(x: f64) -> Option<(i128, i128)> {
-    if !x.is_finite() {
-        return None;
-    }
+/// A finite float as `m · 2**e`, `m` an odd (or zero) integer with its
+/// sign: `float.as_integer_ratio()` without the big integers.
+fn mantissa_exponent(x: f64) -> (i128, i32) {
     if x == 0.0 {
-        return Some((0, 1));
+        return (0, 0);
     }
     let bits = x.to_bits();
-    let sign: i128 = if bits >> 63 == 1 { -1 } else { 1 };
     let exp = ((bits >> 52) & 0x7ff) as i32;
     let frac = bits & ((1 << 52) - 1);
     let (mut m, mut e) = if exp == 0 {
@@ -498,21 +500,41 @@ fn as_ratio(x: f64) -> Option<(i128, i128)> {
     } else {
         (i128::from(frac | (1 << 52)), exp - 1075)
     };
-    while m % 2 == 0 && e < 0 {
+    while m % 2 == 0 {
         m /= 2;
         e += 1;
     }
-    if e >= 0 {
-        if e > 70 {
-            return None;
-        }
-        Some((sign * (m << e), 1))
-    } else {
-        if -e > 120 {
-            return None;
-        }
-        Some((sign * m, 1i128 << (-e)))
+    (if bits >> 63 == 1 { -m } else { m }, e)
+}
+
+/// `us * x` (or `us / x`) rounded half to even, exactly, as CPython does
+/// with `x.as_integer_ratio()` and big integers: `None` when the result is
+/// past what a timedelta can hold. `x` is finite (and not zero to divide).
+fn scale(us: i128, x: f64, divide: bool) -> Option<i128> {
+    let (m, e) = mantissa_exponent(x);
+    if us == 0 || m == 0 {
+        return Some(0);
     }
+    // `|us| < 2**67` and `|m| < 2**53`: their product fits; a power of two
+    // past 2**126 makes the result too large, or rounds it to zero.
+    let pow = |k: i32| -> Option<i128> { (k <= 126).then(|| 1i128 << k) };
+    let (num, den) = match (divide, e >= 0) {
+        // us · m · 2**e
+        (false, true) => (us.checked_mul(m)?.checked_mul(pow(e)?)?, 1),
+        // us · m / 2**-e
+        (false, false) => match pow(-e) {
+            Some(d) => (us.checked_mul(m)?, d),
+            None => return Some(0),
+        },
+        // us · 2**-e / m
+        (true, false) => (us.checked_mul(pow(-e)?)?, m),
+        // us / (m · 2**e)
+        (true, true) => match pow(e).and_then(|p| p.checked_mul(m)) {
+            Some(d) => (us, d),
+            None => return Some(0),
+        },
+    };
+    div_round_half_even(num, den)
 }
 
 impl Object for TimeDelta {
@@ -728,14 +750,14 @@ fn timedelta_op(td: &TimeDelta, op: BinOp, other: &Value, reflected: bool) -> Re
                 };
             }
             if let Some(x) = as_float(other) {
-                let (n, d) = as_ratio(x).ok_or_else(|| {
-                    py_error(if x.is_nan() {
+                if !x.is_finite() {
+                    return Err(py_error(if x.is_nan() {
                         "ValueError: cannot convert NaN to integer ratio".into()
                     } else {
                         "OverflowError: cannot convert Infinity to integer ratio".into()
-                    })
-                })?;
-                return match td.0.checked_mul(n).and_then(|p| div_round_half_even(p, d)) {
+                    }));
+                }
+                return match scale(td.0, x, false) {
                     Some(us) => TimeDelta::value(us),
                     None => Err(py_error(
                         "OverflowError: Python int too large to convert to C int".into(),
@@ -770,10 +792,14 @@ fn timedelta_op(td: &TimeDelta, op: BinOp, other: &Value, reflected: bool) -> Re
                 if x == 0.0 {
                     return Err(py_error("ZeroDivisionError: division by zero".into()));
                 }
-                let (n, d) = as_ratio(x).ok_or_else(|| {
-                    py_error("ValueError: cannot convert NaN to integer ratio".into())
-                })?;
-                return match td.0.checked_mul(d).and_then(|p| div_round_half_even(p, n)) {
+                if !x.is_finite() {
+                    return Err(py_error(if x.is_nan() {
+                        "ValueError: cannot convert NaN to integer ratio".into()
+                    } else {
+                        "OverflowError: cannot convert Infinity to integer ratio".into()
+                    }));
+                }
+                return match scale(td.0, x, true) {
                     Some(us) => TimeDelta::value(us),
                     None => Err(py_error(
                         "OverflowError: Python int too large to convert to C int".into(),
@@ -1333,6 +1359,21 @@ impl Object for DateTime {
     }
 }
 
+/// Both aware with the same `tzinfo` (Python's identity test).
+fn same_zone(a: &DateTime, b: &DateTime) -> bool {
+    match (&a.tz, &b.tz) {
+        (Some(x), Some(y)) => x.same(y),
+        _ => true,
+    }
+}
+
+/// Whether flipping `fold` would change the UTC offset.
+fn fold_matters(dt: &DateTime) -> bool {
+    dt.tz
+        .as_ref()
+        .is_some_and(|tz| tz.offset(&dt.wall, dt.fold) != tz.offset(&dt.wall, !dt.fold))
+}
+
 /// Python's ordering of two datetimes; naive against aware raises.
 fn datetime_order(a: &DateTime, b: &DateTime) -> Result<Ordering, String> {
     match (&a.tz, &b.tz) {
@@ -1354,6 +1395,15 @@ fn datetime_op(dt: &DateTime, op: BinOp, other: &Value, reflected: bool) -> Resu
         if let Some(o) = other.downcast_object_ref::<DateTime>() {
             let (a, b) = if reflected { (o, dt) } else { (dt, o) };
             return match datetime_order(a, b) {
+                // PEP 495: between zones, a time whose offset depends on
+                // `fold` equals nothing (`pep495_eq_exception`).
+                Ok(Ordering::Equal)
+                    if matches!(op, BinOp::Eq | BinOp::Ne)
+                        && !same_zone(a, b)
+                        && (fold_matters(a) || fold_matters(b)) =>
+                {
+                    Ok(Value::from(op == BinOp::Ne))
+                }
                 Ok(ord) => Ok(compare(op, ord)),
                 Err(_) if matches!(op, BinOp::Eq | BinOp::Ne) => Ok(Value::from(op == BinOp::Ne)),
                 Err(e) => Err(py_error(e)),
@@ -2777,12 +2827,12 @@ pub(super) fn strptime(
             _ => {}
         }
     }
-    let year = year.unwrap_or(if month == 2 && day == 29 { 1904 } else { 1900 });
+    let mut year = year.unwrap_or(if month == 2 && day == 29 { 1904 } else { 1900 });
     let leap_fix = found.iter().all(|(k, _)| !matches!(k, 'y' | 'Y')) && month == 2 && day == 29;
     if let Some(j) = julian {
-        let base = days_from_civil(year, 1, 1) + j - 1;
-        let (y, m, d) = civil_from_days(base);
-        let _ = y;
+        // `date.fromordinal`: day 366 of a common year is next year's first.
+        let (y, m, d) = civil_from_days(days_from_civil(year, 1, 1) + j - 1);
+        year = y;
         month = i64::from(m);
         day = i64::from(d);
     } else if Naive::new(year, month, day, 0, 0, 0, 0).is_err() {

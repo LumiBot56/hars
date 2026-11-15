@@ -805,6 +805,7 @@ fn missing_attribute(parent: &Value, key: &Value) {
     if let Some(o) = parent.as_object() {
         let own = o.downcast_ref::<Dict>().is_some()
             || o.downcast_ref::<home::TemplateState>().is_some()
+            || o.downcast_ref::<home::Attributes>().is_some()
             || o.downcast_ref::<home::AllStates>().is_some()
             || o.downcast_ref::<home::DomainStates>().is_some()
             || o.downcast_ref::<home::Context>().is_some()
