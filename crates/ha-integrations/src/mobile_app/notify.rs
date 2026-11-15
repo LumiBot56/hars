@@ -74,6 +74,23 @@ struct ChannelMap {
     opens: u64,
 }
 
+/// A delayed open's entry in [`ChannelMap::latest`], removed when the
+/// opening ends if it is still the latest.
+struct Latest {
+    channels: Channels,
+    webhook_id: Arc<str>,
+    generation: u64,
+}
+
+impl Drop for Latest {
+    fn drop(&mut self) {
+        let mut channels = self.channels.lock();
+        if channels.latest.get(&self.webhook_id) == Some(&self.generation) {
+            channels.latest.remove(&self.webhook_id);
+        }
+    }
+}
+
 impl std::ops::Deref for ChannelMap {
     type Target = HashMap<Arc<str>, Arc<PushChannel>>;
     fn deref(&self) -> &Self::Target {
@@ -464,13 +481,22 @@ impl Notifier {
             .and_then(|old| old.teardown_locked(&mut channels))
             .unwrap_or_default();
         if pending.is_empty() {
+            // Registered now: no open is on its way any more (an older one
+            // still waiting finds no entry and stands down).
+            channels.latest.remove(&webhook_id);
             channels.insert(webhook_id, channel.clone());
             return (channel, None);
         }
         drop(channels);
-        let channels = self.channels.clone();
         let new = channel.clone();
         let cloud = self.cloud.clone();
+        // Clears this open's entry however the opening ends (done, failed or
+        // dropped), unless a newer open has replaced it.
+        let latest = Latest {
+            channels: self.channels.clone(),
+            webhook_id,
+            generation,
+        };
         let opening = Box::pin(async move {
             if let Err(e) = run_fallbacks(&cloud, pending).await {
                 new.mark_torn_down();
@@ -479,14 +505,18 @@ impl Notifier {
             // Unless the app gave up on it meanwhile, or opened another
             // since, registered or still on its way (the newest open wins;
             // HA would overwrite a newer channel without tearing it down).
-            let mut channels = channels.lock();
+            let mut channels = latest.channels.lock();
             let mut state = new.state.lock();
-            let newest = channels.latest.get(&webhook_id) == Some(&generation);
+            let newest = channels.latest.get(&latest.webhook_id) == Some(&latest.generation);
             if !state.torn_down && newest {
-                channels.insert(webhook_id, new.clone());
+                channels.insert(latest.webhook_id.clone(), new.clone());
             } else {
                 state.torn_down = true;
             }
+            // Before `latest` drops, which takes the map lock again.
+            drop(state);
+            drop(channels);
+            drop(latest);
             Ok(())
         });
         (channel, Some(opening))
@@ -1365,6 +1395,46 @@ mod tests {
         notify(&hass, 2).await;
         assert_eq!(c.events.lock().len(), 1);
         assert!(a.events.lock().is_empty());
+        assert!(
+            n.channels.lock().latest.is_empty(),
+            "no open left on its way"
+        );
+    }
+
+    /// Opens leave nothing behind in `latest`, whether they register at
+    /// once, after their fallbacks, or their opening is dropped unrun.
+    #[tokio::test]
+    async fn opens_leave_no_generation_behind() {
+        let relay = Arc::new(Gated::default());
+        let (gate, wait) = tokio::sync::oneshot::channel();
+        relay.0.lock().push_back(wait);
+        let (hass, n) = phone_notifier_with(relay);
+        let probe = || Arc::new(Probe::default());
+
+        let (_, none) = open(&n, true, &probe());
+        assert!(none.is_none());
+        assert!(n.channels.lock().latest.is_empty());
+
+        notify(&hass, 0).await;
+        let (_, opening) = open(&n, true, &probe());
+        let opening = opening.expect("a message pending");
+        assert_eq!(n.channels.lock().latest.len(), 1);
+        drop(opening);
+        assert!(n.channels.lock().latest.is_empty(), "dropped unrun");
+
+        // Nothing is registered now, so this one registers at once.
+        let (_, none) = open(&n, true, &probe());
+        assert!(none.is_none());
+        notify(&hass, 1).await;
+        let (_, opening) = open(&n, true, &probe());
+        let opening = tokio::spawn(opening.expect("a message pending"));
+        tokio::task::yield_now().await;
+        gate.send(()).unwrap();
+        opening.await.unwrap().unwrap();
+        assert!(
+            n.channels.lock().latest.is_empty(),
+            "registered after fallback"
+        );
     }
 
     /// What one channel's connection was sent, and how many of those went
