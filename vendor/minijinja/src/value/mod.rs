@@ -228,7 +228,43 @@ pub use crate::value::argtypes::{
     from_args, ArgType, FunctionArgs, FunctionResult, Kwargs, Rest, StringInput, ValueOrKwargs,
 };
 pub use crate::value::merge_object::merge_maps;
-pub use crate::value::object::{DynObject, Enumerator, Object, ObjectExt, ObjectRepr};
+pub use crate::value::object::{BinOp, DynObject, Enumerator, Object, ObjectExt, ObjectRepr};
+/// hars patch: an operator an object answers for itself.
+pub use crate::value::ops::object_binop;
+
+/// hars patch: told about each attribute or item a defined value hasn't
+/// got (`x.y`, `x[k]`), so the embedder can word Jinja's undefined
+/// message. Set once.
+static MISSING: std::sync::OnceLock<fn(&Value, &Value)> = std::sync::OnceLock::new();
+
+/// hars patch: charges `fuel` to the render running on this thread before
+/// work it can't pay for otherwise (an object's
+/// [`get_value`](Object::get_value), which has no state, copying data it
+/// holds). Fails once the budget is spent; outside a render it is free.
+pub fn consume_fuel_now(fuel: u64) -> Result<(), Error> {
+    #[cfg(feature = "fuel")]
+    {
+        crate::vm::fuel::consume_active(fuel)
+    }
+    #[cfg(not(feature = "fuel"))]
+    {
+        let _ = fuel;
+        Ok(())
+    }
+}
+
+/// hars patch: sets the hook [`missing`] calls.
+pub fn set_missing_hook(hook: fn(&Value, &Value)) {
+    let _ = MISSING.set(hook);
+}
+
+pub(crate) fn missing(parent: &Value, key: &Value) {
+    if !parent.is_undefined() {
+        if let Some(hook) = MISSING.get() {
+            hook(parent, key);
+        }
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct StaticKeyMap(pub(crate) Vec<(&'static str, Value)>);
@@ -728,7 +764,15 @@ impl PartialEq for Value {
                         }
                         if a.is_same_object(b) {
                             return true;
-                        } else if a.is_same_object_type(b) {
+                        }
+                        // hars patch: an object's own `==` (Python's
+                        // `__eq__`), which an ordering can't express.
+                        if let Some(Ok(rv)) =
+                            ops::object_binop(crate::value::BinOp::EqItem, self, other)
+                        {
+                            return rv.is_true();
+                        }
+                        if a.is_same_object_type(b) {
                             if let Some(rv) = a.custom_cmp(b) {
                                 return rv == Ordering::Equal;
                             }

@@ -2752,6 +2752,66 @@ async fn logbook_stream_windows_and_checks() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// The home `scripts/vectors/template_functions.py` renders against
+/// (`ha-core`'s `template/vectors/home.json`): its states written at their
+/// times, its time zone, and its clock stopped at its `now` (tokio's time
+/// must be paused).
+fn vector_hass() -> Hass {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../ha-core/src/template/vectors/home.json"
+    );
+    let fixture: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let at = |v: &Value| -> jiff::Timestamp { v.as_str().unwrap().parse().unwrap() };
+    let sim = ha_core::SimulatedClock::new(at(&fixture["now"]));
+    let hass = Hass::with_clock(sim.clock());
+    hass.set_config(ha_core::config::CoreConfig {
+        time_zone: fixture["time_zone"].as_str().unwrap().into(),
+        ..Default::default()
+    });
+    for s in fixture["states"].as_array().unwrap() {
+        let id = EntityId::parse(s["entity_id"].as_str().unwrap()).unwrap();
+        let state = s["state"].as_str().unwrap();
+        let attributes = s["attributes"].as_object().unwrap().clone();
+        sim.jump_to(at(&s["last_changed"]));
+        hass.set_state(id.clone(), state, attributes.clone());
+        if let Some(updated) = s.get("last_updated") {
+            sim.jump_to(at(updated));
+            let mut changed = attributes.clone();
+            changed.insert("_".into(), json!(1));
+            hass.set_state(id.clone(), state, changed);
+            hass.set_state(id, state, attributes);
+        }
+    }
+    sim.jump_to(at(&fixture["now"]));
+    hass
+}
+
+/// `render_template` against a home (`render_template_states.json`, from
+/// `scripts/vectors/template_functions.py`): the live states, clock and
+/// time zone, and `listeners` naming what the template read.
+#[tokio::test(start_paused = true)]
+async fn render_template_reads_the_home_as_ha() {
+    let _alone = RENDER_PERMITS.lock().await;
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/ws/vectors/render_template_states.json"
+    );
+    let conversations: Vec<Value> =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert!(conversations.len() >= 6);
+    let hass = vector_hass();
+    for conversation in conversations {
+        let name = conversation["name"].as_str().unwrap();
+        let (mut conn, mut rx) = bare_conn(&hass);
+        for step in conversation["steps"].as_array().unwrap() {
+            handle(&mut conn, step["send"].clone());
+            settle(&mut conn).await;
+            assert_eq!(&json!(sent(&mut rx)), &step["replies"], "{name}");
+        }
+    }
+}
+
 /// `render_template` conversations from `scripts/vectors/render_template.py`:
 /// HA 2026.6.1's `handle_render_template` on a fresh `HomeAssistant` each,
 /// with every message it sent back, in order.

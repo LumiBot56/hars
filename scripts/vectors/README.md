@@ -23,12 +23,12 @@ rule have no script yet; they are listed
 |---|---|---|
 | `onboarding.py` | `ha-api/src/onboarding/vectors/` | HA 2026.6.1's core with `http`, `auth`, `websocket_api`, `person`, `sun`, `analytics`, `onboarding` and `config`'s `config/core/*` and `config_entries/*` commands, booted in a temporary directory: every call the onboarding pages make, the states and the `.storage` files left (aiohasupervisor 0.4.3, PyMetno 0.13.0) |
 | `render_template.py` | `ha-core/src/template/vectors/` (renders, `_parse_result`, the environment's names, and Jinja's filters and tests over values of every kind) and `ha-api/src/ws/vectors/render_template.json` (whole `render_template` conversations) | HA 2026.6.1's `helpers/template` and `websocket_api` `handle_render_template` on Jinja 3.1.6, on a fresh `HomeAssistant` per case |
-
+| `template_functions.py` | `ha-core/src/template/vectors/functions.json` (HA's state, type cast, maths and time functions, lenient and strict, with the `listeners` each render reports) and `ha-api/src/ws/vectors/render_template_states.json` (`render_template` conversations reading states and the clock), from the home in `ha-core/src/template/vectors/home.json` (an input: states, time zone, display precision, `now`) | HA 2026.6.1's `helpers/template` (Jinja 3.1.6, ciso8601 2.3.3) and `handle_render_template`, on a fresh `HomeAssistant` holding the home for each render, in Europe/London with the clock stopped at the 2026 spring-forward |
 | `mobile_app_notify.py` | `ha-api/src/mobile_app/vectors/notify.json` (15 scenarios, 126 steps: service calls, the app's push channel commands, closed connections and 10 s passing, with every WebSocket message, relay request body, result, notify state and log line; and 20 `log_rate_limits` lines) | HA 2026.6.1's core with `http`, `websocket_api` and `mobile_app` (its `notify.py`, `push_notification.py`, `websocket_api.py`) and `notify`, on aiohttp 3.13.5, with a local server as the push relay |
 
-`render_template.py` writes two crates' vectors because they are two halves
-of one behaviour: the engine's answers and the command's messages around
-them.
+`render_template.py` and `template_functions.py` write two crates'
+vectors because they are two halves of one behaviour: the engine's answers
+and the command's messages around them.
 
 ## Writing one
 
@@ -71,6 +71,7 @@ For `render_template.py` (HA's own requirements bring Jinja 3.1.6):
 python3.14 -m venv .venv-template  # Python 3.14.2+ installed
 .venv-template/bin/pip install homeassistant==2026.6.1
 .venv-template/bin/python -I scripts/vectors/render_template.py
+.venv-template/bin/python -I scripts/vectors/template_functions.py
 cargo test -p ha-core template && cargo test -p ha-api render_template
 ```
 
@@ -87,6 +88,12 @@ python3.14 -m venv .venv  # Python 3.14.2+ installed
 .venv/bin/python -I scripts/vectors/mobile_app_notify.py
 cargo test -p ha-api ws::mobile_app
 ```
+
+`template_functions.py` stops HA's clock (`homeassistant.util.dt.now` and
+`utcnow`) at the home's `now` and sets the process's `TZ`, which Python
+uses for a naive datetime's `timestamp()`. Its `strftime` cases avoid what
+macOS's C library does differently from glibc (`%P`, the `-` flag): hars
+follows glibc, which HA runs on.
 
 ## Skeleton
 

@@ -288,6 +288,20 @@ pub trait Object: fmt::Debug + Send + Sync {
         None
     }
 
+    /// hars patch: an operator with this object on one side, as Python's
+    /// operator methods (`__add__`, `__radd__`, `__eq__`, `__lt__`, …) do.
+    /// `reflected` is true when the object is the right-hand side. `None`
+    /// leaves the operator to the engine; [`BinOp::Neg`] has no `other`.
+    fn binop(
+        self: &Arc<Self>,
+        op: BinOp,
+        other: &Value,
+        reflected: bool,
+    ) -> Option<Result<Value, Error>> {
+        let _ = (op, other, reflected);
+        None
+    }
+
     /// Formats the object for stringification.
     ///
     /// The default implementation is specific to the behavior of
@@ -897,6 +911,43 @@ pub enum ObjectRepr {
     Iterable,
 }
 
+/// hars patch: the operators [`Object::binop`] is asked about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BinOp {
+    /// `+`
+    Add,
+    /// `-`
+    Sub,
+    /// `*`
+    Mul,
+    /// `/`
+    Div,
+    /// `//`
+    FloorDiv,
+    /// `%`
+    Rem,
+    /// `**`
+    Pow,
+    /// `==`
+    Eq,
+    /// `!=`
+    Ne,
+    /// `<`
+    Lt,
+    /// `<=`
+    Le,
+    /// `>`
+    Gt,
+    /// `>=`
+    Ge,
+    /// Unary minus.
+    Neg,
+    /// `==` between items of containers and in `in`, where Python checks
+    /// identity first (`PyObject_RichCompare` from `list` and `dict`).
+    EqItem,
+}
+
 type_erase! {
     pub trait Object => DynObject {
         fn repr(&self) -> ObjectRepr;
@@ -925,6 +976,8 @@ type_erase! {
         ) -> Result<Value, Error>;
 
         fn custom_cmp(&self, other: &DynObject) -> Option<Ordering>;
+
+        fn binop(&self, op: BinOp, other: &Value, reflected: bool) -> Option<Result<Value, Error>>;
 
         fn render(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
 

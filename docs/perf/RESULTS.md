@@ -290,3 +290,24 @@ entity's restore and the notifier are set up), Docker on an Apple-silicon Mac
 
 No new dependency. Release binary on macOS arm64: 8,145,072 → 8,227,968
 bytes (+82,896) over `main` at 1306935.
+
+### Template functions: states, type casts, maths, time, 2026-11-15
+
+HA's state, type cast, maths and time functions in `ha_core::template`
+(Python's `datetime` model, number rules, `RenderInfo`) and two hooks in
+`vendor/minijinja` (operators on objects, missing-attribute messages). No
+dependency added. macOS release builds (Apple M4, same toolchain and
+profile), `cargo build --release -p ha-server`:
+
+| build | bytes |
+|---|---|
+| main (1306935) | 8,145,072 |
+| branch | 8,410,064 (+264,992) |
+
+The growth is just over the 256 KiB note threshold: it is the functions
+dashboards use most (`states()`, `is_state`, `now()`, `float`, `round`,
+`as_timestamp`, `relative_time`). Nothing runs while idle: a render reads
+the state machine only while it runs (one `Arc` per state it iterates,
+dropped at the end), and `render_template` still holds no task, timer or
+listener after its reply, so idle RSS, CPU and wakeups are unaffected.
+Hot paths (state writes, fan-out) are untouched.

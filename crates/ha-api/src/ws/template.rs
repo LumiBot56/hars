@@ -22,13 +22,16 @@
 //! exception into its thread; minijinja can't be interrupted). Closing the
 //! connection drops a render that hasn't started.
 //!
-//! Templates can't read states or the clock yet ([`ha_core::template`]),
-//! so `listeners` is always empty and nothing re-renders: a subscription
-//! costs no timer, no listener and no wakeup until it is unsubscribed.
+//! Templates read the live instance ([`ha_core::template::Home`]): its
+//! states, clock and time zone, and the entity registry's sensor display
+//! precision. `listeners` reports what the render read, as HA's does. Not
+//! yet: re-rendering when one of those changes (HA's state and time
+//! listeners and rate limits), so a subscription still costs no timer, no
+//! listener and no wakeup until it is unsubscribed.
 
 use super::commands::{Bad, cv_entity_ids};
 use super::{Conn, Invalid, Outbox};
-use ha_core::template::{Level, Log, Render, Template, TemplateError};
+use ha_core::template::{DisplayPrecision, Home, Level, Log, Render, Template, TemplateError};
 use parking_lot::Mutex;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -185,12 +188,13 @@ fn render_template(conn: &mut Conn, id: u64, msg: &Map<String, Value>) -> Result
     // `if timeout:` and `async_render_will_timeout`'s static shortcut.
     let timeout = args.timeout.filter(|t| *t != 0.0 && !template.is_static());
     let out = conn.out.clone();
+    let home = Arc::new(home(&conn.shared));
     let task = tokio::spawn(async move {
         let variables = args.variables.map(Arc::new);
         let (strict, report) = (args.strict, args.report_errors);
         let mut deferred = false;
         if let Some(timeout) = timeout {
-            match timed(&template, &variables, strict, timeout).await {
+            match timed(&template, &home, &variables, strict, timeout).await {
                 Timed::Over => {
                     let message = format!(
                         "Exceeded maximum execution time of {}s",
@@ -218,8 +222,8 @@ fn render_template(conn: &mut Conn, id: u64, msg: &Map<String, Value>) -> Result
         // `report_errors` (where only the second is seen) it renders once.
         let t = template.clone();
         let (setup, refresh) = blocking(move || {
-            let setup = t.render(variables.as_deref(), strict);
-            let refresh = report.then(|| t.render(variables.as_deref(), strict));
+            let setup = t.render_in(Some(&home), variables.as_deref(), strict);
+            let refresh = report.then(|| t.render_in(Some(&home), variables.as_deref(), strict));
             (setup, refresh)
         })
         .await?;
@@ -240,6 +244,31 @@ fn render_template(conn: &mut Conn, id: u64, msg: &Map<String, Value>) -> Result
     });
     conn.busy = Some(Busy { task });
     Ok(())
+}
+
+/// What templates read: the instance, and the entity registry's sensor
+/// display precision (`sensor.async_rounded_state`'s `_display_precision`).
+fn home(shared: &crate::Shared) -> Home {
+    let registry = shared.config.registry.clone();
+    Home {
+        hass: shared.hass.clone(),
+        display_precision: registry.map(|r| {
+            Arc::new(move |entity_id: &str| display_precision(&r.snapshot(), entity_id))
+                as DisplayPrecision
+        }),
+    }
+}
+
+/// `display_precision`, else `suggested_display_precision`, of a sensor's
+/// registry entry.
+fn display_precision(r: &ha_registry::Registries, entity_id: &str) -> Option<i64> {
+    let entry = r.entities.iter().find(|e| e.entity_id == entity_id)?;
+    let options = entry.options.object();
+    let sensor = options.get("sensor")?.as_object()?;
+    match sensor.get("display_precision") {
+        Some(p) if !p.is_null() => p.as_i64(),
+        _ => sensor.get("suggested_display_precision")?.as_i64(),
+    }
 }
 
 /// Templates longer than this aren't kept: 128 of them stay under 1 MiB.
@@ -308,6 +337,7 @@ enum Timed {
 /// from when it starts (a wait for a permit doesn't count).
 async fn timed(
     template: &Arc<Template>,
+    home: &Arc<Home>,
     variables: &Option<Arc<Map<String, Value>>>,
     strict: bool,
     timeout: f64,
@@ -315,11 +345,11 @@ async fn timed(
     let Ok(permit) = RENDERS.clone().acquire_owned().await else {
         return Timed::NotCompiled;
     };
-    let (t, v) = (template.clone(), variables.clone());
+    let (t, h, v) = (template.clone(), home.clone(), variables.clone());
     let Some(job) = on_render_thread(permit, move || {
         t.compile(strict)
             .ok()
-            .map(|()| t.render_discarding(v.as_deref(), strict).log)
+            .map(|()| t.render_discarding(Some(&h), v.as_deref(), strict).log)
     }) else {
         return Timed::NotCompiled;
     };
@@ -366,11 +396,6 @@ struct Reply<'a> {
     /// The template logs through `call_soon_threadsafe`: each render's log
     /// is sent after what the render's caller sends straight away.
     deferred: bool,
-}
-
-/// `listeners` of a template that reads no states and no clock.
-fn listeners() -> Value {
-    json!({"all": false, "entities": [], "domains": [], "time": false})
 }
 
 impl Reply<'_> {
@@ -422,15 +447,14 @@ impl Reply<'_> {
 
     /// `_template_listener`.
     fn send_result(&self, render: Render) {
+        let listeners = render.info.listeners();
         match render.result {
             Err(e) if self.report => self.error(&e),
             Err(_) => {}
             Ok(rendered) => match rendered.to_json() {
                 Ok(result) => {
-                    self.out.event(
-                        self.id,
-                        &json!({"result": result, "listeners": listeners()}),
-                    );
+                    self.out
+                        .event(self.id, &json!({"result": result, "listeners": listeners}));
                 }
                 // `message_to_json_bytes`'s fallback.
                 Err(_) => {

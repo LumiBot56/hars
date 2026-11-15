@@ -285,11 +285,28 @@ Fixtures are sanitised (no tokens, coordinates rounded) before they are committe
       untrusted: each render has a fuel budget (steps and data), runs on a
       blocking thread, two at a time. The default
       dashboard's "Welcome {{ user }}" heading now renders. Vectors from
-      `scripts/vectors/render_template.py`. Not yet: HA's own functions,
-      filters and tests (`states`, `is_state`, `now`, `float`, …) and
-      Jinja's `namespace`, `attr`, `indent` and `format`, which fail with
-      "not supported yet" instead of rendering, and so
-      re-rendering on state or time changes; see post-MVP
+      `scripts/vectors/render_template.py`.
+- [x] HA's template functions, first slice: states (`states` called, by
+      attribute and iterated, `is_state`, `state_attr`, `is_state_attr`,
+      `has_value`, `state_with_unit` with the registry's display
+      precision), type casts (`float`, `int`, `bool`, `is_number`), maths
+      (`round` with its methods, trigonometry, `log`, `sqrt`, statistics,
+      `min`/`max`, bitwise, `clamp`/`wrap`/`remap`) and time (`now`,
+      `utcnow`, `today_at`, `as_datetime`, `as_local`, `as_timestamp`,
+      `timestamp_*`, `strptime`, `timedelta`, `relative_time`,
+      `time_since`/`time_until`) on Python's `datetime` values with
+      wall-clock arithmetic across DST, in the configured time zone and
+      hars's clock. `render_template` renders against the live instance
+      and reports `listeners` (entities, domains, all states, time) as HA
+      does. Each pays its fuel for work that grows with its input. Vectors
+      from `scripts/vectors/template_functions.py` (Europe/London at the
+      2026 spring-forward). Not yet: HA's other functions (areas, devices,
+      floors, labels, entities, `expand`, `closest`, `distance`,
+      translations, regex, JSON, crypto, base64, collections, strings,
+      issues, config entries, functional, `version`), week and ordinal ISO
+      dates, and Jinja's `namespace`, `attr`, `indent` and `format`, which
+      fail with "not supported yet" instead of rendering; re-rendering on
+      state or time changes; see post-MVP
 - [ ] One serialised `Arc<str>` per state change, shared by all connections
 - [ ] Acceptance: replaying the frontend trace passes against `hars` with
       fixture entities (protocol smoke test; real data comes in M4/M5)
@@ -522,11 +539,13 @@ Fixtures are sanitised (no tokens, coordinates rounded) before they are committe
 
 ## Post-MVP
 - Remote access, SwitchBot webhooks
-- Jinja templates beyond the first slice: HA's functions, filters and tests
-  (states, time, areas, devices, maths, regex, JSON, …), re-rendering
-  `render_template` subscriptions on state and time changes (`listeners`,
-  rate limits), templates in automations, `custom_templates` imports;
-  scripts, scenes YAML, blueprints
+- Jinja templates beyond the first slices: HA's other functions, filters
+  and tests (areas, devices, floors, labels, entities, `expand`,
+  `closest`, `distance`, translations, regex, JSON, crypto, base64,
+  collections, strings, issues, config entries, functional, `version`),
+  re-rendering `render_template` subscriptions on state and time changes
+  (listening to what `listeners` reports, rate limits), templates in
+  automations, `custom_templates` imports; scripts, scenes YAML, blueprints
 - Config flows for adding integrations; UI automation/script editor
 - Long-term statistics
 - MQTT, ESPHome native API, zigbee2mqtt; `input_*` / `template` helpers, `todo`, TTS

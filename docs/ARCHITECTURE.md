@@ -270,8 +270,8 @@ How it is kept:
 - **Vectors.** Where hars must give HA's answer, tests compare with inputs
   run through HA's own code at the pinned version. A new vector set commits
   the script that made it in `scripts/vectors/` (`onboarding.py`,
-  `render_template.py`, `mobile_app_notify.py`). The sets made before that
-  rule have no script yet;
+  `render_template.py`, `mobile_app_notify.py`, `template_functions.py`).
+  The sets made before that rule have no script yet;
   they are listed as a backlog in
   [scripts/vectors/README.md](../scripts/vectors/README.md#vector-sets-made-before-this-rule)
   ([ADR 0008](adr/0008-vectors-from-home-assistant.md)).
@@ -289,7 +289,10 @@ How it is kept:
   the [roadmap](ROADMAP.md).
 - **One patched dependency.** `vendor/minijinja` is minijinja 3.1.0 with a
   change to its fuel accounting, so a template's budget covers everything
-  it makes ([`vendor/minijinja/HARS.md`](../vendor/minijinja/HARS.md));
+  it makes, and hooks for objects: answering operators (Python's
+  `datetime` arithmetic), paying for what they copy (a state's
+  attributes), and wording a missing attribute's message
+  ([`vendor/minijinja/HARS.md`](../vendor/minijinja/HARS.md));
   `[patch.crates-io]` in `Cargo.toml` points at it.
 
 ## Where new code goes

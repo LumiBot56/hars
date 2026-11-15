@@ -3,7 +3,7 @@ use crate::output::Output;
 use crate::utils::{collect_untrusted, untrusted_size_hint, AutoEscape};
 use crate::value::merge_object::MergeSeq;
 use crate::value::{
-    checked, DynObject, MaybeInvalid, ObjectRepr, StringType, Tuple, Value, ValueKind, ValueRepr,
+    checked, BinOp, DynObject, MaybeInvalid, ObjectRepr, StringType, Tuple, Value, ValueKind, ValueRepr,
 };
 use crate::vm::State;
 
@@ -453,6 +453,15 @@ fn int_as_value(val: i128) -> Value {
     }
 }
 
+/// hars patch: an operator an object answers for itself
+/// ([`Object::binop`](crate::value::Object::binop)), the left side first.
+pub fn object_binop(op: BinOp, lhs: &Value, rhs: &Value) -> Option<Result<Value, Error>> {
+    if let Some(rv) = lhs.as_object().and_then(|o| o.binop(op, rhs, false)) {
+        return Some(rv);
+    }
+    rhs.as_object().and_then(|o| o.binop(op, lhs, true))
+}
+
 fn impossible_op(op: &str, lhs: &Value, rhs: &Value) -> Error {
     Error::new(
         ErrorKind::InvalidOperation,
@@ -475,8 +484,11 @@ fn failed_op(op: &str, lhs: &Value, rhs: &Value) -> Error {
 }
 
 macro_rules! math_binop {
-    ($name:ident, $int:ident, $float:tt) => {
+    ($name:ident, $op:ident, $int:ident, $float:tt) => {
         pub fn $name(lhs: &Value, rhs: &Value) -> Result<Value, Error> {
+            if let Some(rv) = object_binop(BinOp::$op, lhs, rhs) {
+                return rv;
+            }
             match coerce(lhs, rhs, true) {
                 Some(CoerceResult::I128(a, b)) => match a.$int(b) {
                     Some(val) => Ok(int_as_value(val)),
@@ -505,6 +517,9 @@ fn materialize_seq_concat(lhs: &Value, rhs: &Value, len: usize) -> Result<Value,
 }
 
 pub fn add(lhs: &Value, rhs: &Value) -> Result<Value, Error> {
+    if let Some(rv) = object_binop(BinOp::Add, lhs, rhs) {
+        return rv;
+    }
     if lhs.is_tuple() || rhs.is_tuple() {
         if lhs.is_tuple() && rhs.is_tuple() {
             let mut values = Vec::with_capacity(untrusted_size_hint(
@@ -552,7 +567,7 @@ pub fn add(lhs: &Value, rhs: &Value) -> Result<Value, Error> {
     }
 }
 
-math_binop!(sub, checked_sub, -);
+math_binop!(sub, Sub, checked_sub, -);
 
 /// Floor division and the matching remainder.  Fails on division by zero and
 /// for `i128::MIN // -1`, which needs [`WideInt`].
@@ -590,6 +605,9 @@ fn float_div_rem_floor(a: f64, b: f64) -> (f64, f64) {
 }
 
 pub fn rem(lhs: &Value, rhs: &Value) -> Result<Value, Error> {
+    if let Some(rv) = object_binop(BinOp::Rem, lhs, rhs) {
+        return rv;
+    }
     match coerce(lhs, rhs, true) {
         Some(CoerceResult::I128(a, b)) => match int_div_rem_floor(a, b) {
             Some((_, remainder)) => Ok(int_as_value(remainder)),
@@ -603,6 +621,9 @@ pub fn rem(lhs: &Value, rhs: &Value) -> Result<Value, Error> {
 }
 
 pub fn mul(lhs: &Value, rhs: &Value) -> Result<Value, Error> {
+    if let Some(rv) = object_binop(BinOp::Mul, lhs, rhs) {
+        return rv;
+    }
     if let Some((s, safe, n)) = lhs
         .as_str()
         .map(|s| (s, lhs.is_safe(), rhs))
@@ -715,6 +736,9 @@ fn repeat_iterable(n: &Value, seq: &DynObject) -> Result<Value, Error> {
 }
 
 pub fn div(lhs: &Value, rhs: &Value) -> Result<Value, Error> {
+    if let Some(rv) = object_binop(BinOp::Div, lhs, rhs) {
+        return rv;
+    }
     let Some(a) = as_f64(lhs, true) else {
         return Err(impossible_op("/", lhs, rhs));
     };
@@ -729,6 +753,9 @@ pub fn div(lhs: &Value, rhs: &Value) -> Result<Value, Error> {
 }
 
 pub fn int_div(lhs: &Value, rhs: &Value) -> Result<Value, Error> {
+    if let Some(rv) = object_binop(BinOp::FloorDiv, lhs, rhs) {
+        return rv;
+    }
     match coerce(lhs, rhs, true) {
         Some(CoerceResult::I128(a, b)) => match int_div_rem_floor(a, b) {
             Some((quotient, _)) => Ok(int_as_value(quotient)),
@@ -743,6 +770,9 @@ pub fn int_div(lhs: &Value, rhs: &Value) -> Result<Value, Error> {
 
 /// Implements a binary `pow` operation on values.
 pub fn pow(lhs: &Value, rhs: &Value) -> Result<Value, Error> {
+    if let Some(rv) = object_binop(BinOp::Pow, lhs, rhs) {
+        return rv;
+    }
     match coerce(lhs, rhs, true) {
         // A negative exponent gives a fractional result, like in Python.
         // Zero to a negative power fails like a division by zero.
@@ -777,6 +807,9 @@ pub fn pow(lhs: &Value, rhs: &Value) -> Result<Value, Error> {
 
 /// Implements an unary `neg` operation on value.
 pub fn neg(val: &Value) -> Result<Value, Error> {
+    if let Some(rv) = object_binop(BinOp::Neg, val, &Value::UNDEFINED) {
+        return rv;
+    }
     if val.kind() == ValueKind::Number {
         match val.0 {
             ValueRepr::F64(x) => Ok((-x).into()),

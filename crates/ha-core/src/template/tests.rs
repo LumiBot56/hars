@@ -27,34 +27,6 @@ fn sent(r: &Rendered) -> Json {
 /// wrong value), and messages minijinja words differently.
 const DIFFERENT: &[(&str, &str)] = &[
     (
-        "{{ states('sun.sun') }}",
-        "NotImplementedError: hars does not support Home Assistant's template function 'states' yet",
-    ),
-    (
-        "{{ states.sun.sun.state }}",
-        "NotImplementedError: hars does not support Home Assistant's template function 'states' yet",
-    ),
-    (
-        "{{ now().year > 2000 }}",
-        "NotImplementedError: hars does not support Home Assistant's template function 'now' yet",
-    ),
-    (
-        "{{ is_state('sun.sun', 'above_horizon') }}",
-        "NotImplementedError: hars does not support Home Assistant's template function 'is_state' yet",
-    ),
-    (
-        "{{ 1 | float }}",
-        "NotImplementedError: hars does not support Home Assistant's template filter 'float' yet",
-    ),
-    (
-        "{{ '1' | int }}",
-        "NotImplementedError: hars does not support Home Assistant's template filter 'int' yet",
-    ),
-    (
-        "{{ 2.5 | round }}",
-        "NotImplementedError: hars does not support Home Assistant's template filter 'round' yet",
-    ),
-    (
         "{{ 'x' is match('x') }}",
         "NotImplementedError: hars does not support Home Assistant's template test 'match' yet",
     ),
@@ -110,6 +82,8 @@ const DIFFERENT: &[(&str, &str)] = &[
 
 #[test]
 fn renders_as_ha() {
+    // HA's are rendered on a fresh `HomeAssistant`: no states, UTC.
+    let home = Home::new(crate::Hass::new());
     let mut failures = Vec::new();
     let cases = vectors("render.json");
     assert!(cases.len() > 150);
@@ -117,7 +91,7 @@ fn renders_as_ha() {
         let source = case["template"].as_str().unwrap();
         let strict = case["strict"].as_bool().unwrap();
         let variables = case.get("variables").and_then(Json::as_object);
-        let got = Template::new(source).render(variables, strict);
+        let got = Template::new(source).render_in(Some(&home), variables, strict);
         let got_log: Vec<Json> = got
             .log
             .iter()
@@ -288,15 +262,47 @@ fn compiled_once_keeps_its_strictness() {
     );
 }
 
-/// A variable named like an HA function is just a variable.
+/// A variable named like an HA function is just a variable, whether
+/// hars serves the function or not yet.
 #[test]
 fn variables_shadow_has_functions() {
-    let t = Template::new("{{ now }}");
-    let vars = json!({"now": "then"});
-    let r = t.render(vars.as_object(), true).result.unwrap();
-    assert_eq!(r.as_text(), Some("then"));
-    let err = t.render(None, true).result.unwrap_err().0;
+    for name in ["now", "expand"] {
+        let t = Template::new(&format!("{{{{ {name} }}}}"));
+        let vars = json!({ name: "then" });
+        let r = t.render(vars.as_object(), true).result.unwrap();
+        assert_eq!(r.as_text(), Some("then"));
+    }
+    let err = Template::new("{{ expand }}")
+        .render(None, true)
+        .result
+        .unwrap_err()
+        .0;
     assert!(err.starts_with("NotImplementedError"), "{err}");
+}
+
+/// With no instance, the functions that read one aren't there: an error,
+/// never an empty home.
+#[test]
+fn functions_that_read_the_home_need_one() {
+    for source in [
+        "{{ states('sun.sun') }}",
+        "{{ states.sun.sun.state }}",
+        "{{ states | count }}",
+        "{{ is_state('sun.sun', 'on') }}",
+        "{{ now() }}",
+        "{{ today_at() }}",
+    ] {
+        let err = Template::new(source)
+            .render(None, false)
+            .result
+            .unwrap_err()
+            .0;
+        assert!(err.starts_with("NotImplementedError"), "{source}: {err}");
+    }
+    // The rest need nothing.
+    let r = Template::new("{{ '2.5' | float | round }} {{ as_timestamp('2026-01-01T00:00:00Z') }}")
+        .render(None, false);
+    assert_eq!(r.result.unwrap().as_text(), Some("2 1767225600.0"));
 }
 
 /// `MAX_TEMPLATE_OUTPUT` counts characters, not bytes.
@@ -585,7 +591,8 @@ fn repeated_and_derived_work_is_paid_for() {
         "{% set a = 'x' * 10000000 %}{% set b = 'x' * 10000000 %}{% for i in range(40000) %}{% if a == b %}{% endif %}{% endfor %}ok",
         "{% set a = [range(10000) | list] * 2 %}{% for i in range(100000) %}{% if 'y' in a %}{% endif %}{% endfor %}ok",
         "{% set a = [range(10000) | list, range(10000) | list] %}{% for i in range(20000) %}{{ (a | sort | length) * 0 }}{% endfor %}ok",
-        "{% set a = [range(10000) | list, range(10000) | list] %}{% for i in range(20000) %}{{ (a | unique | list | length) * 0 }}{% endfor %}ok",
+        "{% set a = ['x' * 30000, 'x' * 30000] %}{% for i in range(20000) %}{{ (a | unique | list | length) * 0 }}{% endfor %}ok",
+        "{% set a = [(1, now), (1, now)] * 1000 %}{% for i in range(20000) %}{{ (a | unique | list | length) * 0 }}{% endfor %}ok",
         "{% set a = [range(10000) | list, range(10000) | list] %}{% for i in range(20000) %}{{ (a | max | length) * 0 }}{% endfor %}ok",
     ] {
         let err = budget(source).unwrap_err();
@@ -863,4 +870,294 @@ fn deep_template_child() {
         .join()
         .unwrap();
     eprintln!("deep templates: all failed cleanly");
+}
+
+/// The home in `vectors/home.json` (what `scripts/vectors/template_functions.py`
+/// renders against): its states, written at their times, its time zone,
+/// its sensors' display precision, and its clock stopped at its `now`.
+pub(crate) fn vector_home() -> Home {
+    let path = format!(
+        "{}/src/template/vectors/home.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let fixture: Json = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let at = |s: &Json| -> jiff::Timestamp { s.as_str().unwrap().parse().unwrap() };
+    let sim = crate::SimulatedClock::new(at(&fixture["now"]));
+    let hass = crate::Hass::with_clock(sim.clock());
+    hass.set_config(crate::config::CoreConfig {
+        time_zone: fixture["time_zone"].as_str().unwrap().into(),
+        ..Default::default()
+    });
+    for s in fixture["states"].as_array().unwrap() {
+        let id = crate::EntityId::parse(s["entity_id"].as_str().unwrap()).unwrap();
+        let state = s["state"].as_str().unwrap();
+        let attributes = s["attributes"].as_object().unwrap().clone();
+        sim.jump_to(at(&s["last_changed"]));
+        hass.set_state(id.clone(), state, attributes.clone());
+        if let Some(updated) = s.get("last_updated") {
+            // An attribute-only change: `last_changed` stays.
+            sim.jump_to(at(updated));
+            let mut changed = attributes.clone();
+            changed.insert("_".into(), json!(1));
+            hass.set_state(id.clone(), state, changed);
+            hass.set_state(id, state, attributes);
+        }
+    }
+    sim.jump_to(at(&fixture["now"]));
+    let precision: std::collections::HashMap<String, i64> = fixture["display_precision"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.as_i64().unwrap()))
+        .collect();
+    Home {
+        hass,
+        display_precision: Some(Arc::new(move |id: &str| precision.get(id).copied())),
+    }
+}
+
+/// Numbers within a few units in the last place: the platform's `libm`
+/// (`sin`, `log`, …) may round the last digit differently from the one
+/// the vectors were made on.
+fn close(want: &Json, got: &Json) -> bool {
+    fn near(a: f64, b: f64) -> bool {
+        a == b || (a - b).abs() <= 4.0 * f64::EPSILON * a.abs().max(b.abs())
+    }
+    match (want, got) {
+        (Json::Number(a), Json::Number(b)) => match (a.as_f64(), b.as_f64()) {
+            (Some(x), Some(y)) if x.fract() != 0.0 || y.fract() != 0.0 => near(x, y),
+            _ => a == b,
+        },
+        (Json::String(a), Json::String(b)) => {
+            let (x, y): (Vec<&str>, Vec<&str>) = (a.split(' ').collect(), b.split(' ').collect());
+            x.len() == y.len()
+                && x.iter().zip(&y).all(|(p, q)| {
+                    p == q
+                        || matches!((p.parse::<f64>(), q.parse::<f64>()),
+                            (Ok(p), Ok(q)) if p.fract() != 0.0 && near(p, q))
+                })
+        }
+        (Json::Array(a), Json::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(p, q)| close(p, q))
+        }
+        (Json::Object(a), Json::Object(b)) => {
+            a.len() == b.len() && a.iter().all(|(k, v)| b.get(k).is_some_and(|w| close(v, w)))
+        }
+        _ => want == got,
+    }
+}
+
+/// Templates where hars answers differently from HA on purpose: an
+/// integer past `i128` (Python has no limit), refused rather than wrong.
+const FUNCTIONS_DIFFERENT: &[(&str, &str)] = &[(
+    "{{ int(1.5e300) }}",
+    "NotImplementedError: hars does not support integers this large in templates yet",
+)];
+
+/// HA's state, type cast, maths and time functions
+/// (`vectors/functions.json`, from `scripts/vectors/template_functions.py`):
+/// the result, error, log and `listeners` of each, lenient and strict,
+/// against the same home at the same time.
+#[tokio::test(start_paused = true)]
+async fn functions_answer_as_ha() {
+    let home = vector_home();
+    let mut failures = Vec::new();
+    let cases = vectors("functions.json");
+    assert!(cases.len() > 600);
+    for case in cases {
+        let source = case["template"].as_str().unwrap();
+        let strict = case["strict"].as_bool().unwrap();
+        let got = Template::new(source).render_in(Some(&home), None, strict);
+        let log: Vec<Json> = got
+            .log
+            .iter()
+            .map(|(level, m)| json!([level.as_str(), m]))
+            .collect();
+        let mut got_out = json!({"log": log});
+        match &got.result {
+            Ok(r) => got_out["result"] = sent(r),
+            Err(e) => got_out["error"] = json!(e.0),
+        }
+        let mut want = json!({"log": case["log"]});
+        match (
+            case.get("error"),
+            FUNCTIONS_DIFFERENT.iter().find(|(t, _)| *t == source),
+        ) {
+            (_, Some((_, message))) => want["error"] = json!(message),
+            (Some(e), None) => want["error"] = e.clone(),
+            (None, None) => want["result"] = case["result"].clone(),
+        }
+        let listeners_differ = got.result.is_ok() && got.info.listeners() != case["listeners"];
+        if !close(&want, &got_out) || listeners_differ {
+            failures.push(format!(
+                "{source:?} strict={strict}\n  want {want} {}\n  got  {got_out} {}",
+                case["listeners"],
+                got.info.listeners()
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} differ:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// A home of 3000 states across three domains, for work that grows with
+/// the state machine.
+fn big_home() -> Home {
+    let hass = crate::Hass::new();
+    for domain in ["light", "sensor", "switch"] {
+        for i in 0..1000 {
+            let id = crate::EntityId::parse(&format!("{domain}.n{i}")).unwrap();
+            let attributes = json!({"friendly_name": format!("N {i}"), "data": "x".repeat(100)});
+            hass.set_state(id, "on", attributes.as_object().unwrap().clone());
+        }
+    }
+    Home::new(hass)
+}
+
+/// HA's functions on hostile input: work that grows with the input or the
+/// state machine is paid for, so these stop at the budget, quickly.
+#[test]
+fn functions_stop_at_the_budget() {
+    let home = big_home();
+    let big = "{% set s = '1' * 1000000 %}";
+    for source in [
+        // Parsing a long string again and again.
+        &format!("{big}{{% for i in range(100000) %}}{{{{ s | float(0) }}}}{{% endfor %}}"),
+        &format!("{big}{{% for i in range(100000) %}}{{{{ s | int(0) }}}}{{% endfor %}}"),
+        &format!("{big}{{% for i in range(100000) %}}{{{{ s | is_number }}}}{{% endfor %}}"),
+        &format!("{big}{{% for i in range(100000) %}}{{{{ as_datetime(s ~ 'x') }}}}{{% endfor %}}"),
+        &format!("{big}{{% for i in range(100000) %}}{{{{ as_timestamp(s, 0) }}}}{{% endfor %}}"),
+        &format!(
+            "{big}{{% for i in range(100000) %}}{{{{ as_timedelta(s ~ 'x') }}}}{{% endfor %}}"
+        ),
+        &format!("{big}{{% for i in range(100000) %}}{{{{ states(s) }}}}{{% endfor %}}"),
+        &format!("{big}{{% for i in range(100000) %}}{{{{ strptime(s, '%Y', 0) }}}}{{% endfor %}}"),
+        &format!("{big}{{% for i in range(100000) %}}{{{{ s | bool(0) }}}}{{% endfor %}}"),
+        // Long formats.
+        "{% for i in range(100000) %}{{ 0 | timestamp_custom('%c' * 10000) | length }}{% endfor %}",
+        // Iterating and printing the states.
+        "{% for i in range(100000) %}{% for s in states %}{{ s.state }}{% endfor %}{% endfor %}",
+        "{% for i in range(100000) %}{{ states.light | list | count }}{% endfor %}",
+        "{% for i in range(100000) %}{{ states.light.n1 | string | length }}{% endfor %}",
+        "{% for i in range(100000) %}{{ states | map(attribute='entity_id') | join | length }}{% endfor %}",
+        // Statistics over large lists.
+        "{% for i in range(1000) %}{{ statistical_mode(range(100000) | list) }}{% endfor %}",
+        "{% for i in range(1000) %}{{ median(range(100000) | list) }}{% endfor %}",
+        "{% for i in range(1000) %}{{ average(range(100000) | list) }}{% endfor %}",
+        // Backtracking.
+        &format!(
+            "{{{{ strptime('{}', '{}', 0) }}}}",
+            "1".repeat(200),
+            "%d".repeat(200)
+        ),
+    ] {
+        let started = std::time::Instant::now();
+        let err = Template::new(source)
+            .render_in(Some(&home), None, false)
+            .result
+            .unwrap_err();
+        assert!(err.0.contains("budget"), "{source}: {err}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{source}"
+        );
+    }
+}
+
+/// A state's attributes are read in place: a value is paid for (its size)
+/// before it is copied, by attribute syntax and by filters, so a loop over
+/// states holding large attributes stops at the budget instead of copying
+/// them all.
+#[test]
+fn large_attributes_are_paid_for() {
+    let hass = crate::Hass::new();
+    for i in 0..64 {
+        let id = crate::EntityId::parse(&format!("sensor.big{i}")).unwrap();
+        let attributes = json!({"data": "x".repeat(1_000_000), "n": i});
+        hass.set_state(id, "on", attributes.as_object().unwrap().clone());
+    }
+    let home = Home::new(hass);
+    for source in [
+        "{% for s in states.sensor %}{% if s.attributes.data is defined %}x{% endif %}{% endfor %}",
+        "{% for s in states.sensor %}{% if s.attributes['data'] is defined %}x{% endif %}{% endfor %}",
+        "{% for s in states.sensor %}{{ state_attr(s.entity_id, 'data') | length }}{% endfor %}",
+        "{{ states.sensor | selectattr('attributes.data', 'defined') | list | count }}",
+        "{{ states.sensor | selectattr('attributes.data.0', 'defined') | count }}",
+        "{{ states.sensor | map(attribute='attributes.data') | count }}",
+        "{% for s in states.sensor %}{{ s.attributes | length }}{{ s | string | length }}{% endfor %}",
+    ] {
+        let err = Template::new(source)
+            .render_in(Some(&home), None, false)
+            .result
+            .unwrap_err();
+        assert!(err.0.contains("budget"), "{source}: {err}");
+    }
+    // Small reads cost little: the same loop over a small attribute.
+    let r = Template::new("{% for s in states.sensor %}{{ s.attributes.n }},{% endfor %}")
+        .render_in(Some(&home), None, false);
+    assert!(r.result.is_ok(), "{:?}", r.result);
+    assert!(
+        r.info.domains.contains("sensor") && r.info.entities.is_empty(),
+        "iterated states don't collect"
+    );
+}
+
+/// The edges of HA's numbers and times: an answer or Python's error,
+/// never a panic or a hang.
+#[test]
+fn function_edges_never_panic() {
+    let home = big_home();
+    for source in [
+        "{{ timedelta(days=1e300) }}",
+        "{{ timedelta(weeks=999999999) }}",
+        "{{ timedelta(microseconds=-1e18) }}",
+        "{{ timedelta(days=999999999) * 1e300 }}",
+        "{{ timedelta(days=999999999) * 170141183460469231731687303715884105727 }}",
+        "{{ timedelta(days=999999999) / 1e-300 }}",
+        "{{ timedelta(days=999999999) // timedelta(microseconds=1) }}",
+        "{{ timedelta(days=-999999999) - timedelta(days=1) }}",
+        "{{ -timedelta(days=-999999999) }}",
+        "{{ timedelta(hours=1) % timedelta(0) }} {{ timedelta(hours=1) // 0 }}",
+        "{{ timedelta(seconds=float('nan')) }} {{ timedelta(seconds=float('inf')) }}",
+        "{{ timedelta(hours=1) * float('nan') }}",
+        "{{ as_datetime('9999-12-31T23:59:59') + timedelta(days=1) }}",
+        "{{ as_datetime('0001-01-01T00:00:00') - timedelta(microseconds=1) }}",
+        "{{ as_local(as_datetime('0001-01-01T00:00:00Z')) }}",
+        "{{ as_local(as_datetime('9999-12-31T23:59:59-12:00')) }}",
+        "{{ as_datetime('0001-01-01T00:00:00+01:00').timestamp() }}",
+        "{{ now() - as_datetime('0001-01-01T00:00:00Z') }}",
+        "{{ now().replace(year=0) }} {{ now().replace(year=170141183460469231731687303715884105727) }}",
+        "{{ 1e18 | timestamp_custom }} {{ -1e18 | timestamp_utc }} {{ 9223372036854775807 | timestamp_local }}",
+        "{{ as_datetime(1e300) }} {{ as_datetime(-1e300) }} {{ as_datetime('nan') }}",
+        "{{ 1e308 | round(-308) }} {{ 1e308 | round(400) }} {{ 1.5 | round(-400) }}",
+        "{{ '1e308' | round(0, 'ceil') }} {{ 5 | round(99999999999999999999) }}",
+        "{{ 1e308 | round(-1000000) }} {{ 1e-308 | round(330) }}",
+        "{{ ('9' * 100) | int }} {{ int('1' * 200, 2) }} {{ 1e300 | int }}",
+        "{{ log(float('inf')) }} {{ log(float('nan')) }} {{ sqrt(float('inf')) }}",
+        "{{ average([1e308] * 10) }} {{ median([float('nan'), 1, 2]) }}",
+        "{{ remap(1e308, -1e308, 1e308, 0, 1, edges='mirror') }}",
+        "{{ remap(1, 0, 1e-320, 0, 1, steps=1e308) }}",
+        "{{ wrap(1e308, -1e308, 1e308) }} {{ clamp(float('nan'), 0, 1) }}",
+        "{{ as_timedelta('9' * 1000) }} {{ as_timedelta('P' ~ '9' * 400 ~ 'D') }}",
+        "{{ today_at('99999999999999999999999:00') }}",
+        "{{ strptime('9999 366', '%Y %j') }} {{ strptime('٢٠٢٦', '%Y') }}",
+        "{{ strptime('2026-03-29T10:15:00+٠١:٠٠', '%Y-%m-%dT%H:%M:%S%z', 0) }}",
+        "{{ statistical_mode([float('nan'), float('nan')]) }}",
+        "{{ bitwise_and(170141183460469231731687303715884105727, -1) }}",
+        "{{ time_since(as_datetime('0001-01-01T00:00:00Z'), 99) }}",
+        "{{ time_until(as_datetime('9999-12-31T00:00:00Z'), -5) }}",
+        "{{ states | count }} {{ states.light | count }} {{ states.zzz | count }}",
+        "{{ (states | list)[-1].entity_id }} {{ states.light | first }}",
+    ] {
+        let started = std::time::Instant::now();
+        let _ = Template::new(source).render_in(Some(&home), None, false);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{source}"
+        );
+    }
 }

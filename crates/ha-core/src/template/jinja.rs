@@ -28,7 +28,7 @@ pub(super) fn py_error(message: String) -> Error {
 /// see).
 pub(super) const QUIET_UNDEFINED: &str = "undefined (not logged)";
 
-fn quiet_undefined() -> Error {
+pub(super) fn quiet_undefined() -> Error {
     Error::new(ErrorKind::UndefinedError, QUIET_UNDEFINED)
 }
 
@@ -37,7 +37,10 @@ fn strict(state: &State) -> bool {
 }
 
 /// Python's type name of a value, for `TypeError` messages.
-fn type_name(v: &Value) -> &'static str {
+pub(super) fn type_name(v: &Value) -> &'static str {
+    if let Some(name) = super::pytime::py_type_name(v) {
+        return name;
+    }
     match v.kind() {
         ValueKind::Undefined => "Undefined",
         ValueKind::None => "NoneType",
@@ -103,6 +106,10 @@ fn py_eq_at(state: &State, a: &Value, b: &Value, depth: usize) -> Result<bool, E
         return Err(Error::new(ErrorKind::InvalidOperation, super::RECURSION));
     }
     visit(state, a)?;
+    // `datetime`, `timedelta`, …: their own `__eq__`.
+    if let Some(rv) = minijinja::value::object_binop(minijinja::value::BinOp::Eq, a, b) {
+        return rv.map(|v| v.is_true());
+    }
     if let (Some(x), Some(y)) = (num(a), num(b)) {
         return Ok(match (x, y) {
             (Num::Int(x), Num::Int(y)) => x == y,
@@ -169,6 +176,19 @@ fn py_order_at(
         return Err(Error::new(ErrorKind::InvalidOperation, super::RECURSION));
     }
     visit(state, a)?;
+    if a.as_object().is_some() || b.as_object().is_some() {
+        let lt = minijinja::value::object_binop(minijinja::value::BinOp::Lt, a, b);
+        let gt = minijinja::value::object_binop(minijinja::value::BinOp::Gt, a, b);
+        if let (Some(lt), Some(gt)) = (lt, gt) {
+            return Ok(Some(if lt?.is_true() {
+                Ordering::Less
+            } else if gt?.is_true() {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }));
+        }
+    }
     if let (Some(x), Some(y)) = (num(a), num(b)) {
         return Ok(match (x, y) {
             (Num::Int(x), Num::Int(y)) => Some(x.cmp(&y)),
@@ -249,9 +269,26 @@ fn py_mod_is(v: &Value, n: &Value, want: i128) -> Result<bool, Error> {
     })
 }
 
+/// Python's `a < b`.
+pub(super) fn py_less(state: &State, a: &Value, b: &Value) -> Result<bool, Error> {
+    Ok(py_order(state, a, b, "<")? == Some(Ordering::Less))
+}
+
+/// Python's `bool(value)`: an undefined value warns (lenient) or raises.
+pub(super) fn truth(state: &State, v: &Value) -> Result<bool, Error> {
+    if v.is_undefined() {
+        if strict(state) {
+            return Err(Error::from(ErrorKind::UndefinedError));
+        }
+        warn_undefined();
+        return Ok(false);
+    }
+    Ok(v.is_true())
+}
+
 /// `str(value)` with Jinja's undefined handling: lenient warns and gives
 /// `""`, strict raises.
-fn text(state: &State, v: &Value) -> Result<String, Error> {
+pub(super) fn text(state: &State, v: &Value) -> Result<String, Error> {
     if v.is_undefined() {
         if strict(state) {
             return Err(Error::from(ErrorKind::UndefinedError));
@@ -405,16 +442,7 @@ pub(super) fn add_filters(env: &mut Environment<'static>) {
             f::sum(state, v, attribute, start, kwargs)
         },
     );
-    env.add_filter("unique", |state: &State, v: Value, kwargs: Kwargs| {
-        iterate(state, &v)?;
-        charge_attribute(
-            state,
-            &v,
-            kwargs.peek::<Option<Value>>("attribute")?.as_ref(),
-        )?;
-        charge_sorting(state, &v)?;
-        f::unique(state, v, kwargs)
-    });
+    env.add_filter("unique", unique);
     env.add_filter(
         "batch",
         |state: &State, v: Value, n: usize, fill: Option<Value>| {
@@ -642,6 +670,144 @@ pub(super) fn add_filters(env: &mut Environment<'static>) {
     env.add_filter("join", join);
 }
 
+/// A `set` key: Python's hash and `==` (`1`, `1.0` and `True` are one).
+#[derive(PartialEq, Eq, Hash)]
+enum Key {
+    Int(i128),
+    Float(u64),
+    Str(String),
+    None,
+    Undefined,
+}
+
+/// Python's qualified type name of an unhashable value, and its short
+/// one (`unhashable type: 'list'`); `None` if it hashes.
+fn unhashable(v: &Value) -> Option<(&'static str, &'static str)> {
+    if let Some(o) = v.as_object() {
+        if o.downcast_ref::<super::home::TemplateState>().is_some() {
+            return Some((
+                "homeassistant.helpers.template.states.TemplateState",
+                "TemplateState",
+            ));
+        }
+        if o.downcast_ref::<super::home::Attributes>().is_some() {
+            return Some((
+                "homeassistant.util.read_only_dict.ReadOnlyDict",
+                "ReadOnlyDict",
+            ));
+        }
+    }
+    match v.kind() {
+        ValueKind::Map => Some(("dict", "dict")),
+        ValueKind::Seq | ValueKind::Iterable => match type_name(v) {
+            "tuple" | "range" => None,
+            _ => Some(("list", "list")),
+        },
+        _ => None,
+    }
+}
+
+/// The `set` key of a hashable value, `None` for one compared by `==`
+/// (tuples, datetimes, timedeltas, …), or Python's `TypeError` for an
+/// unhashable one (lists, dicts, states), as `set.add` words it.
+fn set_key(state: &State, v: &Value, lower: bool) -> Result<Option<Key>, Error> {
+    // The innermost unhashable value names the type; the item itself is
+    // what couldn't be added.
+    fn inner(state: &State, v: &Value) -> Result<Option<&'static str>, Error> {
+        if let Some((_, name)) = unhashable(v) {
+            return Ok(Some(name));
+        }
+        if v.kind() == ValueKind::Seq && type_name(v) == "tuple" {
+            for item in v.try_iter()? {
+                state.consume_fuel(1)?;
+                if let Some(name) = inner(state, &item)? {
+                    return Ok(Some(name));
+                }
+            }
+        }
+        Ok(None)
+    }
+    if let Some(name) = inner(state, v)? {
+        let outer = unhashable(v).map_or(type_name(v), |(q, _)| q);
+        return Err(py_error(format!(
+            "TypeError: cannot use '{outer}' as a set element (unhashable type: '{name}')"
+        )));
+    }
+    Ok(Some(match v.kind() {
+        ValueKind::Undefined if strict(state) => {
+            return Err(Error::from(ErrorKind::UndefinedError));
+        }
+        ValueKind::Undefined => Key::Undefined,
+        ValueKind::None => Key::None,
+        ValueKind::String => {
+            let s = v.as_str().unwrap_or_default();
+            state.consume_fuel(1 + s.len() as u64 / 64)?;
+            if lower {
+                grow(state, s)?;
+                Key::Str(s.to_lowercase())
+            } else {
+                Key::Str(s.to_owned())
+            }
+        }
+        ValueKind::Seq | ValueKind::Iterable | ValueKind::Map => return Ok(None),
+        _ => match num(v) {
+            Some(Num::Int(i)) => Key::Int(i),
+            // A NaN is only ever its own object, and hars's values have no
+            // identity: each one is kept (`[nan, nan] | unique` is two).
+            Some(Num::Float(f)) if f.is_nan() => return Ok(None),
+            Some(Num::Float(f)) if f.fract() == 0.0 && f.abs() < 1e38 => Key::Int(f as i128),
+            Some(Num::Float(f)) => Key::Float(f.to_bits()),
+            None => return Ok(None),
+        },
+    }))
+}
+
+/// Jinja's `do_unique`: the first item for each key (`attribute` of it,
+/// strings lower-cased unless `case_sensitive`), keys in a Python `set`.
+/// Keys that hash are found by hash; the rest are compared with `==`, each
+/// comparison paid for.
+fn unique(state: &State, v: Value, kwargs: Kwargs) -> Result<Value, Error> {
+    iterate(state, &v)?;
+    let case_sensitive: Option<bool> = kwargs.get("case_sensitive")?;
+    let attribute: Option<Value> = kwargs.get("attribute")?;
+    kwargs.assert_all_used()?;
+    charge_attribute(state, &v, attribute.as_ref())?;
+    let lower = !case_sensitive.unwrap_or(false);
+    if v.is_undefined() {
+        return Ok(Value::from(Vec::<Value>::new()));
+    }
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut others: Vec<Value> = Vec::new();
+    for item in v.try_iter()? {
+        state.consume_fuel(1)?;
+        let key = match &attribute {
+            Some(a) => attr_path(state, &item, a)?,
+            None => item.clone(),
+        };
+        let new = match set_key(state, &key, lower)? {
+            Some(k) => seen.insert(k),
+            None => {
+                let mut found = false;
+                for o in &others {
+                    if py_eq(state, o, &key)? {
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    others.push(key);
+                }
+                !found
+            }
+        };
+        if new {
+            out.push(item);
+        }
+    }
+    Ok(Value::from(out))
+}
+
 /// Pays, before it is made, for a case change of `s`: a character's other
 /// case is at most three times its bytes (`ß` → `SS`, `ŉ` → `ʼN`).
 fn grow(state: &State, s: &str) -> Result<(), Error> {
@@ -692,7 +858,7 @@ fn sort_check(state: &State, v: &Value, kwargs: &Kwargs) -> Result<(), Error> {
             match &first {
                 None => first = Some(item),
                 Some(a) => {
-                    py_type_order(state, a, &item)?;
+                    py_type_order(state, &item, a)?;
                 }
             }
         }
@@ -705,7 +871,7 @@ fn sort_check(state: &State, v: &Value, kwargs: &Kwargs) -> Result<(), Error> {
             match first {
                 None => *first = Some(key),
                 Some(a) => {
-                    py_type_order(state, a, &key)?;
+                    py_type_order(state, &key, a)?;
                 }
             }
         }
