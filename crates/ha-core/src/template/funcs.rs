@@ -544,9 +544,27 @@ fn median(state: &State, args: &[Value]) -> Result<Value, Error> {
             None => Ok(Value::from((x as f64 + y as f64) / 2.0)),
         },
         (Some(x), Some(y)) => Ok(Value::from((x.f64() + y.f64()) / 2.0)),
-        // `(a + b) / 2` of anything else is a `TypeError`.
-        _ => or_default(state, default, "median", &shown),
+        // `(a + b) / 2` with the values' own operators (timedeltas); a
+        // `TypeError` (two datetimes, two strings) is caught.
+        _ => {
+            use minijinja::value::{BinOp, object_binop};
+            let halved = object_binop(BinOp::Add, a, b).map(|sum| {
+                sum.and_then(|s| {
+                    object_binop(BinOp::Div, &s, &Value::from(2)).unwrap_or(Err(type_error()))
+                })
+            });
+            match halved {
+                Some(Ok(v)) => Ok(v),
+                Some(Err(e)) if !e.detail().is_some_and(|d| d.starts_with("TypeError:")) => Err(e),
+                _ => or_default(state, default, "median", &shown),
+            }
+        }
     }
+}
+
+/// A placeholder `TypeError` (its text isn't shown: it is caught).
+fn type_error() -> Error {
+    py_error("TypeError: unsupported operand".into())
 }
 
 /// A key equal values share (Python's hash and `==`): `1`, `1.0` and

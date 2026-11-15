@@ -1085,6 +1085,8 @@ fn large_attributes_are_paid_for() {
         "{% for s in states.sensor %}{% if s.attributes['data'] is defined %}x{% endif %}{% endfor %}",
         "{% for s in states.sensor %}{{ state_attr(s.entity_id, 'data') | length }}{% endfor %}",
         "{{ states.sensor | selectattr('attributes.data', 'defined') | list | count }}",
+        "{{ states.sensor | selectattr('attributes.data.0', 'defined') | count }}",
+        "{{ states.sensor | map(attribute='attributes.data') | count }}",
         "{% for s in states.sensor %}{{ s.attributes | length }}{{ s | string | length }}{% endfor %}",
     ] {
         let err = Template::new(source)

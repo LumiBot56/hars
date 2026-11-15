@@ -63,8 +63,9 @@ pub(crate) const FORMAT_SPEC_COST: u64 = 4 * UNITS_PER_FUEL;
 pub(crate) struct FuelTracker {
     // The initial fuel level.
     initial: u64,
-    // The remaining fuel in units.
-    remaining: Cell<i64>,
+    // The remaining fuel in units (hars patch: shared with the thread's
+    // active render, see `activate`).
+    remaining: std::rc::Rc<Cell<i64>>,
 }
 
 impl FuelTracker {
@@ -72,9 +73,9 @@ impl FuelTracker {
     pub fn new(fuel: u64) -> FuelTracker {
         FuelTracker {
             initial: fuel,
-            remaining: Cell::new(
+            remaining: std::rc::Rc::new(Cell::new(
                 i64::try_from(fuel.saturating_mul(UNITS_PER_FUEL)).unwrap_or(i64::MAX),
-            ),
+            )),
         }
     }
 
@@ -83,16 +84,13 @@ impl FuelTracker {
     /// Fails if this exhausts the fuel or if the fuel was already exhausted.
     #[inline]
     pub fn consume(&self, units: u64) -> Result<(), Error> {
-        let remaining = self
-            .remaining
-            .get()
-            .saturating_sub(i64::try_from(units).unwrap_or(i64::MAX));
-        self.remaining.set(remaining);
-        if remaining <= 0 {
-            Err(Error::from(ErrorKind::OutOfFuel))
-        } else {
-            Ok(())
-        }
+        consume_units(&self.remaining, units)
+    }
+
+    /// hars patch: makes this the thread's active budget until the guard
+    /// drops (renders nest: the previous one comes back).
+    pub(crate) fn activate(&self) -> ActiveGuard {
+        ActiveGuard(ACTIVE.with(|a| a.replace(Some(self.remaining.clone()))))
     }
 
     /// Checks that the given number of units could still be consumed.
@@ -359,4 +357,46 @@ impl<I: Iterator<Item = Value>> Iterator for FuelIter<'_, I> {
             (lower, upper.map(|x| x.saturating_add(1)))
         }
     }
+}
+
+fn consume_units(remaining: &Cell<i64>, units: u64) -> Result<(), Error> {
+    let left = remaining
+        .get()
+        .saturating_sub(i64::try_from(units).unwrap_or(i64::MAX));
+    remaining.set(left);
+    if left <= 0 {
+        Err(Error::from(ErrorKind::OutOfFuel))
+    } else {
+        Ok(())
+    }
+}
+
+std::thread_local! {
+    /// hars patch: the budget of the render running on this thread.
+    static ACTIVE: std::cell::RefCell<Option<std::rc::Rc<Cell<i64>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// hars patch: restores the previously active budget when dropped.
+pub(crate) struct ActiveGuard(Option<std::rc::Rc<Cell<i64>>>);
+
+impl Drop for ActiveGuard {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        ACTIVE.with(|a| *a.borrow_mut() = previous);
+    }
+}
+
+/// hars patch: charges `fuel` to the render running on this thread, now.
+/// Fails (without charging more) once its budget is spent.
+pub(crate) fn consume_active(fuel: u64) -> Result<(), Error> {
+    ACTIVE.with(|a| match &*a.borrow() {
+        Some(remaining) => {
+            if remaining.get() <= 0 {
+                return Err(Error::from(ErrorKind::OutOfFuel));
+            }
+            consume_units(remaining, fuel.saturating_mul(UNITS_PER_FUEL))
+        }
+        None => Ok(()),
+    })
 }

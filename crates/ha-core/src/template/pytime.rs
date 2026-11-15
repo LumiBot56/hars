@@ -581,6 +581,7 @@ impl Object for TimeDelta {
         other: &Value,
         reflected: bool,
     ) -> Option<Result<Value, Error>> {
+        let op = if op == BinOp::EqItem { BinOp::Eq } else { op };
         Some(timedelta_op(self, op, other, reflected))
     }
 
@@ -893,6 +894,7 @@ impl Object for Date {
         other: &Value,
         reflected: bool,
     ) -> Option<Result<Value, Error>> {
+        let op = if op == BinOp::EqItem { BinOp::Eq } else { op };
         Some(date_op(self, op, other, reflected))
     }
 
@@ -1032,6 +1034,7 @@ impl Object for Time {
         other: &Value,
         reflected: bool,
     ) -> Option<Result<Value, Error>> {
+        let op = if op == BinOp::EqItem { BinOp::Eq } else { op };
         let me = Value::from_object(*self.as_ref());
         let (lhs, rhs) = if reflected {
             (other, &me)
@@ -1349,6 +1352,7 @@ impl Object for DateTime {
         other: &Value,
         reflected: bool,
     ) -> Option<Result<Value, Error>> {
+        let op = if op == BinOp::EqItem { BinOp::Eq } else { op };
         Some(datetime_op(self, op, other, reflected))
     }
 

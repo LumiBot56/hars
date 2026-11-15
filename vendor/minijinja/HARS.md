@@ -61,11 +61,13 @@ attributes as they are read):
   `GetAttr` and `GetItem` when a defined value hasn't got the attribute
   or item: hars words Jinja's undefined message from it (`'None' has no
   attribute 'state'`).
-- `src/value/object.rs` `Object::get_value_paid`, used by `src/vm/mod.rs`'s
-  `GetAttr` and `GetItem`, and `src/value/mod.rs` `charge_later`, drained
-  before each instruction in `src/vm/mod.rs`: an object that copies data
-  it holds (a state's attributes) pays its fuel before the copy when the
-  engine looks it up, and right after when a filter does.
+- `src/vm/fuel.rs` `activate` and `consume_active` (the tracker's
+  remaining fuel is shared through an `Rc`), set by `Executor::eval` in
+  `src/vm/mod.rs`, and `src/value/mod.rs` `consume_fuel_now`: an object
+  that copies data it holds (a state's attributes) charges the render
+  running on its thread before each copy, however it is read (`x.y`, a
+  filter's `attribute=`, a comparison), and copies nothing once the
+  budget is spent.
 
 To update minijinja: copy the new release here, reapply the changes, and
 run `cargo test -p ha-core template` (and, optimised,

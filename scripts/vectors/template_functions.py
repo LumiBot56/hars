@@ -516,6 +516,19 @@ TEMPLATES = [
     "{{ timedelta(seconds=1) / 1e-300 }}",
     "{{ timedelta(seconds=1) * 1e15 }}",
     "{{ timedelta(days=999999999) * 2.0 }}",
+    # `==` inside lists and dicts, and `in`: each item's own `__eq__`.
+    "{{ [as_datetime('2026-01-01T00:00:00')] == [as_datetime('2026-01-01T00:00:00Z')] }}",
+    "{% set d = as_local(as_datetime('2026-10-25T01:30:00Z')) %}{{ d == as_datetime('2026-10-25T01:30:00Z') }} {{ [d] == [as_datetime('2026-10-25T01:30:00Z')] }} {{ [d] == [d] }}",
+    "{% set d = as_local(as_datetime('2026-10-25T01:30:00Z')) %}{{ {'a': {'b': d}} == {'a': {'b': as_datetime('2026-10-25T01:30:00Z')}} }} {{ {'a': [now()]} == {'a': [utcnow()]} }}",
+    "{% set d = as_local(as_datetime('2026-10-25T01:30:00Z')) %}{{ as_datetime('2026-10-25T01:30:00Z') in [d] }} {{ d in [d] }} {{ utcnow() in [now()] }} {{ as_datetime('2026-01-01T00:00:00') in [as_datetime('2026-01-01T00:00:00Z')] }}",
+    "{{ [timedelta(hours=1)] == [timedelta(minutes=60)] }} {{ timedelta(0) in [0, timedelta(0)] }} {{ [now().date()] == [now()] }}",
+    "{{ [states.light.kitchen] == [states.light.kitchen] }}",
+    "{{ [states.light.kitchen] == [states.light.porch] }}",
+    # `statistics.median`: `(a + b) / 2` with the values' own operators.
+    "{{ median([timedelta(seconds=1), timedelta(seconds=3)], default='bad') }} {{ median([timedelta(seconds=3), timedelta(seconds=1), timedelta(seconds=2)]) }}",
+    "{{ median([today_at('10:00'), today_at('09:00')], default='bad') }} {{ median([today_at('10:00'), today_at('09:00'), today_at('11:00')]) }}",
+    "{{ median([today_at('10:00'), today_at('09:00')]) }}",
+    "{{ median([timedelta(days=999999999), timedelta(days=999999999)]) }}",
 ]
 
 # Conversations against the home: messages sent on one connection, in order.

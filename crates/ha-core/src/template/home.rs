@@ -301,32 +301,21 @@ impl Object for Attributes {
 
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         match self.find(key) {
-            Some(v) => {
-                // Read by a filter: paid before the next instruction.
-                minijinja::value::charge_later(json_cost(v));
-                Some(super::convert(v))
-            }
+            // Paid to the running render before the copy, however it is
+            // read (`x.y`, a filter's `attribute=`, a comparison); past the
+            // budget nothing is copied and the render stops.
+            Some(v) => match minijinja::value::consume_fuel_now(json_cost(v)) {
+                Ok(()) => Some(super::convert(v)),
+                Err(_) => {
+                    poison(super::OUT_OF_BUDGET.clone());
+                    None
+                }
+            },
             None => {
                 Attributes::missing(key);
                 None
             }
         }
-    }
-
-    fn get_value_paid(
-        self: &Arc<Self>,
-        state: &State<'_, '_>,
-        key: &Value,
-    ) -> Option<Result<Option<Value>, Error>> {
-        Some(match self.find(key) {
-            Some(v) => state
-                .consume_fuel(json_cost(v))
-                .map(|()| Some(super::convert(v))),
-            None => {
-                Attributes::missing(key);
-                Ok(None)
-            }
-        })
     }
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
@@ -644,18 +633,22 @@ impl Object for TemplateState {
         other: &Value,
         _reflected: bool,
     ) -> Option<Result<Value, Error>> {
-        if !matches!(op, BinOp::Eq | BinOp::Ne) {
+        if !matches!(op, BinOp::Eq | BinOp::Ne | BinOp::EqItem) {
             return None;
         }
+        let other_state = other.downcast_object_ref::<TemplateState>();
+        let same = other_state
+            .is_some_and(|o| Arc::ptr_eq(&o.state, &self.state) && o.collect == self.collect);
+        // In a container or `in`, Python finds the same object without
+        // asking it (and so without reading the state).
+        if op == BinOp::EqItem && same {
+            return Some(Ok(Value::from(true)));
+        }
         self.collect();
-        let same = match other.downcast_object_ref::<TemplateState>() {
-            Some(o) => {
-                o.collect();
-                Arc::ptr_eq(&o.state, &self.state) && o.collect == self.collect
-            }
-            None => false,
-        };
-        Some(Ok(Value::from(same == (op == BinOp::Eq))))
+        if let Some(o) = other_state {
+            o.collect();
+        }
+        Some(Ok(Value::from(same == (op != BinOp::Ne))))
     }
 
     fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {

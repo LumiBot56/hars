@@ -237,20 +237,20 @@ pub use crate::value::ops::object_binop;
 /// message. Set once.
 static MISSING: std::sync::OnceLock<fn(&Value, &Value)> = std::sync::OnceLock::new();
 
-std::thread_local! {
-    static FUEL_DEBT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// hars patch: fuel owed for work done where no render state is at hand
-/// (an object's [`get_value`](Object::get_value) called by a filter): the
-/// render on this thread pays it before its next instruction.
-pub fn charge_later(units: u64) {
-    FUEL_DEBT.with(|d| d.set(d.get().saturating_add(units)));
-}
-
-/// hars patch: the fuel owed, cleared.
-pub(crate) fn take_fuel_debt() -> u64 {
-    FUEL_DEBT.with(|d| d.replace(0))
+/// hars patch: charges `fuel` to the render running on this thread before
+/// work it can't pay for otherwise (an object's
+/// [`get_value`](Object::get_value), which has no state, copying data it
+/// holds). Fails once the budget is spent; outside a render it is free.
+pub fn consume_fuel_now(fuel: u64) -> Result<(), Error> {
+    #[cfg(feature = "fuel")]
+    {
+        crate::vm::fuel::consume_active(fuel)
+    }
+    #[cfg(not(feature = "fuel"))]
+    {
+        let _ = fuel;
+        Ok(())
+    }
 }
 
 /// hars patch: sets the hook [`missing`] calls.
@@ -764,7 +764,15 @@ impl PartialEq for Value {
                         }
                         if a.is_same_object(b) {
                             return true;
-                        } else if a.is_same_object_type(b) {
+                        }
+                        // hars patch: an object's own `==` (Python's
+                        // `__eq__`), which an ordering can't express.
+                        if let Some(Ok(rv)) =
+                            ops::object_binop(crate::value::BinOp::EqItem, self, other)
+                        {
+                            return rv.is_true();
+                        }
+                        if a.is_same_object_type(b) {
                             if let Some(rv) = a.custom_cmp(b) {
                                 return rv == Ordering::Equal;
                             }

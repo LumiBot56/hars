@@ -403,9 +403,7 @@ fn runtime_error(
                 "NotImplementedError: hars does not support calling the method '{name}' in templates yet"
             ))
         }
-        ErrorKind::OutOfFuel => TemplateError(format!(
-            "TemplateError: hars stopped the template: it needed more than its budget of {FUEL} steps (about 32 MB of data)"
-        )),
+        ErrorKind::OutOfFuel => TemplateError(OUT_OF_BUDGET.clone()),
         // A Python exception raised by hars's own filters and tests.
         ErrorKind::InvalidOperation if is_python_error(detail) => TemplateError(detail.into()),
         ErrorKind::InvalidOperation if detail == "range has too many elements" => TemplateError(
@@ -529,6 +527,13 @@ const REMOVED_TESTS: &[&str] = &[
 /// memory. Half a million is far beyond any dashboard template (the
 /// default dashboard's heading uses about 10) and is about 32 MB of data.
 pub const FUEL: u64 = 500_000;
+
+/// The error of a render that ran out of [`FUEL`].
+static OUT_OF_BUDGET: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "TemplateError: hars stopped the template: it needed more than its budget of {FUEL} steps (about 32 MB of data)"
+    )
+});
 
 /// Deepest nesting `str()` prints (Python stops with `RecursionError`).
 const MAX_REPR_DEPTH: usize = 100;

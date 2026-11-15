@@ -13030,5 +13030,311 @@
    "domains": [],
    "time": false
   }
+ },
+ {
+  "template": "{{ [as_datetime('2026-01-01T00:00:00')] == [as_datetime('2026-01-01T00:00:00Z')] }}",
+  "strict": false,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [as_datetime('2026-01-01T00:00:00')] == [as_datetime('2026-01-01T00:00:00Z')] }}",
+  "strict": true,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{% set d = as_local(as_datetime('2026-10-25T01:30:00Z')) %}{{ d == as_datetime('2026-10-25T01:30:00Z') }} {{ [d] == [as_datetime('2026-10-25T01:30:00Z')] }} {{ [d] == [d] }}",
+  "strict": false,
+  "result": {
+   "json": "False False True"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{% set d = as_local(as_datetime('2026-10-25T01:30:00Z')) %}{{ d == as_datetime('2026-10-25T01:30:00Z') }} {{ [d] == [as_datetime('2026-10-25T01:30:00Z')] }} {{ [d] == [d] }}",
+  "strict": true,
+  "result": {
+   "json": "False False True"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{% set d = as_local(as_datetime('2026-10-25T01:30:00Z')) %}{{ {'a': {'b': d}} == {'a': {'b': as_datetime('2026-10-25T01:30:00Z')}} }} {{ {'a': [now()]} == {'a': [utcnow()]} }}",
+  "strict": false,
+  "result": {
+   "json": "False True"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": true
+  }
+ },
+ {
+  "template": "{% set d = as_local(as_datetime('2026-10-25T01:30:00Z')) %}{{ {'a': {'b': d}} == {'a': {'b': as_datetime('2026-10-25T01:30:00Z')}} }} {{ {'a': [now()]} == {'a': [utcnow()]} }}",
+  "strict": true,
+  "result": {
+   "json": "False True"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": true
+  }
+ },
+ {
+  "template": "{% set d = as_local(as_datetime('2026-10-25T01:30:00Z')) %}{{ as_datetime('2026-10-25T01:30:00Z') in [d] }} {{ d in [d] }} {{ utcnow() in [now()] }} {{ as_datetime('2026-01-01T00:00:00') in [as_datetime('2026-01-01T00:00:00Z')] }}",
+  "strict": false,
+  "result": {
+   "json": "False True True False"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": true
+  }
+ },
+ {
+  "template": "{% set d = as_local(as_datetime('2026-10-25T01:30:00Z')) %}{{ as_datetime('2026-10-25T01:30:00Z') in [d] }} {{ d in [d] }} {{ utcnow() in [now()] }} {{ as_datetime('2026-01-01T00:00:00') in [as_datetime('2026-01-01T00:00:00Z')] }}",
+  "strict": true,
+  "result": {
+   "json": "False True True False"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": true
+  }
+ },
+ {
+  "template": "{{ [timedelta(hours=1)] == [timedelta(minutes=60)] }} {{ timedelta(0) in [0, timedelta(0)] }} {{ [now().date()] == [now()] }}",
+  "strict": false,
+  "result": {
+   "json": "True True False"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": true
+  }
+ },
+ {
+  "template": "{{ [timedelta(hours=1)] == [timedelta(minutes=60)] }} {{ timedelta(0) in [0, timedelta(0)] }} {{ [now().date()] == [now()] }}",
+  "strict": true,
+  "result": {
+   "json": "True True False"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": true
+  }
+ },
+ {
+  "template": "{{ [states.light.kitchen] == [states.light.kitchen] }}",
+  "strict": false,
+  "result": {
+   "json": true
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [states.light.kitchen] == [states.light.kitchen] }}",
+  "strict": true,
+  "result": {
+   "json": true
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [states.light.kitchen] == [states.light.porch] }}",
+  "strict": false,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen",
+    "light.porch"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [states.light.kitchen] == [states.light.porch] }}",
+  "strict": true,
+  "result": {
+   "json": false
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen",
+    "light.porch"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ median([timedelta(seconds=1), timedelta(seconds=3)], default='bad') }} {{ median([timedelta(seconds=3), timedelta(seconds=1), timedelta(seconds=2)]) }}",
+  "strict": false,
+  "result": {
+   "json": "0:00:02 0:00:02"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ median([timedelta(seconds=1), timedelta(seconds=3)], default='bad') }} {{ median([timedelta(seconds=3), timedelta(seconds=1), timedelta(seconds=2)]) }}",
+  "strict": true,
+  "result": {
+   "json": "0:00:02 0:00:02"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ median([today_at('10:00'), today_at('09:00')], default='bad') }} {{ median([today_at('10:00'), today_at('09:00'), today_at('11:00')]) }}",
+  "strict": false,
+  "result": {
+   "json": "bad 2026-03-29 10:00:00+01:00"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": true
+  }
+ },
+ {
+  "template": "{{ median([today_at('10:00'), today_at('09:00')], default='bad') }} {{ median([today_at('10:00'), today_at('09:00'), today_at('11:00')]) }}",
+  "strict": true,
+  "result": {
+   "json": "bad 2026-03-29 10:00:00+01:00"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": true
+  }
+ },
+ {
+  "template": "{{ median([today_at('10:00'), today_at('09:00')]) }}",
+  "strict": false,
+  "error": "ValueError: Template error: median got invalid input '([datetime.datetime(2026, 3, 29, 10, 0, tzinfo=zoneinfo.ZoneInfo(key='Europe/London')), datetime.datetime(2026, 3, 29, 9, 0, tzinfo=zoneinfo.ZoneInfo(key='Europe/London'))],)' when rendering template '{{ median([today_at('10:00'), today_at('09:00')]) }}' but no default was specified",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": true
+  }
+ },
+ {
+  "template": "{{ median([today_at('10:00'), today_at('09:00')]) }}",
+  "strict": true,
+  "error": "ValueError: Template error: median got invalid input '([datetime.datetime(2026, 3, 29, 10, 0, tzinfo=zoneinfo.ZoneInfo(key='Europe/London')), datetime.datetime(2026, 3, 29, 9, 0, tzinfo=zoneinfo.ZoneInfo(key='Europe/London'))],)' when rendering template '{{ median([today_at('10:00'), today_at('09:00')]) }}' but no default was specified",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": true
+  }
+ },
+ {
+  "template": "{{ median([timedelta(days=999999999), timedelta(days=999999999)]) }}",
+  "strict": false,
+  "error": "OverflowError: days=1999999998; must have magnitude <= 999999999",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ median([timedelta(days=999999999), timedelta(days=999999999)]) }}",
+  "strict": true,
+  "error": "OverflowError: days=1999999998; must have magnitude <= 999999999",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
  }
 ]
