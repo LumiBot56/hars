@@ -591,7 +591,8 @@ fn repeated_and_derived_work_is_paid_for() {
         "{% set a = 'x' * 10000000 %}{% set b = 'x' * 10000000 %}{% for i in range(40000) %}{% if a == b %}{% endif %}{% endfor %}ok",
         "{% set a = [range(10000) | list] * 2 %}{% for i in range(100000) %}{% if 'y' in a %}{% endif %}{% endfor %}ok",
         "{% set a = [range(10000) | list, range(10000) | list] %}{% for i in range(20000) %}{{ (a | sort | length) * 0 }}{% endfor %}ok",
-        "{% set a = [range(10000) | list, range(10000) | list] %}{% for i in range(20000) %}{{ (a | unique | list | length) * 0 }}{% endfor %}ok",
+        "{% set a = ['x' * 30000, 'x' * 30000] %}{% for i in range(20000) %}{{ (a | unique | list | length) * 0 }}{% endfor %}ok",
+        "{% set a = [(1, now), (1, now)] * 1000 %}{% for i in range(20000) %}{{ (a | unique | list | length) * 0 }}{% endfor %}ok",
         "{% set a = [range(10000) | list, range(10000) | list] %}{% for i in range(20000) %}{{ (a | max | length) * 0 }}{% endfor %}ok",
     ] {
         let err = budget(source).unwrap_err();

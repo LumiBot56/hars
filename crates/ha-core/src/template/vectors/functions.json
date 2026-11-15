@@ -13336,5 +13336,383 @@
    "domains": [],
    "time": false
   }
+ },
+ {
+  "template": "{{ [as_datetime('2024-01-01T00:00:00'), as_datetime('2024-01-01T00:00:00+00:00')] | unique | list | count }}",
+  "strict": false,
+  "result": {
+   "json": 2
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [as_datetime('2024-01-01T00:00:00'), as_datetime('2024-01-01T00:00:00+00:00')] | unique | list | count }}",
+  "strict": true,
+  "result": {
+   "json": 2
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [timedelta(hours=1), timedelta(minutes=60), now(), utcnow(), now().date()] | unique | list | count }}",
+  "strict": false,
+  "result": {
+   "json": 3
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": true
+  }
+ },
+ {
+  "template": "{{ [timedelta(hours=1), timedelta(minutes=60), now(), utcnow(), now().date()] | unique | list | count }}",
+  "strict": true,
+  "result": {
+   "json": 3
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": true
+  }
+ },
+ {
+  "template": "{{ [1, 1.0, true, 'A', 'a', none, none, 0, false] | unique | list }} {{ ['A', 'a'] | unique(case_sensitive=true) | list }}",
+  "strict": false,
+  "result": {
+   "json": "[1, 'A', None, 0] ['A', 'a']"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [1, 1.0, true, 'A', 'a', none, none, 0, false] | unique | list }} {{ ['A', 'a'] | unique(case_sensitive=true) | list }}",
+  "strict": true,
+  "result": {
+   "json": "[1, 'A', None, 0] ['A', 'a']"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [(1, 2), (1, 2), (2, 1)] | unique | list }}",
+  "strict": false,
+  "result": {
+   "json": [
+    [
+     1,
+     2
+    ],
+    [
+     2,
+     1
+    ]
+   ]
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [(1, 2), (1, 2), (2, 1)] | unique | list }}",
+  "strict": true,
+  "result": {
+   "json": [
+    [
+     1,
+     2
+    ],
+    [
+     2,
+     1
+    ]
+   ]
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [(1, 2), (1, [2])] | unique | list }}",
+  "strict": false,
+  "error": "TypeError: cannot use 'tuple' as a set element (unhashable type: 'list')",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [(1, 2), (1, [2])] | unique | list }}",
+  "strict": true,
+  "error": "TypeError: cannot use 'tuple' as a set element (unhashable type: 'list')",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [[1], [1]] | unique | list }}",
+  "strict": false,
+  "error": "TypeError: cannot use 'list' as a set element (unhashable type: 'list')",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [[1], [1]] | unique | list }}",
+  "strict": true,
+  "error": "TypeError: cannot use 'list' as a set element (unhashable type: 'list')",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [{'a': 1}] | unique | list }}",
+  "strict": false,
+  "error": "TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [{'a': 1}] | unique | list }}",
+  "strict": true,
+  "error": "TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ ([states.light.kitchen, states.light.porch] * 3) | unique | list | count }}",
+  "strict": false,
+  "error": "TypeError: cannot use 'homeassistant.helpers.template.states.TemplateState' as a set element (unhashable type: 'TemplateState')",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ ([states.light.kitchen, states.light.porch] * 3) | unique | list | count }}",
+  "strict": true,
+  "error": "TypeError: cannot use 'homeassistant.helpers.template.states.TemplateState' as a set element (unhashable type: 'TemplateState')",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [states.light.kitchen.attributes] | unique | list }}",
+  "strict": false,
+  "error": "TypeError: cannot use 'homeassistant.util.read_only_dict.ReadOnlyDict' as a set element (unhashable type: 'ReadOnlyDict')",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [states.light.kitchen.attributes] | unique | list }}",
+  "strict": true,
+  "error": "TypeError: cannot use 'homeassistant.util.read_only_dict.ReadOnlyDict' as a set element (unhashable type: 'ReadOnlyDict')",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light | unique(attribute='state') | map(attribute='entity_id') | list }}",
+  "strict": false,
+  "result": {
+   "json": [
+    "light.kitchen",
+    "light.porch"
+   ]
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [
+    "light"
+   ],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light | unique(attribute='state') | map(attribute='entity_id') | list }}",
+  "strict": true,
+  "result": {
+   "json": [
+    "light.kitchen",
+    "light.porch"
+   ]
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [
+    "light"
+   ],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen.attributes | unique | list }}",
+  "strict": false,
+  "result": {
+   "json": [
+    "brightness",
+    "color_mode",
+    "effect",
+    "friendly_name",
+    "rgb_color",
+    "supported_color_modes"
+   ]
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen.attributes | unique | list }}",
+  "strict": true,
+  "result": {
+   "json": [
+    "brightness",
+    "color_mode",
+    "effect",
+    "friendly_name",
+    "rgb_color",
+    "supported_color_modes"
+   ]
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states | unique(attribute='domain') | map(attribute='entity_id') | list }}",
+  "strict": false,
+  "result": {
+   "json": [
+    "binary_sensor.door",
+    "light.kitchen",
+    "sensor.nested",
+    "sun.sun",
+    "switch.unavailable_one"
+   ]
+  },
+  "log": [],
+  "listeners": {
+   "all": true,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states | unique(attribute='domain') | map(attribute='entity_id') | list }}",
+  "strict": true,
+  "result": {
+   "json": [
+    "binary_sensor.door",
+    "light.kitchen",
+    "sensor.nested",
+    "sun.sun",
+    "switch.unavailable_one"
+   ]
+  },
+  "log": [],
+  "listeners": {
+   "all": true,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
  }
 ]

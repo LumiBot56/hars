@@ -529,6 +529,19 @@ TEMPLATES = [
     "{{ median([today_at('10:00'), today_at('09:00')], default='bad') }} {{ median([today_at('10:00'), today_at('09:00'), today_at('11:00')]) }}",
     "{{ median([today_at('10:00'), today_at('09:00')]) }}",
     "{{ median([timedelta(days=999999999), timedelta(days=999999999)]) }}",
+    # `unique`: a Python `set` (hash, then `==`).
+    "{{ [as_datetime('2024-01-01T00:00:00'), as_datetime('2024-01-01T00:00:00+00:00')] | unique | list | count }}",
+    "{{ [timedelta(hours=1), timedelta(minutes=60), now(), utcnow(), now().date()] | unique | list | count }}",
+    "{{ [1, 1.0, true, 'A', 'a', none, none, 0, false] | unique | list }} {{ ['A', 'a'] | unique(case_sensitive=true) | list }}",
+    "{{ [(1, 2), (1, 2), (2, 1)] | unique | list }}",
+    "{{ [(1, 2), (1, [2])] | unique | list }}",
+    "{{ [[1], [1]] | unique | list }}",
+    "{{ [{'a': 1}] | unique | list }}",
+    "{{ ([states.light.kitchen, states.light.porch] * 3) | unique | list | count }}",
+    "{{ [states.light.kitchen.attributes] | unique | list }}",
+    "{{ states.light | unique(attribute='state') | map(attribute='entity_id') | list }}",
+    "{{ states.light.kitchen.attributes | unique | list }}",
+    "{{ states | unique(attribute='domain') | map(attribute='entity_id') | list }}",
 ]
 
 # Conversations against the home: messages sent on one connection, in order.

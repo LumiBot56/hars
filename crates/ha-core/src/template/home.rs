@@ -20,7 +20,9 @@
 use super::Charged;
 use super::jinja::{py_eq, py_error, type_name};
 use crate::{EntityId, Hass, State as HaState};
-use minijinja::value::{BinOp, Enumerator, Object, ObjectExt, ObjectRepr, Value, ValueKind};
+use minijinja::value::{
+    BinOp, DynObject, Enumerator, Object, ObjectExt, ObjectRepr, Value, ValueKind,
+};
 use minijinja::{Environment, Error, ErrorKind, State};
 use smol_str::SmolStr;
 use std::cell::RefCell;
@@ -236,8 +238,15 @@ fn lookup(hass: &Hass, entity_id: &str) -> Option<Arc<HaState>> {
 
 /// A state's attributes (`ReadOnlyDict`), sharing the state: a value is
 /// made from the state's JSON when it is read, paid for first.
-#[derive(Debug)]
 pub(super) struct Attributes(Arc<HaState>);
+
+// Hand-written: a derived `Debug` (which minijinja's fallbacks print)
+// would copy the whole state unpaid.
+impl fmt::Debug for Attributes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<attributes of {}>", self.0.entity_id.as_str())
+    }
+}
 
 const READ_ONLY_DICT: &str = "homeassistant.util.read_only_dict.ReadOnlyDict object";
 
@@ -245,26 +254,82 @@ const READ_ONLY_DICT: &str = "homeassistant.util.read_only_dict.ReadOnlyDict obj
 /// strings, as the engine charges what it makes. Stops counting past a
 /// render's whole budget.
 fn json_cost(v: &serde_json::Value) -> u64 {
+    // A stack of the containers being walked (as many as it is deep),
+    // never a queue of all their children.
+    enum Walk<'a> {
+        Items(std::slice::Iter<'a, serde_json::Value>),
+        Entries(serde_json::map::Iter<'a>),
+    }
     let mut cost = 0u64;
-    let mut pending = vec![v];
-    while let Some(v) = pending.pop() {
-        cost += 1;
-        if cost > super::FUEL {
-            break;
-        }
-        match v {
-            serde_json::Value::String(s) => cost += s.len() as u64 / 64,
-            serde_json::Value::Array(items) => pending.extend(items),
-            serde_json::Value::Object(m) => {
-                for (k, item) in m {
-                    cost += k.len() as u64 / 64;
-                    pending.push(item);
-                }
+    let mut stack: Vec<Walk> = Vec::new();
+    let mut next = Some(v);
+    loop {
+        if let Some(v) = next.take() {
+            cost += 1;
+            match v {
+                serde_json::Value::String(s) => cost += s.len() as u64 / 64,
+                serde_json::Value::Array(items) => stack.push(Walk::Items(items.iter())),
+                serde_json::Value::Object(m) => stack.push(Walk::Entries(m.iter())),
+                _ => {}
             }
-            _ => {}
+        }
+        if cost > super::FUEL {
+            return cost;
+        }
+        let Some(top) = stack.last_mut() else {
+            return cost;
+        };
+        next = match top {
+            Walk::Items(items) => items.next(),
+            Walk::Entries(entries) => entries.next().map(|(k, v)| {
+                cost += k.len() as u64 / 64;
+                v
+            }),
+        };
+        if next.is_none() {
+            stack.pop();
         }
     }
-    cost
+}
+
+/// The fuel a copy of a string costs.
+fn str_cost(s: &str) -> u64 {
+    1 + s.len() as u64 / 64
+}
+
+/// Pays `fuel` to the running render, now; past its budget the render
+/// fails (with the budget's error), and the caller copies nothing. Every
+/// copy of state data into the template goes through here or through
+/// `State::consume_fuel`, before the copy is made.
+fn pay(fuel: u64) -> bool {
+    match minijinja::value::consume_fuel_now(fuel) {
+        Ok(()) => true,
+        Err(_) => {
+            poison(super::OUT_OF_BUDGET.clone());
+            false
+        }
+    }
+}
+
+/// A string from state data, paid for first.
+fn paid_str(s: &str) -> Option<Value> {
+    pay(str_cost(s)).then(|| Value::from(s))
+}
+
+/// A JSON value from state data as a template value, paid for first.
+fn paid_json(v: &serde_json::Value) -> Option<Value> {
+    pay(json_cost(v)).then(|| super::convert(v))
+}
+
+/// What printing a state costs (`State.__repr__`): its id, state and
+/// attributes.
+fn repr_cost(s: &HaState) -> u64 {
+    s.attributes
+        .iter()
+        .map(|(k, v)| json_cost(v) + str_cost(k))
+        .sum::<u64>()
+        + str_cost(&s.state)
+        + str_cost(s.entity_id.as_str())
 }
 
 impl Attributes {
@@ -304,13 +369,7 @@ impl Object for Attributes {
             // Paid to the running render before the copy, however it is
             // read (`x.y`, a filter's `attribute=`, a comparison); past the
             // budget nothing is copied and the render stops.
-            Some(v) => match minijinja::value::consume_fuel_now(json_cost(v)) {
-                Ok(()) => Some(super::convert(v)),
-                Err(_) => {
-                    poison(super::OUT_OF_BUDGET.clone());
-                    None
-                }
-            },
+            Some(v) => paid_json(v),
             None => {
                 Attributes::missing(key);
                 None
@@ -320,7 +379,12 @@ impl Object for Attributes {
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         self.mapped_enumerator(|this| {
-            Box::new(this.0.attributes.keys().map(|k| Value::from(k.as_str())))
+            Box::new(
+                this.0
+                    .attributes
+                    .keys()
+                    .map(|k| paid_str(k).unwrap_or_default()),
+            )
         })
     }
 
@@ -472,7 +536,6 @@ impl Object for DomainStates {
 
 /// `TemplateState`: one state. Reading it collects its entity, unless it
 /// came from iterating (`collect=False`).
-#[derive(Debug)]
 pub(super) struct TemplateState {
     state: Arc<HaState>,
     collect: bool,
@@ -592,8 +655,8 @@ impl Object for TemplateState {
             return state_no_attribute(key);
         };
         let v = match name {
-            "entity_id" => return Some(Value::from(s.entity_id.as_str())),
-            "state" => Value::from(s.state.as_str()),
+            "entity_id" => return paid_str(s.entity_id.as_str()),
+            "state" => paid_str(&s.state)?,
             "attributes" => Value::from_object(Attributes(s.clone())),
             "last_changed" => TemplateState::timestamp(s.last_changed),
             "last_updated" => TemplateState::timestamp(s.last_updated),
@@ -601,10 +664,15 @@ impl Object for TemplateState {
             "last_changed_timestamp" => Value::from(micros_to_secs(s.last_changed)),
             "last_reported_timestamp" => Value::from(micros_to_secs(s.last_reported.get())),
             "context" => Value::from_object(Context(s.clone())),
-            "domain" => Value::from(s.entity_id.domain()),
-            "object_id" => Value::from(s.entity_id.object_id()),
-            "name" => Value::from(self.name()),
-            "state_with_unit" => Value::from(format_state(s, true, true)),
+            "domain" => paid_str(s.entity_id.domain())?,
+            "object_id" => paid_str(s.entity_id.object_id())?,
+            "name" => match s.attributes.get("friendly_name") {
+                Some(n) if py_truthy(n) => pay(json_cost(n)).then(|| Value::from(self.name()))?,
+                _ => paid_str(s.entity_id.object_id())?,
+            },
+            "state_with_unit" => {
+                pay(format_cost(s)).then(|| Value::from(format_state(s, true, true)))?
+            }
             _ if STATE_METHODS.contains(&name) => {
                 poison(format!(
                     "NotImplementedError: hars does not support the state's '{name}' in templates yet"
@@ -651,7 +719,24 @@ impl Object for TemplateState {
         Some(Ok(Value::from(same == (op != BinOp::Ne))))
     }
 
+    /// An ordering for minijinja's own sorts and sets, without printing
+    /// anything (Python has none: `<` raises, which hars's sort checks).
+    fn custom_cmp(self: &Arc<Self>, other: &DynObject) -> Option<std::cmp::Ordering> {
+        let o = other.downcast_ref::<TemplateState>()?;
+        Some(
+            self.state
+                .entity_id
+                .cmp(&o.state.entity_id)
+                .then_with(|| Arc::as_ptr(&self.state).cmp(&Arc::as_ptr(&o.state)))
+                .then_with(|| self.collect.cmp(&o.collect)),
+        )
+    }
+
     fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Past the budget the render fails; nothing is printed.
+        if !pay(repr_cost(&self.state)) {
+            return Ok(());
+        }
         let mut s = String::new();
         state_repr(&mut s, &self.state);
         f.write_str(&s)
@@ -708,8 +793,23 @@ fn repr_helper_map(out: &mut String, m: &serde_json::Map<String, serde_json::Val
 }
 
 /// `State.context`: its ids.
-#[derive(Debug)]
 pub(super) struct Context(Arc<HaState>);
+
+impl fmt::Debug for Context {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<homeassistant.core.Context object>")
+    }
+}
+
+impl fmt::Debug for TemplateState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "<template TemplateState({})>",
+            self.state.entity_id.as_str()
+        )
+    }
+}
 
 impl Object for Context {
     fn repr(self: &Arc<Self>) -> ObjectRepr {
@@ -747,10 +847,7 @@ pub(super) fn py_repr<W: fmt::Write>(
     }
     if let Some(t) = o.downcast_ref::<TemplateState>() {
         // Its size is the state's: paid before it is built.
-        let size = t.state.attributes.values().map(json_cost).sum::<u64>()
-            + t.state.state.len() as u64 / 64
-            + 1;
-        if let Err(e) = out.state.consume_fuel(size) {
+        if let Err(e) = out.state.consume_fuel(repr_cost(&t.state)) {
             return Some(Err(e));
         }
         let mut s = String::new();
@@ -781,6 +878,12 @@ fn format_state(s: &HaState, rounded: bool, with_unit: bool) -> String {
         }
     }
     out
+}
+
+/// What [`format_state`] costs: the state, its unit, and up to 1000
+/// digits of rounding.
+fn format_cost(s: &HaState) -> u64 {
+    str_cost(&s.state) + 16 + s.attributes.get("unit_of_measurement").map_or(0, json_cost)
 }
 
 /// `sensor.async_rounded_state`: `f"{float(state):z.{precision}f}"`.
@@ -819,8 +922,10 @@ fn states_call(state: &State, args: &[Value]) -> Result<Value, Error> {
     let with_unit = with_unit.is_some_and(|v| v.is_true());
     let rounded = rounded.map_or(with_unit, |v| v.is_true());
     if rounded || with_unit {
+        state.consume_fuel(format_cost(&s))?;
         return Ok(Value::from(format_state(&s, rounded, with_unit)));
     }
+    state.consume_fuel(str_cost(&s.state))?;
     Ok(Value::from(s.state.as_str()))
 }
 
@@ -867,6 +972,7 @@ pub(super) fn add(env: &mut Environment<'static>) {
             return Ok(false);
         };
         collect_entity(s.entity_id.as_str());
+        state.consume_fuel(str_cost(&s.state))?;
         let current = Value::from(s.state.as_str());
         if py_eq(state, &current, &want)? {
             return Ok(true);
