@@ -21,3 +21,5 @@ Read `docs/ARCHITECTURE.md` and `docs/ROADMAP.md` before starting work.
 - Add a new crate only when a module clearly outgrows its current crate.
 - `unsafe` is denied workspace-wide; justify any exception in review.
 - Every behaviour change ships with a test.
+- Test vectors made by running HA's code ship with the script that made
+  them, in `scripts/vectors/` (see its README).
