@@ -61,7 +61,31 @@ const NOTIFY: &str = "notify";
 
 /// Every loaded registration, by webhook id (shared with `MobileApp`).
 pub(super) type Registrations = Arc<RwLock<HashMap<Arc<str>, Arc<Registration>>>>;
-type Channels = Arc<Mutex<HashMap<Arc<str>, Arc<PushChannel>>>>;
+type Channels = Arc<Mutex<ChannelMap>>;
+
+/// The registered channel of each app, and the generation of each app's
+/// latest open (counted under the same lock), so an open that first had to
+/// send its predecessor's pending messages by cloud registers only if no
+/// newer open came meanwhile.
+#[derive(Default)]
+struct ChannelMap {
+    live: HashMap<Arc<str>, Arc<PushChannel>>,
+    latest: HashMap<Arc<str>, u64>,
+    opens: u64,
+}
+
+impl std::ops::Deref for ChannelMap {
+    type Target = HashMap<Arc<str>, Arc<PushChannel>>;
+    fn deref(&self) -> &Self::Target {
+        &self.live
+    }
+}
+
+impl std::ops::DerefMut for ChannelMap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.live
+    }
+}
 
 /// What the relay answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,7 +228,7 @@ pub struct PushChannel {
     support_confirm: bool,
     /// Queues one channel event (the notification's JSON) to the app.
     send: Box<dyn Fn(&str) + Send + Sync>,
-    channels: Weak<Mutex<HashMap<Arc<str>, Arc<PushChannel>>>>,
+    channels: Weak<Mutex<ChannelMap>>,
     cloud: Cloud,
     state: Mutex<ChannelState>,
 }
@@ -303,15 +327,12 @@ impl PushChannel {
     fn begin_teardown(&self) -> Option<Vec<Pending>> {
         match self.channels.upgrade() {
             Some(channels) => self.teardown_locked(&mut channels.lock()),
-            None => self.teardown_locked(&mut HashMap::new()),
+            None => self.teardown_locked(&mut ChannelMap::default()),
         }
     }
 
     /// [`PushChannel::begin_teardown`] with the map lock held.
-    fn teardown_locked(
-        &self,
-        channels: &mut HashMap<Arc<str>, Arc<PushChannel>>,
-    ) -> Option<Vec<Pending>> {
+    fn teardown_locked(&self, channels: &mut ChannelMap) -> Option<Vec<Pending>> {
         let mut state = self.state.lock();
         if state.torn_down {
             return None;
@@ -435,6 +456,9 @@ impl Notifier {
         // Lookup, teardown of the channel displaced and insert in one step,
         // so two opens at once can't both miss each other.
         let mut channels = self.channels.lock();
+        channels.opens += 1;
+        let generation = channels.opens;
+        channels.latest.insert(webhook_id.clone(), generation);
         let old = channels.get(&webhook_id).cloned();
         let pending = old
             .and_then(|old| old.teardown_locked(&mut channels))
@@ -452,12 +476,13 @@ impl Notifier {
                 new.mark_torn_down();
                 return Err(e);
             }
-            // Unless the app gave up on it meanwhile, or a channel opened
-            // since has taken its place (the newest open wins; HA would
-            // overwrite that one without tearing it down).
+            // Unless the app gave up on it meanwhile, or opened another
+            // since, registered or still on its way (the newest open wins;
+            // HA would overwrite a newer channel without tearing it down).
             let mut channels = channels.lock();
             let mut state = new.state.lock();
-            if !state.torn_down && !channels.contains_key(&webhook_id) {
+            let newest = channels.latest.get(&webhook_id) == Some(&generation);
+            if !state.torn_down && newest {
                 channels.insert(webhook_id, new.clone());
             } else {
                 state.torn_down = true;
@@ -1255,6 +1280,12 @@ mod tests {
 
     /// One app (webhook `w`) with cloud push, its services registered.
     fn phone_notifier() -> (Hass, Arc<Notifier>, Arc<Counting>) {
+        let relay = Arc::new(Counting::default());
+        let (hass, n) = phone_notifier_with(relay.clone());
+        (hass, n, relay)
+    }
+
+    fn phone_notifier_with(relay: Arc<dyn Relay>) -> (Hass, Arc<Notifier>) {
         let hass = Hass::new();
         hass.start();
         let registry = Registry::in_memory(&hass, Default::default());
@@ -1265,10 +1296,75 @@ mod tests {
         let reg = Arc::new(Registration::from_entry(entry.as_object().unwrap()).unwrap());
         let regs: Registrations = Default::default();
         regs.write().insert(reg.webhook_id.clone(), reg);
-        let relay = Arc::new(Counting::default());
-        let n = Notifier::new(&hass, registry, regs, relay.clone());
+        let n = Notifier::new(&hass, registry, regs, relay);
         n.register_services();
-        (hass, n, relay)
+        (hass, n)
+    }
+
+    /// A relay whose answers wait for the test to open their gate, one per
+    /// push, in order.
+    #[derive(Debug, Default)]
+    struct Gated(Mutex<std::collections::VecDeque<tokio::sync::oneshot::Receiver<()>>>);
+
+    impl Relay for Gated {
+        fn post(&self, _: &str, _: String) -> RelayFuture {
+            let gate = self.0.lock().pop_front().expect("a gate per push");
+            Box::pin(async move {
+                let _ = gate.await;
+                Ok(RelayAnswer {
+                    status: 200,
+                    content_type: "application/json".into(),
+                    body: b"{}".to_vec(),
+                })
+            })
+        }
+    }
+
+    /// Review regression: an older open still sending its predecessor's
+    /// pending messages by cloud must not register over a newer one. A
+    /// replaces X (X had a message pending), B opens and gets a message,
+    /// C replaces B; A's pushes finish first, then C's: C, the newest, is
+    /// the channel, and A is torn down.
+    #[tokio::test]
+    async fn a_delayed_older_open_does_not_take_over() {
+        let relay = Arc::new(Gated::default());
+        let (gate_a, wait_a) = tokio::sync::oneshot::channel();
+        let (gate_c, wait_c) = tokio::sync::oneshot::channel();
+        relay.0.lock().extend([wait_a, wait_c]);
+        let (hass, n) = phone_notifier_with(relay);
+        let probes: Vec<Arc<Probe>> = (0..4).map(|_| Arc::new(Probe::default())).collect();
+        let [x, a, b, c] = [0, 1, 2, 3].map(|i| probes[i].clone());
+
+        let (_, none) = open(&n, true, &x);
+        assert!(none.is_none());
+        notify(&hass, 0).await;
+        let (a_channel, opening_a) = open(&n, true, &a);
+        let opening_a = tokio::spawn(opening_a.expect("X had a message pending"));
+        tokio::task::yield_now().await;
+        let (b_channel, none) = open(&n, true, &b);
+        assert!(none.is_none());
+        notify(&hass, 1).await;
+        assert_eq!(b.events.lock().len(), 1);
+        let (c_channel, opening_c) = open(&n, true, &c);
+        let opening_c = tokio::spawn(opening_c.expect("B had a message pending"));
+        tokio::task::yield_now().await;
+
+        gate_a.send(()).unwrap();
+        opening_a.await.unwrap().unwrap();
+        gate_c.send(()).unwrap();
+        opening_c.await.unwrap().unwrap();
+
+        let live = n.channels.lock().get("w").cloned().expect("a channel");
+        assert!(
+            Arc::ptr_eq(&live, &c_channel),
+            "the newest open is the channel"
+        );
+        for old in [&a_channel, &b_channel] {
+            assert!(old.state.lock().torn_down);
+        }
+        notify(&hass, 2).await;
+        assert_eq!(c.events.lock().len(), 1);
+        assert!(a.events.lock().is_empty());
     }
 
     /// What one channel's connection was sent, and how many of those went
