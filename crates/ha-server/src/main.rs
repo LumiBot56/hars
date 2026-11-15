@@ -3,6 +3,7 @@
 use ha_core::Hass;
 
 mod import;
+mod shadow;
 use std::future::IntoFuture;
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
@@ -83,6 +84,8 @@ async fn run(thp_disabled: std::io::Result<bool>) -> anyhow::Result<()> {
     }
 
     let hass = Hass::new();
+    // Beside the HA being replaced: nothing acts on a device (docs/SHADOW.md).
+    let shadow = std::env::var_os("HARS_SHADOW").is_some_and(|v| v == "1");
     let addr = std::env::var("HARS_BIND").unwrap_or_else(|_| "0.0.0.0:8123".into());
     let mut api_config = api_config()?;
     let config_dir = config_dir()?;
@@ -118,6 +121,11 @@ async fn run(thp_disabled: std::io::Result<bool>) -> anyhow::Result<()> {
     match ha_recorder::Recorder::start(&hass, config_dir.join(".hars/recorder"), &settings).await {
         Ok(recorder) => api_config.recorder = Some(std::sync::Arc::new(recorder)),
         Err(e) => tracing::error!("the recorder could not start, so no history is kept: {e}"),
+    }
+    if shadow {
+        let log = std::env::var_os("HARS_SHADOW_LOG")
+            .map_or_else(|| config_dir.join(".hars/shadow.jsonl"), Into::into);
+        shadow::start(&hass, log).await;
     }
     let registry = {
         let dir = config_dir.clone();

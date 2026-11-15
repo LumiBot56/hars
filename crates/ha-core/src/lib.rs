@@ -21,6 +21,7 @@ pub mod recorded;
 pub mod restore;
 mod schema;
 mod service;
+pub mod shadow;
 mod slug;
 mod state;
 pub mod storage;
@@ -63,6 +64,8 @@ struct HassInner {
     stop: lifecycle::StopHandlers,
     /// Entities' own unrecorded attributes ([`Hass::set_unrecorded`]).
     unrecorded: parking_lot::RwLock<std::collections::HashMap<EntityId, &'static [&'static str]>>,
+    /// Shadow mode ([`shadow`]): set once at start-up.
+    shadow: std::sync::atomic::AtomicBool,
 }
 
 impl Hass {
@@ -112,6 +115,15 @@ impl Hass {
     pub fn unrecorded(&self, entity_id: &EntityId) -> recorded::Unrecorded {
         let own = self.inner.unrecorded.read().get(entity_id).copied();
         recorded::Unrecorded::of(entity_id, own.unwrap_or(&[]))
+    }
+
+    /// Run in shadow mode from now on ([`shadow`]).
+    pub fn set_shadow(&self) {
+        self.inner.shadow.store(true, Ordering::Release);
+    }
+
+    pub fn is_shadow(&self) -> bool {
+        self.inner.shadow.load(Ordering::Acquire)
     }
 
     pub fn core_state(&self) -> CoreState {
@@ -192,6 +204,11 @@ impl Hass {
             call.context.clone(),
         ));
 
+        // Shadow mode: the event above is the record of the call; what
+        // would act on the outside world doesn't run (see [`shadow`]).
+        if self.is_shadow() && !shadow::runs(&call.domain) {
+            return Ok(None);
+        }
         let response = handler.call(call).await?;
         if !return_response {
             return Ok(None);
