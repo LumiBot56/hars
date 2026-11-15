@@ -12,171 +12,123 @@ logbook, the iOS companion app, YAML automations (state, numeric-state and
 time triggers), the `sun`, `met`, `hue`, `lifx`, `switchbot_cloud`,
 `mobile_app`, `person` and `zone` integrations, and importing a Home
 Assistant 2026.6 install. **Not yet:** adding integrations or editing
-automations from the UI, templates, scripts, notifications and remote
-access. If you need those, keep Home Assistant for now.
+automations from the UI, templates beyond plain text and variables (no
+`states()` or `now()` yet), scripts, notifications and remote access. If you
+need those, keep Home Assistant for now.
 
 ## Install
 
-You need a Linux machine (x86-64 or ARM64) with Docker and Docker Compose.
+Copy one command, paste it, press Enter. It sets everything up and tells you
+what to open when it's done.
 
-1. Make a folder for hars and download the Compose file into it:
-
-   ```sh
-   mkdir hars && cd hars
-   curl -fsSLO https://raw.githubusercontent.com/adamt94/homeassistant-rust/main/compose.yaml
-   ```
-
-2. Start hars:
-
-   ```sh
-   docker compose up -d
-   ```
-
-3. Open `http://<your-machine>:8123` in a browser and follow Home
-   Assistant's onboarding screens: create your login (it becomes the owner),
-   set your home's location, time zone and country, choose the analytics
-   options, and finish. You land on the dashboard, logged in. hars keeps the
-   location in Home Assistant's own `config/.storage/core.config` and starts
-   a weather forecast for it (`met`). It never sends analytics anywhere,
-   whatever you choose: the choice is only stored.
-
-   Moving from Home Assistant? Don't onboard:
-   [import](#moving-from-home-assistant) first instead; your logins and
-   settings come with it.
-
-Docker restarts hars if it stops and after a reboot. The image is pulled
-from `ghcr.io/adamt94/homeassistant-rust`, which
-[a workflow](.github/workflows/publish.yml) publishes from every commit to
-`main`. If you run these steps in a clone of this repository (in place of
-step 1's download) and the image can't be pulled, Compose builds it from the
-[Dockerfile](Dockerfile) instead, which takes a few minutes.
-
-### Without a browser (scripted setup)
-
-To set hars up from a script, create the owner before the first start. This
-completes onboarding, so the browser goes straight to the login page:
+**Mac or Linux:** open the Terminal app and paste:
 
 ```sh
-docker compose run --rm hars auth add YOUR_NAME YOUR_PASSWORD
+curl -fsSL https://raw.githubusercontent.com/adamt94/homeassistant-rust/main/install.sh | sh
 ```
 
-It prints `created owner "YOUR_NAME"; onboarding is complete`. To keep the
-password out of your shell history, run `read -rs PW`, type it, and write
-`"$PW"` in its place. The location then stays at Home Assistant's defaults
-(0,0, time zone UTC, metric units, named "Home"), which sunrise and sunset,
-time triggers and the days in history follow. Write your own to
-`config/.storage/core.config` (Home Assistant's own file) and restart:
+**Windows:** open PowerShell (search for it in the Start menu) and paste:
 
-```sh
-sudo tee config/.storage/core.config >/dev/null <<'END'
-{"version": 1, "minor_version": 4, "key": "core.config", "data": {
-  "latitude": 51.5072, "longitude": -0.1276, "elevation": 11,
-  "unit_system_v2": "metric", "location_name": "Home",
-  "time_zone": "Europe/London", "currency": "GBP", "country": "GB",
-  "language": "en", "radius": 100, "external_url": null, "internal_url": null}}
-END
-docker compose restart
+```powershell
+irm https://raw.githubusercontent.com/adamt94/homeassistant-rust/main/install.ps1 | iex
 ```
 
-Put in your own values. `unit_system_v2` is `metric` or `us_customary`.
-`time_zone` is a name like `America/New_York`; hars reads it only from this
-file, not from `TZ`, and an unknown name means UTC. `elevation` and `radius`
-(the size of the home zone) are in meters. Keep every key: if the file
-doesn't load, hars won't start and `docker compose logs` says why.
+When it finishes you see something like:
+
+```
+hars is running.
+
+  Open  http://192.168.1.20:8123  (on this computer: http://localhost:8123)
+  and create your account.
+```
+
+Open that address in a browser, on this computer or any phone or laptop on
+the same Wi-Fi. Create your login, set your home's location, and you're on
+the dashboard.
+
+hars runs inside [Docker](https://www.docker.com/). If you don't have it, the
+command offers to install it first (on Windows and Mac that's Docker Desktop,
+which may ask you to accept its terms or restart once; then paste the command
+again). Everything hars keeps goes in a `hars` folder in your home folder.
+Want to see what the command does before running it? Read
+[install.sh](install.sh) or [install.ps1](install.ps1).
+
+**Which computer?** One that stays on: a Raspberry Pi 4 or 5 (64-bit), a mini
+PC, a NAS or any Linux server is ideal. A Mac or Windows PC works too, with
+one difference: there Docker can't let hars search your network, so if a
+LIFX bulb gets a new IP address, hars won't find it again. Give your bulbs a
+fixed address in your router's settings (Home Assistant in Docker Desktop
+has the same limit).
 
 ## Moving from Home Assistant
 
-hars can take over a Home Assistant **2026.6** install: users, passwords and
-logged-in sessions (browsers and the companion app), registries, areas,
-dashboards, integrations' settings, the location and the YAML automations.
-Do this instead of onboarding, before the first start.
+hars can take over a Home Assistant **2026.6** install: your logins (browsers
+and the companion app stay logged in), devices, areas, dashboards,
+integrations' settings, location and YAML automations. History starts fresh.
 
-1. Make a copy of Home Assistant's config folder with Home Assistant stopped,
-   or unpack a backup. Never point hars at the folder Home Assistant is using.
-2. Check what will come across, then import:
+1. In Home Assistant, make a backup and unpack it, or stop Home Assistant and
+   copy its config folder (the one with `configuration.yaml` in it). Never
+   use the folder Home Assistant is running from.
+2. Run the install command with the copy's location in front. Mac or Linux:
 
    ```sh
-   docker compose run --rm -v /path/to/ha-copy:/ha:ro hars import /ha --dry-run
-   docker compose run --rm -v /path/to/ha-copy:/ha:ro hars import /ha
+   curl -fsSL https://raw.githubusercontent.com/adamt94/homeassistant-rust/main/install.sh | HARS_IMPORT=/path/to/ha-copy sh
    ```
 
-3. Read `config/import-report.json`: it lists each integration and automation
-   and whether hars can run it.
-4. Stop Home Assistant (both can't use port 8123) and run
-   `docker compose up -d`.
+   Windows:
 
-History is not imported: it starts fresh. If you already onboarded (or ran
-`hars auth add`), the import refuses to replace that login; add `--force` to
-replace it. To try hars beside Home Assistant first, with nothing it decides reaching
-a device, see [shadow mode](docs/SHADOW.md).
+   ```powershell
+   $env:HARS_IMPORT = 'C:\path\to\ha-copy'; irm https://raw.githubusercontent.com/adamt94/homeassistant-rust/main/install.ps1 | iex
+   ```
 
-## Running it
+3. Log in as you did on Home Assistant. `hars/config/import-report.json`
+   lists each integration and automation and whether hars can run it.
 
-Run these in the folder with `compose.yaml`.
+If Home Assistant still runs on the same computer, hars picks the next free
+port (8124) and tells you. To give hars port 8123, stop Home Assistant and
+run the install command again with `HARS_PORT=8123` in front of `sh`.
+To try hars beside Home Assistant first, with nothing it decides reaching a
+device, see [shadow mode](docs/SHADOW.md).
+
+## Everyday use
 
 | To | Run |
 |---|---|
-| see the logs | `docker compose logs -f` |
-| stop / start | `docker compose stop` / `docker compose start` |
-| add another login | `docker compose stop`, then `docker compose run --rm hars auth add NAME PASSWORD`, then `docker compose start` |
-| upgrade | `docker compose pull && docker compose up -d` (in a clone that builds: `git pull && docker compose up -d --build`) |
-| remove (data stays) | `docker compose down` |
+| upgrade | the install command again (your data and settings stay) |
+| see what it's doing | `docker logs -f hars` |
+| stop / start | `docker stop hars` / `docker start hars` |
+| change its port or log detail | edit `hars/hars.env` in your home folder, then run the install command again |
+| uninstall | `docker rm -f hars`, then delete the `hars` folder if you don't want your data |
 
-On stop, hars finishes open requests (up to 5 s), saves, and flushes history.
-Compose gives it a minute.
+On Linux, if the installer said it uses `sudo`, put `sudo` in front of the
+`docker` commands. hars starts again by itself after a restart.
 
-**Where your data lives:** in `./config`, next to `compose.yaml`. It holds
-`.storage/` (logins, registries, dashboards, integrations' settings, in Home
-Assistant's formats), `.hars/recorder/` (history, 10 days or 64 MiB by
-default), `configuration.yaml` and what it includes, and
-`import-report.json` if you imported. Upgrades keep it.
+**Back up** by copying the `hars` folder while hars is stopped. On Linux some
+files belong to root, so copy with `sudo`. [More on backups and where data
+lives](docs/INSTALL.md#your-data-and-backups).
 
-**Back up:** stop hars and copy the folder. Some files are readable by root
-only, so use `sudo`:
+## Troubleshooting
 
-```sh
-docker compose stop
-sudo tar czf hars-backup-$(date +%F).tar.gz config
-docker compose start
-```
-
-To restore, stop hars, move `config` aside, `sudo tar xzf` the backup in its
-place and start hars.
-
-**Networking:** `compose.yaml` uses the host's network (`network_mode: host`)
-so hars can reach devices on your LAN (LIFX discovery and other broadcasts
-need it). hars listens on port 8123. To use another port, add
-`environment: [HARS_BIND=0.0.0.0:8124]` under the service.
-
-## Troubleshooting and limits
-
-- **The browser shows Home Assistant's onboarding screen**, and the log says
-  `not set up yet`: there is no login yet. Follow the screens (install step
-  3), or set up [without a browser](#without-a-browser-scripted-setup).
-- **Nothing answers on port 8123 with Docker Desktop (macOS, Windows):** host
-  networking is off there by default. Turn it on in Docker Desktop's settings,
-  or replace `network_mode: host` with `ports: ["8123:8123"]` (LAN discovery
-  then won't work).
-- **`Error: Address already in use (os error 98)` in the log:** something
-  else, often Home Assistant, already uses port 8123. Stop it or change
-  `HARS_BIND` as above.
-- **An integration or automation is missing after an import:** check
-  `config/import-report.json`; it says why.
-- **More detail in the log:** add `environment: [RUST_LOG=debug]`.
+- **The command says Docker isn't running:** open Docker Desktop (Mac,
+  Windows) and wait until it says it's running, then paste the command again.
+- **The page doesn't load from another device:** use the address with
+  numbers the installer printed, not `localhost`, and check both devices are
+  on the same network. On Windows, allow Docker Desktop through the firewall
+  if it asks.
+- **Something went wrong:** `docker logs hars` shows why. For more detail,
+  uncomment `RUST_LOG=debug` in `hars/hars.env` and run the install command
+  again.
+- **An integration or automation is missing after moving from Home
+  Assistant:** `hars/config/import-report.json` says why.
 - **Limits:** only Home Assistant 2026.6 installs can be imported. The UI is
   in English. The companion app is tested on iOS. Everything in "Not yet"
-  above. The full list of what is done and planned is in the
-  [roadmap](docs/ROADMAP.md).
+  above. The [roadmap](docs/ROADMAP.md) lists what is done and planned.
 
-## Other ways to run it
+## Other ways to install
 
-- **Just the binary:** the image's `/hars` is a static Linux binary:
-  `docker cp "$(docker create ghcr.io/adamt94/homeassistant-rust)":/hars .`
-  It reads `HARS_CONFIG` (default `./config`), `HARS_BIND` and
-  `HARS_FRONTEND` (an unpacked `hass_frontend` folder; without it only the
-  API is served).
-- **From source:** `cargo build --release`; see
-  [CONTRIBUTING.md](CONTRIBUTING.md).
+[docs/INSTALL.md](docs/INSTALL.md) covers installing with Docker Compose,
+setting hars up from a script without a browser, the installer's settings,
+running the plain binary and building from source.
 
 ## More
 

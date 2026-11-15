@@ -1,4 +1,5 @@
-# Run hars with Docker Compose. See README.md for the steps.
+# Run hars with Docker Compose. See docs/INSTALL.md#docker-compose (most
+# people use the one-command install in README.md instead).
 #
 #   docker compose up -d   # then open http://<host>:8123 and follow the onboarding
 #
