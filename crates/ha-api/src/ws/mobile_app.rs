@@ -1,12 +1,15 @@
 //! `mobile_app/push_notification_channel` and `_confirm`
-//! (`mobile_app/websocket_api.py`). `hars` sends no push notifications: a
-//! channel is a subscription that never fires (so the app's push provider
-//! stays connected instead of retrying), and nothing is ever pending
-//! confirmation.
+//! (`mobile_app/websocket_api.py`): the companion app's local push channel.
+//! The channel itself (sending, the confirm handshake, falling back to
+//! cloud push) is `ha_integrations::mobile_app::notify`'s; here are the
+//! commands' checks and the WebSocket messages.
 
 use super::{Conn, Invalid, Subscription};
+use ha_core::ServiceError;
 use ha_integrations::mobile_app::Webhook;
+use ha_integrations::mobile_app::notify::Notifier;
 use serde_json::{Map, Value, json};
+use std::sync::Arc;
 
 pub(super) fn dispatch(
     conn: &mut Conn,
@@ -83,28 +86,88 @@ fn access(conn: &Conn, id: u64, webhook_id: &str) -> bool {
     true
 }
 
+/// The app's notifier, once its registrations are set up.
+fn notifier(conn: &Conn) -> Option<Arc<Notifier>> {
+    conn.shared.config.mobile_app.as_ref()?.notifier().cloned()
+}
+
+/// `handle_push_notification_channel`: the channel replaces any the app
+/// had (what that one had waiting goes by cloud first); its messages are
+/// events of this subscription.
 fn channel(conn: &mut Conn, id: u64, msg: &Map<String, Value>) -> Result<(), Invalid> {
     schema(msg, &["webhook_id"], &["support_confirm"])?;
     let webhook_id = msg["webhook_id"].as_str().unwrap_or_default();
     if !access(conn, id, webhook_id) {
         return Ok(());
     }
-    conn.subs.insert(id, Subscription::Idle);
-    conn.out.result(id, Value::Null);
+    let Some(notifier) = notifier(conn) else {
+        conn.out
+            .error(json!(id), "not_found", "Webhook ID not found");
+        return Ok(());
+    };
+    let support_confirm = msg
+        .get("support_confirm")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let out = conn.out.clone();
+    // `event_message(msg["id"], data)`.
+    let send = Box::new(move |event: &str| {
+        out.send(format!(r#"{{"id":{id},"type":"event","event":{event}}}"#));
+    });
+    let (channel, opening) = notifier.open_channel(webhook_id, support_confirm, send);
+    conn.subs.insert(id, Subscription::Push(channel));
+    match opening {
+        None => {
+            conn.out.result(id, Value::Null);
+        }
+        Some(opening) => {
+            let out = conn.out.clone();
+            tokio::spawn(async move {
+                match opening.await {
+                    Ok(()) => out.result(id, Value::Null),
+                    Err(e) => out.error_with(json!(id), error(&e)),
+                };
+            });
+        }
+    }
     Ok(())
 }
 
+/// `async_handle_exception` for what replacing a channel can raise: a
+/// `HomeAssistantError` with its translation, anything else unknown.
+fn error(e: &ServiceError) -> Value {
+    match e {
+        ServiceError::Translated(r) => json!({
+            "code": "home_assistant_error",
+            "message": r.message,
+            "translation_key": r.key,
+            "translation_placeholders": r.placeholders,
+            "translation_domain": r.domain,
+        }),
+        ServiceError::Failed(m) => json!({"code": "home_assistant_error", "message": m}),
+        _ => json!({"code": "unknown_error", "message": "Unknown error"}),
+    }
+}
+
+/// `handle_push_notification_confirm`.
 fn confirm(conn: &mut Conn, id: u64, msg: &Map<String, Value>) -> Result<(), Invalid> {
     schema(msg, &["webhook_id", "confirm_id"], &[])?;
     let webhook_id = msg["webhook_id"].as_str().unwrap_or_default();
     if !access(conn, id, webhook_id) {
         return Ok(());
     }
-    // No channel ever has a notification waiting for confirmation.
-    conn.out.error(
-        json!(id),
-        "not_found",
-        "Push notification channel not found",
-    );
+    let confirm_id = msg["confirm_id"].as_str().unwrap_or_default();
+    if notifier(conn).is_some_and(|n| n.confirm(webhook_id, confirm_id)) {
+        conn.out.result(id, Value::Null);
+    } else {
+        conn.out.error(
+            json!(id),
+            "not_found",
+            "Push notification channel not found",
+        );
+    }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

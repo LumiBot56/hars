@@ -812,8 +812,9 @@ async fn location_updates_as_ha() {
     assert_eq!(n, 20);
 }
 
-/// The tracker and notify entity restore as HA's `startup.json`; the
-/// notify services fail cleanly.
+/// The tracker and notify entity restore as HA's `startup.json`, and the
+/// registration's notify services are there (sending is tested against
+/// HA in `ws/mobile_app/tests.rs`).
 #[tokio::test]
 async fn tracker_and_notify_restore_as_ha() {
     let app = app();
@@ -821,15 +822,10 @@ async fn tracker_and_notify_restore_as_ha() {
     for id in ["device_tracker.phone", "notify.phone"] {
         assert_eq!(state_json(&app.hass, id), v["states"][id], "{id}");
     }
-    for service in ["send_message", "mobile_app_phone"] {
-        let err = app
-            .hass
-            .call_service("notify", service, Map::new(), None, false, None)
-            .await
-            .unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "Push notifications are not supported by hars yet"
+    for service in ["send_message", "mobile_app_phone", "notify"] {
+        assert!(
+            app.hass.services().has_service("notify", service),
+            "{service}"
         );
     }
 }

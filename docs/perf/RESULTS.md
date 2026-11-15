@@ -272,3 +272,21 @@ and `preserve_order` features, the deep-size fuel patch
 6,973 kB, anonymous 2,272 kB. A render now costs 1.2 µs cached and 6.2 µs
 with compiling (was 1.1 and 5.8), and a template that runs to its whole
 budget stops after 27 ms (Apple M4, release).
+
+### Push notifications to the companion app, 2026-11-15
+
+`mobile_app`'s notify services, the local push channel and cloud push
+(`ha_integrations::mobile_app::notify`). Nothing new runs while nothing is
+sent: a pending confirmation is one sleeping task (aborted when the app
+confirms, 10 s at most), and the HTTPS client is made per push. Measured
+with `PERF_GATE=1 PERF_CONFIG=<dir> scripts/perf-docker.sh 15 60`, the dir
+holding one push-capable `mobile_app` registration (the services, the notify
+entity's restore and the notifier are set up), Docker on an Apple-silicon Mac
+(linux/aarch64):
+
+| build | binary | start→/api/ | idle RSS | idle PSS | idle CPU | wakeups/s | threads | run |
+|---|---|---|---|---|---|---|---|---|
+| branch, one push registration | 8.90 MiB | 10 ms | 9.9 MiB | 8.9 MiB | 0.000 % | 0.00 | 4 | 15s warm-up, 60s quiet |
+
+No new dependency. Release binary on macOS arm64: 8,145,072 → 8,227,968
+bytes (+82,896) over `main` at 1306935.

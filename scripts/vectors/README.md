@@ -24,6 +24,8 @@ rule have no script yet; they are listed
 | `onboarding.py` | `ha-api/src/onboarding/vectors/` | HA 2026.6.1's core with `http`, `auth`, `websocket_api`, `person`, `sun`, `analytics`, `onboarding` and `config`'s `config/core/*` and `config_entries/*` commands, booted in a temporary directory: every call the onboarding pages make, the states and the `.storage` files left (aiohasupervisor 0.4.3, PyMetno 0.13.0) |
 | `render_template.py` | `ha-core/src/template/vectors/` (renders, `_parse_result`, the environment's names, and Jinja's filters and tests over values of every kind) and `ha-api/src/ws/vectors/render_template.json` (whole `render_template` conversations) | HA 2026.6.1's `helpers/template` and `websocket_api` `handle_render_template` on Jinja 3.1.6, on a fresh `HomeAssistant` per case |
 
+| `mobile_app_notify.py` | `ha-api/src/mobile_app/vectors/notify.json` (15 scenarios, 126 steps: service calls, the app's push channel commands, closed connections and 10 s passing, with every WebSocket message, relay request body, result, notify state and log line; and 20 `log_rate_limits` lines) | HA 2026.6.1's core with `http`, `websocket_api` and `mobile_app` (its `notify.py`, `push_notification.py`, `websocket_api.py`) and `notify`, on aiohttp 3.13.5, with a local server as the push relay |
+
 `render_template.py` writes two crates' vectors because they are two halves
 of one behaviour: the engine's answers and the command's messages around
 them.
@@ -70,6 +72,20 @@ python3.14 -m venv .venv-template  # Python 3.14.2+ installed
 .venv-template/bin/pip install homeassistant==2026.6.1
 .venv-template/bin/python -I scripts/vectors/render_template.py
 cargo test -p ha-core template && cargo test -p ha-api render_template
+```
+
+For `mobile_app_notify.py` (importing `mobile_app` imports `cloud`, and
+through it `camera` and `stream`, so their requirements are needed too):
+
+```sh
+python3.14 -m venv .venv  # Python 3.14.2+ installed
+.venv/bin/pip install homeassistant==2026.6.1 PyNaCl==1.6.2 numpy==2.3.2 av==16.0.1 \
+    PyTurboJPEG==1.8.3 Pillow==12.2.0 hass-nabucasa==2.2.0 hassil==3.5.0 \
+    home-assistant-intents==2026.6.1 ha-ffmpeg==3.2.2 mutagen==1.47.0 \
+    pymicro-vad==1.0.1 pyspeex-noise==1.0.2 aiohasupervisor==0.4.3 \
+    securetar==2026.4.1 cronsim==2.7
+.venv/bin/python -I scripts/vectors/mobile_app_notify.py
+cargo test -p ha-api ws::mobile_app
 ```
 
 ## Skeleton

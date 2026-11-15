@@ -76,8 +76,9 @@ resource budget gate (`PERF_GATE=1 scripts/perf.sh`, see
   Where hars must match HA (states, attributes, maths, requests, errors), the
   test compares with *vectors*: inputs run through HA 2026.6.1's own code,
   saved in the module's `vectors/` folder. A new vector set commits the
-  script that made it in `scripts/vectors/` (`onboarding.py` and
-  `render_template.py` so far); the sets made before that rule have none yet
+  script that made it in `scripts/vectors/` (`onboarding.py`,
+  `render_template.py` and `mobile_app_notify.py` so far); the sets made
+  before that rule have none yet
   and are listed there as a backlog. The rules, a skeleton
   and the backlog are in [scripts/vectors/README.md](scripts/vectors/README.md).
 - **Fixtures are sanitised:** no tokens or keys, ids replaced, coordinates

@@ -2,13 +2,14 @@
 //! `core.config_entries`. The webhook itself is served by `ha-api`.
 
 pub mod crypto;
+pub mod notify;
 pub mod sensor;
 pub mod tracker;
 
 use crypto::Key;
 use parking_lot::RwLock;
 use serde_json::{Map, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -20,6 +21,11 @@ pub const DOMAIN: &str = "mobile_app";
 pub struct Registration {
     pub entry_id: String,
     pub webhook_id: Arc<str>,
+    /// The config entry's title (HA's `entry.title`, which names the
+    /// device in notification errors).
+    pub title: String,
+    /// Load order (HA's `DATA_CONFIG_ENTRIES` order).
+    seq: u64,
     data: RwLock<Map<String, Value>>,
     /// Multi-step changes (`update_registration`) run one at a time.
     ops: parking_lot::Mutex<()>,
@@ -44,9 +50,16 @@ impl Registration {
     pub fn from_entry(entry: &Map<String, Value>) -> Option<Self> {
         let data = entry.get("data")?.as_object()?.clone();
         let webhook_id = data.get("webhook_id")?.as_str()?.into();
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Some(Self {
             entry_id: entry.get("entry_id")?.as_str()?.to_owned(),
             webhook_id,
+            title: entry
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            seq: SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             data: RwLock::new(data),
             ops: parking_lot::Mutex::new(()),
             live: tokio::sync::RwLock::new(true),
@@ -191,33 +204,6 @@ impl Registration {
     }
 }
 
-/// The notify services the app's registration brings (`notify.send_message`
-/// and the legacy `notify.mobile_app_<device>`), which fail: `hars` sends
-/// no push notifications.
-fn register_notify_services(hass: &ha_core::Hass, registrations: &[Arc<Registration>]) {
-    if registrations.is_empty() {
-        return;
-    }
-    let fail = |_| async {
-        Err(ha_core::ServiceError::Failed(
-            "Push notifications are not supported by hars yet".into(),
-        ))
-    };
-    let services = hass.services();
-    services.register(
-        "notify",
-        "send_message",
-        ha_core::SupportsResponse::None,
-        fail,
-    );
-    for reg in registrations {
-        if let Some(name) = reg.device_name() {
-            let service = format!("mobile_app_{}", ha_core::slugify(&name));
-            services.register("notify", service, ha_core::SupportsResponse::None, fail);
-        }
-    }
-}
-
 /// Python truthiness of a JSON value.
 pub fn truthy(v: &Value) -> bool {
     match v {
@@ -246,7 +232,7 @@ impl std::fmt::Debug for Ctx {
 
 #[derive(Debug, Default)]
 pub struct MobileApp {
-    registrations: RwLock<HashMap<Arc<str>, Arc<Registration>>>,
+    registrations: notify::Registrations,
     /// Removed before this run: they answer 410.
     deleted_ids: HashSet<String>,
     /// Every removed id, as `.storage/mobile_app` keeps them.
@@ -258,6 +244,9 @@ pub struct MobileApp {
     registering: tokio::sync::Mutex<()>,
     sensors: std::sync::OnceLock<sensor::Sensors>,
     trackers: std::sync::OnceLock<tracker::Trackers>,
+    notifier: std::sync::OnceLock<Arc<notify::Notifier>>,
+    /// Where cloud pushes go, if not [`notify::HttpRelay`].
+    relay: std::sync::OnceLock<Arc<dyn notify::Relay>>,
     entries: std::sync::OnceLock<Arc<crate::config_entries::ConfigEntries>>,
 }
 
@@ -300,7 +289,7 @@ impl MobileApp {
             .map(|r| (r.webhook_id.clone(), Arc::new(r)))
             .collect();
         Self {
-            registrations: RwLock::new(registrations),
+            registrations: Arc::new(RwLock::new(registrations)),
             stored_deleted: parking_lot::Mutex::new(deleted_ids.clone()),
             dir: None,
             ctx: std::sync::OnceLock::new(),
@@ -308,8 +297,16 @@ impl MobileApp {
             deleted_ids: deleted_ids.into_iter().collect(),
             sensors: std::sync::OnceLock::new(),
             trackers: std::sync::OnceLock::new(),
+            notifier: std::sync::OnceLock::new(),
+            relay: std::sync::OnceLock::new(),
             entries: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Send cloud pushes to `relay` instead of over HTTPS (tests answer
+    /// them from memory). Call before [`MobileApp::setup`].
+    pub fn set_relay(&self, relay: Arc<dyn notify::Relay>) {
+        let _ = self.relay.set(relay);
     }
 
     /// The registrations' entities, restored and written (before start, as
@@ -334,8 +331,20 @@ impl MobileApp {
         let _ = self
             .trackers
             .set(tracker::Trackers::setup(hass, registry.clone(), &regs));
-        tracker::setup_notify(hass, &registry, &regs);
-        register_notify_services(hass, &regs);
+        notify::setup_entities(hass, &registry, &regs);
+        let notifier = self.notifier.get_or_init(|| {
+            let relay = self
+                .relay
+                .get()
+                .cloned()
+                .unwrap_or_else(|| Arc::new(notify::HttpRelay));
+            notify::Notifier::new(hass, registry.clone(), self.registrations.clone(), relay)
+        });
+        // HA registers the notify services whenever `mobile_app` is set up;
+        // hars sets it up only with a registration.
+        if !regs.is_empty() {
+            notifier.register_services();
+        }
     }
 
     /// `POST /api/mobile_app/registrations` after its schema: HA's
@@ -472,7 +481,7 @@ impl MobileApp {
         if let Some(t) = self.trackers.get() {
             t.add(reg);
         }
-        if tracker::supports_push(reg) {
+        if notify::supports_push(reg) {
             ctx.registry.get_or_create_entity(
                 "notify",
                 DOMAIN,
@@ -488,8 +497,11 @@ impl MobileApp {
                     ..Default::default()
                 },
             );
-            tracker::setup_notify(&ctx.hass, &ctx.registry, std::slice::from_ref(reg));
-            register_notify_services(&ctx.hass, std::slice::from_ref(reg));
+            notify::setup_entities(&ctx.hass, &ctx.registry, std::slice::from_ref(reg));
+        }
+        // `notify.async_reload`.
+        if let Some(n) = self.notifier.get() {
+            n.register_services();
         }
     }
 
@@ -502,8 +514,12 @@ impl MobileApp {
         if let Some(t) = self.trackers.get() {
             t.unload(&reg.entry_id);
         }
-        tracker::unload_notify(&ctx.hass, &ctx.registry, reg);
+        notify::unload_entity(&ctx.hass, &ctx.registry, reg);
         self.registrations.write().remove(&*reg.webhook_id);
+        // `notify.async_reload`.
+        if let Some(n) = self.notifier.get() {
+            n.register_services();
+        }
     }
 
     /// `async_remove_entry`: the webhook id joins `deleted_ids`, saved now.
@@ -539,6 +555,12 @@ impl MobileApp {
     /// The trackers, once [`MobileApp::setup`] ran.
     pub fn trackers(&self) -> Option<&tracker::Trackers> {
         self.trackers.get()
+    }
+
+    /// The push notification services and channels, once
+    /// [`MobileApp::setup`] ran.
+    pub fn notifier(&self) -> Option<&Arc<notify::Notifier>> {
+        self.notifier.get()
     }
 
     /// The sensors, once [`MobileApp::setup`] ran.

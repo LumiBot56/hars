@@ -165,6 +165,9 @@ pub(crate) enum Subscription {
     /// Registered so it can be unsubscribed, but nothing ever fires it
     /// (`persistent_notification/subscribe` while there are none).
     Idle,
+    /// The companion app's push notification channel: torn down when
+    /// unsubscribed or when the connection closes.
+    Push(Arc<ha_integrations::mobile_app::notify::PushChannel>),
 }
 
 /// `subscribe_events` ids by event type. The bus listener holds the lock
@@ -590,6 +593,10 @@ impl Conn {
                 reply(&self.out);
             }
             Some(Subscription::Idle) => reply(&self.out),
+            Some(Subscription::Push(channel)) => {
+                channel.close();
+                reply(&self.out);
+            }
             None => return false,
         }
         true

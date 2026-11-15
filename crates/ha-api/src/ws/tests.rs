@@ -1811,9 +1811,13 @@ async fn mobile_app_push_channel_as_ha() {
     let auth = crate::test_util::auth(true);
     let (tok, _) = token(&auth);
     let owner = auth.validate_access_token(&tok, None).unwrap().user_id;
-    let app = ha_integrations::mobile_app::MobileApp::new(
-        &[reg("mine", &owner), reg("theirs", "someone-else")],
-        Vec::new(),
+    let entries = [reg("mine", &owner), reg("theirs", "someone-else")];
+    let app = ha_integrations::mobile_app::MobileApp::new(&entries, Vec::new());
+    app.setup(
+        &hass,
+        ha_registry::Registry::in_memory(&hass, Default::default()),
+        ha_integrations::config_entries::ConfigEntries::in_memory(&hass, entries.to_vec()),
+        None,
     );
     let config = crate::ApiConfig {
         config_dir: "/config".into(),
