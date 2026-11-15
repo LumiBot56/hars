@@ -13,6 +13,7 @@ fn vector(name: &str) -> Value {
         "register_new" => include_str!("../vectors/register_new.json"),
         "update_registration" => include_str!("../vectors/update_registration.json"),
         "entity_ids" => include_str!("../vectors/entity_ids.json"),
+        "remove_entry" => include_str!("../vectors/remove_entry.json"),
         _ => unreachable!(),
     };
     serde_json::from_str(text).unwrap()
@@ -627,9 +628,15 @@ fn primary_config_entries_as_ha() {
             .as_deref(),
         Some("mqtt-entry")
     );
-    reg.set_entry_domains(Arc::new(|id: &str| match id {
-        "mqtt-entry" => Some("mqtt".into()),
-        "hue-entry" => Some("hue".into()),
+    let entry = |domain: &str| {
+        Some(EntryInfo {
+            domain: domain.into(),
+            disabled: false,
+        })
+    };
+    reg.set_entry_lookup(Arc::new(move |id: &str| match id {
+        "mqtt-entry" => entry("mqtt"),
+        "hue-entry" => entry("hue"),
         _ => None,
     }));
     let mut rx = hass.bus().subscribe();
@@ -651,4 +658,298 @@ fn primary_config_entries_as_ha() {
             .as_deref(),
         Some(ENTRY)
     );
+}
+
+/// HA's placeholders (`<t:…>`, `<ts:…>`, `<ulid#…>`, `<uuid#…>`) and ours,
+/// blanked in the given keys.
+fn mask(mut v: Value, keys: &[&str]) -> Value {
+    for k in keys {
+        if v.get(*k).is_some() {
+            v[*k] = json!("…");
+        }
+    }
+    v
+}
+
+fn frames(step: &Value) -> Vec<String> {
+    let mut out: Vec<String> = step["ws_event_frames"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            let f: Value = serde_json::from_str(f.as_str().unwrap()).unwrap();
+            json!([f["event"]["event_type"], f["event"]["data"]]).to_string()
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// `config_entries_async_remove`: the device and its 21 entities go to the
+/// deleted lists, orphaned, as HA's files have them.
+#[tokio::test]
+async fn clearing_an_entry_as_ha() {
+    let hass = Hass::new();
+    let (_, r) = before();
+    let reg = Registry::in_memory(&hass, r);
+    let mut rx = hass.bus().subscribe();
+    reg.clear_config_entry(ENTRY);
+    let v = vector("remove_entry");
+    let step = &v["steps"][1];
+    let snap = reg.snapshot();
+    assert!(snap.devices.is_empty());
+    // Only rows of other entries stay (the fixture's `person.adam`).
+    let left: Vec<&str> = snap.entities.iter().map(|e| e.entity_id.as_str()).collect();
+    assert_eq!(left, ["person.adam"]);
+    let deleted: Value = serde_json::from_str(snap.device_file.deleted[0].get()).unwrap();
+    let stamps = ["modified_at", "orphaned_timestamp"];
+    assert_eq!(
+        mask(deleted, &stamps),
+        mask(step["deleted_devices"][0].clone(), &stamps)
+    );
+    // The deleted device row's keys in HA's order (`identifiers` before `id`).
+    let text = snap.device_file.deleted[0].get();
+    assert!(text.find("\"identifiers\"").unwrap() < text.find("\"id\"").unwrap());
+
+    // Every deleted entity row as HA's file has it.
+    let file: Value = serde_json::from_str(include_str!(
+        "../vectors/files/remove_entry__config_entries_async_remove__core.entity_registry"
+    ))
+    .unwrap();
+    let want = file["data"]["deleted_entities"].as_array().unwrap();
+    assert_eq!(snap.entity_file.deleted.len(), want.len());
+    for w in want {
+        let got = snap
+            .entity_file
+            .deleted
+            .iter()
+            .map(|raw| serde_json::from_str::<Value>(raw.get()).unwrap())
+            .find(|g| g["entity_id"] == w["entity_id"])
+            .unwrap();
+        assert_eq!(
+            mask(got, &stamps),
+            mask(w.clone(), &stamps),
+            "{}",
+            w["entity_id"]
+        );
+    }
+    let mut got: Vec<String> = events(&mut rx)
+        .into_iter()
+        .map(|(name, data)| json!([name, data]).to_string())
+        .collect();
+    got.sort();
+    // But person's own update of its row (its storage hash), not ours.
+    let want: Vec<String> = frames(step)
+        .into_iter()
+        .filter(|f| !f.contains("person.adam"))
+        .collect();
+    assert_eq!(got, want);
+}
+
+/// `post_registrations_same_device_again`: the tracker row and the device
+/// come back from the deleted lists with their ids, then the tracker moves
+/// to the new entry.
+#[tokio::test]
+async fn re_adding_restores_the_tracker_and_device() {
+    let hass = Hass::new();
+    let (_, r) = before();
+    let reg = Registry::in_memory(&hass, r);
+    reg.clear_config_entry(ENTRY);
+    let mut rx = hass.bus().subscribe();
+    const DEVICE: &str = "11111111-2222-4333-8444-555555555555";
+    const NEW: &str = "01JNEWENTRY000000000000000";
+    // The registration flow: no entry, no device yet.
+    let tracker = reg.get_or_create_entity(
+        "device_tracker",
+        "mobile_app",
+        DEVICE,
+        None,
+        EntityPatch {
+            object_id_base: Some(Some(" Phone".into())),
+            ..Default::default()
+        },
+    );
+    assert_eq!(tracker.entity_id, "device_tracker.phone");
+    let device = reg.get_or_create_device(DeviceInfo {
+        config_entry_id: NEW.into(),
+        identifiers: vec![json!(["mobile_app", DEVICE])],
+        manufacturer: Some("Apple".into()),
+        model: Some("iPhone17,1".into()),
+        name: Some(" Phone".into()),
+        sw_version: Some("27.0".into()),
+    });
+    assert_eq!(device.id, PHONE);
+    assert!(reg.snapshot().device_file.deleted.is_empty());
+    // The tracker platform attaches the row.
+    reg.get_or_create_entity(
+        "device_tracker",
+        "mobile_app",
+        DEVICE,
+        None,
+        EntityPatch {
+            config_entry_id: Some(Some(NEW.into())),
+            device_id: Some(Some(PHONE.into())),
+            entity_category: Some(Some("diagnostic".into())),
+            original_name: Some(Some(" Phone".into())),
+            ..Default::default()
+        },
+    );
+    let v = vector("remove_entry");
+    let step = &v["steps"][2];
+    let mut got: Vec<String> = events(&mut rx)
+        .into_iter()
+        .map(|(name, data)| json!([name, data]).to_string())
+        .collect();
+    got.sort();
+    assert_eq!(got, frames(step));
+    let row = reg
+        .entity_by_unique_id("device_tracker", "mobile_app", DEVICE)
+        .unwrap();
+    let mut want = step["tracker_row"]["device_tracker.phone"].clone();
+    want["config_entry_id"] = json!(NEW);
+    assert_eq!(
+        mask(serde_json::to_value(&*row).unwrap(), &["modified_at"]),
+        mask(want, &["modified_at"])
+    );
+}
+
+fn dev(id: &str, entries: &[&str]) -> Device {
+    let mut subentries = Map::new();
+    for e in entries {
+        subentries.insert((*e).into(), json!([null]));
+    }
+    Device {
+        id: id.into(),
+        identifiers: vec![json!(["test", id])],
+        config_entries: entries.iter().map(|e| (*e).into()).collect(),
+        config_entries_subentries: subentries,
+        primary_config_entry: entries.first().map(|e| (*e).into()),
+        ..Default::default()
+    }
+}
+
+fn ent(id: &str, entry: &str, device: Option<&str>) -> Entity {
+    Entity {
+        entity_id: id.into(),
+        platform: "test".into(),
+        unique_id: Some(json!(id)),
+        config_entry_id: Some(entry.into()),
+        device_id: device.map(str::to_owned),
+        ..Default::default()
+    }
+}
+
+/// Review regressions: removing a device unlinks other entries' entities
+/// and child devices; a shared device left with only disabled entries is
+/// disabled.
+#[tokio::test]
+async fn clearing_unlinks_and_disables_as_ha() {
+    let hass = Hass::new();
+    let mut child = dev("child", &["B"]);
+    child.via_device_id = Some("hub".into());
+    let reg = Registry::in_memory(
+        &hass,
+        Registries {
+            devices: crate::rows![dev("hub", &["A"]), child, dev("shared", &["A", "C"])],
+            entities: crate::rows![
+                ent("sensor.hub", "A", Some("hub")),
+                ent("sensor.foreign", "B", Some("hub")),
+            ],
+            ..Default::default()
+        },
+    );
+    reg.set_entry_lookup(Arc::new(|id: &str| {
+        Some(EntryInfo {
+            domain: "test".into(),
+            disabled: id == "C",
+        })
+    }));
+    let mut rx = hass.bus().subscribe();
+    reg.clear_config_entry("A");
+    let snap = reg.snapshot();
+    let find = |id: &str| snap.devices.iter().find(|d| d.id == id).cloned();
+    assert!(find("hub").is_none());
+    assert_eq!(find("child").unwrap().via_device_id, None);
+    let shared = find("shared").unwrap();
+    assert_eq!(shared.disabled_by.as_deref(), Some("config_entry"));
+    assert_eq!(shared.primary_config_entry, None);
+    let foreign = snap
+        .entities
+        .iter()
+        .find(|e| e.entity_id == "sensor.foreign")
+        .unwrap();
+    assert_eq!(foreign.device_id, None);
+    assert!(!snap.entities.iter().any(|e| e.entity_id == "sensor.hub"));
+    let got: Vec<Value> = events(&mut rx).into_iter().map(|(_, d)| d).collect();
+    // The child's update comes before the hub's removal.
+    let child_at = got.iter().position(|d| d["device_id"] == "child").unwrap();
+    let hub_at = got
+        .iter()
+        .position(|d| d["device_id"] == "hub" && d["action"] == "remove")
+        .unwrap();
+    assert!(child_at < hub_at);
+    assert_eq!(got[child_at]["changes"], json!({"via_device_id": "hub"}));
+    assert!(
+        got.contains(&json!({"action": "update", "entity_id": "sensor.foreign",
+                                 "changes": {"device_id": "hub"}}))
+    );
+    let shared_ev = got.iter().find(|d| d["device_id"] == "shared").unwrap();
+    assert_eq!(shared_ev["changes"]["disabled_by"], Value::Null);
+}
+
+/// Review regressions: a restore follows the target entry's disabled
+/// state, and a taken id falls back to the restored area + name.
+#[tokio::test]
+async fn restores_follow_the_entry_and_area() {
+    let hass = Hass::new();
+    let reg = Registry::in_memory(
+        &hass,
+        Registries {
+            areas: vec![crate::Area {
+                id: "kitchen".into(),
+                name: "Kitchen".into(),
+                ..Default::default()
+            }],
+            entities: crate::rows![
+                Entity {
+                    area_id: Some("kitchen".into()),
+                    name: Some("Temperature".into()),
+                    ..ent("sensor.taken", "A", None)
+                },
+                Entity {
+                    disabled_by: Some("config_entry".into()),
+                    ..ent("sensor.kept", "A", None)
+                },
+            ],
+            ..Default::default()
+        },
+    );
+    reg.remove_entity("sensor.taken");
+    reg.remove_entity("sensor.kept");
+    hass.set_state(
+        ha_core::EntityId::parse("sensor.taken").unwrap(),
+        "x",
+        Default::default(),
+    );
+    let patch = |entry: &str| EntityPatch {
+        config_entry_id: Some(Some(entry.into())),
+        ..Default::default()
+    };
+    // Into an enabled entry: the id is taken, so area + name.
+    let row = reg.get_or_create_entity("sensor", "test", "sensor.taken", None, patch("A"));
+    assert_eq!(row.entity_id, "sensor.kitchen_temperature");
+    assert_eq!(row.disabled_by, None);
+    // A `config_entry` disable lifts for an enabled entry; a disabled entry
+    // disables the restored row.
+    reg.set_entry_lookup(Arc::new(|id: &str| {
+        Some(EntryInfo {
+            domain: "test".into(),
+            disabled: id == "D",
+        })
+    }));
+    let row = reg.get_or_create_entity("sensor", "test", "sensor.kept", None, patch("A"));
+    assert_eq!(row.disabled_by, None);
+    reg.remove_entity("sensor.kept");
+    let row = reg.get_or_create_entity("sensor", "test", "sensor.kept", None, patch("D"));
+    assert_eq!(row.disabled_by.as_deref(), Some("config_entry"));
 }
