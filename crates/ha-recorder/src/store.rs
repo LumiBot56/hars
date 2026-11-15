@@ -111,6 +111,7 @@ enum Msg {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Info {
     pub backlog: usize,
+    pub max_backlog: usize,
     pub recording: bool,
     pub thread_running: bool,
 }
@@ -234,6 +235,7 @@ impl Store {
     pub fn info(&self) -> Info {
         Info {
             backlog: self.shared.backlog.load(Ordering::Acquire),
+            max_backlog: self.max_backlog,
             recording: *self.shared.accepting.read()
                 && self.shared.running.load(Ordering::Acquire)
                 && !self.shared.failing.load(Ordering::Acquire)
@@ -559,6 +561,8 @@ impl Writer {
                         std::thread::sleep(at.saturating_duration_since(Instant::now()));
                     }
                     self.close_segment();
+                    // Before the reply: `info` must say so once `close` returns.
+                    self.shared.running.store(false, Ordering::Release);
                     let _ = reply.send(());
                     return;
                 }
