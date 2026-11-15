@@ -401,13 +401,19 @@ impl<'env> Executor<'env> {
             }
 
             macro_rules! op_binop {
-                ($op:tt) => {{
+                ($op:tt, $name:ident) => {{
                     b = stack.pop();
                     a = stack.pop();
                     ctx_ok!(undefined_behavior.assert_value_not_undefined(&a));
                     ctx_ok!(undefined_behavior.assert_value_not_undefined(&b));
-                    ctx_ok!(ops::charge_fuel_for_compare(state, &a, &b));
-                    stack.push(Value::from(a $op b));
+                    // hars patch: an object may answer for itself.
+                    match ops::object_binop(crate::value::BinOp::$name, &a, &b) {
+                        Some(rv) => stack.push(ctx_ok!(rv)),
+                        None => {
+                            ctx_ok!(ops::charge_fuel_for_compare(state, &a, &b));
+                            stack.push(Value::from(a $op b));
+                        }
+                    }
                 }};
             }
 
@@ -534,6 +540,8 @@ impl<'env> Executor<'env> {
                     stack.push(match a.get_attr_fast(name) {
                         Some(value) => assert_valid!(value),
                         None => {
+                            // hars patch: the embedder hears what was missing.
+                            crate::value::missing(&a, &Value::from(*name));
                             ctx_ok!(undefined_behavior.handle_undefined(&a, undefined_origin!()))
                         }
                     });
@@ -558,6 +566,8 @@ impl<'env> Executor<'env> {
                     stack.push(match b.get_item_opt(&a) {
                         Some(value) => assert_valid!(value),
                         None => {
+                            // hars patch: the embedder hears what was missing.
+                            crate::value::missing(&b, &a);
                             ctx_ok!(undefined_behavior.handle_undefined(&b, undefined_origin!()))
                         }
                     });
@@ -667,12 +677,12 @@ impl<'env> Executor<'env> {
                 Instruction::IntDiv => func_binop!(int_div),
                 Instruction::Rem => func_binop!(rem),
                 Instruction::Pow => func_binop!(pow),
-                Instruction::Eq => op_binop!(==),
-                Instruction::Ne => op_binop!(!=),
-                Instruction::Gt => op_binop!(>),
-                Instruction::Gte => op_binop!(>=),
-                Instruction::Lt => op_binop!(<),
-                Instruction::Lte => op_binop!(<=),
+                Instruction::Eq => op_binop!(==, Eq),
+                Instruction::Ne => op_binop!(!=, Ne),
+                Instruction::Gt => op_binop!(>, Gt),
+                Instruction::Gte => op_binop!(>=, Ge),
+                Instruction::Lt => op_binop!(<, Lt),
+                Instruction::Lte => op_binop!(<=, Le),
                 Instruction::Not => {
                     a = stack.pop();
                     stack.push(Value::from(!ctx_ok!(undefined_behavior.is_true(&a))));

@@ -1,0 +1,213 @@
+[
+ {
+  "name": "one entity",
+  "steps": [
+   {
+    "send": {
+     "id": 1,
+     "type": "render_template",
+     "template": "{{ states('light.kitchen') }}"
+    },
+    "replies": [
+     {
+      "id": 1,
+      "type": "result",
+      "success": true,
+      "result": null
+     },
+     {
+      "id": 1,
+      "type": "event",
+      "event": {
+       "result": "on",
+       "listeners": {
+        "all": false,
+        "entities": [
+         "light.kitchen"
+        ],
+        "domains": [],
+        "time": false
+       }
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "a domain",
+  "steps": [
+   {
+    "send": {
+     "id": 1,
+     "type": "render_template",
+     "template": "{{ states.light | count }}"
+    },
+    "replies": [
+     {
+      "id": 1,
+      "type": "result",
+      "success": true,
+      "result": null
+     },
+     {
+      "id": 1,
+      "type": "event",
+      "event": {
+       "result": 2,
+       "listeners": {
+        "all": false,
+        "entities": [],
+        "domains": [
+         "light"
+        ],
+        "time": false
+       }
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "all states",
+  "steps": [
+   {
+    "send": {
+     "id": 1,
+     "type": "render_template",
+     "template": "{{ states | count }}"
+    },
+    "replies": [
+     {
+      "id": 1,
+      "type": "result",
+      "success": true,
+      "result": null
+     },
+     {
+      "id": 1,
+      "type": "event",
+      "event": {
+       "result": 9,
+       "listeners": {
+        "all": true,
+        "entities": [],
+        "domains": [],
+        "time": false
+       }
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "the time",
+  "steps": [
+   {
+    "send": {
+     "id": 1,
+     "type": "render_template",
+     "template": "{{ now().hour }}"
+    },
+    "replies": [
+     {
+      "id": 1,
+      "type": "result",
+      "success": true,
+      "result": null
+     },
+     {
+      "id": 1,
+      "type": "event",
+      "event": {
+       "result": 2,
+       "listeners": {
+        "all": false,
+        "entities": [],
+        "domains": [],
+        "time": true
+       }
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "several",
+  "steps": [
+   {
+    "send": {
+     "id": 1,
+     "type": "render_template",
+     "template": "{{ is_state('light.kitchen', 'on') and has_value('light.missing') }} {{ states.sensor | list | count }} {{ now() > today_at('00:00') }}"
+    },
+    "replies": [
+     {
+      "id": 1,
+      "type": "result",
+      "success": true,
+      "result": null
+     },
+     {
+      "id": 1,
+      "type": "event",
+      "event": {
+       "result": "False 4 True",
+       "listeners": {
+        "all": false,
+        "entities": [
+         "light.kitchen",
+         "light.missing"
+        ],
+        "domains": [
+         "sensor"
+        ],
+        "time": true
+       }
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "error",
+  "steps": [
+   {
+    "send": {
+     "id": 1,
+     "type": "render_template",
+     "template": "{{ states.Light }}",
+     "report_errors": true
+    },
+    "replies": [
+     {
+      "id": 1,
+      "type": "event",
+      "event": {
+       "error": "TemplateError: Invalid domain name 'Light'",
+       "level": "ERROR"
+      }
+     },
+     {
+      "id": 1,
+      "type": "result",
+      "success": true,
+      "result": null
+     },
+     {
+      "id": 1,
+      "type": "event",
+      "event": {
+       "error": "TemplateError: Invalid domain name 'Light'",
+       "level": "ERROR"
+      }
+     }
+    ]
+   }
+  ]
+ }
+]

@@ -46,6 +46,21 @@ The changes, each marked `hars patch` in the source:
   `groupby`, `first`, `last` and `length` are public (`#[doc(hidden)]`), so
   hars's wrappers around them keep the fuel accounting.
 
+Two hooks for HA's template values (Python's `datetime` and `timedelta`,
+and the messages of HA's undefined values):
+
+- `src/value/object.rs` `Object::binop` and `BinOp`, `src/value/ops.rs`
+  `object_binop` (re-exported from `value`), and `src/vm/mod.rs`'s
+  comparison instructions: an object answers the arithmetic operators,
+  unary minus and the comparisons it is on either side of, as Python's
+  `__add__`/`__radd__`, `__lt__` and the like do (`now() - timedelta(hours=1)`,
+  `now() > today_at('10:00')`). The default answers nothing, so every
+  other value works as before.
+- `src/value/mod.rs` `set_missing_hook`, called from `src/vm/mod.rs`'s
+  `GetAttr` and `GetItem` when a defined value hasn't got the attribute
+  or item: hars words Jinja's undefined message from it (`'None' has no
+  attribute 'state'`).
+
 To update minijinja: copy the new release here, reapply the changes, and
 run `cargo test -p ha-core template` (and, optimised,
 `cargo test --release -p ha-core short_templates`).

@@ -13,9 +13,10 @@ automations (state, numeric-state and time triggers), the `sun`, `met`,
 `hue`, `lifx`, `switchbot_cloud`, `mobile_app`, `person` and `zone`
 integrations, and importing a Home Assistant 2026.6 install. **Not yet:**
 adding integrations or editing automations from the UI, templates beyond
-plain text and variables (no `states()` or `now()` yet), scripts, other
-kinds of notifications and remote access. If you need those, keep Home
-Assistant for now.
+states, time, maths and type casts (no areas, devices, labels, regex or
+JSON functions yet, and no live re-rendering), scripts, other kinds of
+notifications and remote access. If you need those, keep Home Assistant
+for now.
 
 ## Install
 

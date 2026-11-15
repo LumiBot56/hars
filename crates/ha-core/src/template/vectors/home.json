@@ -1,0 +1,16 @@
+{
+ "time_zone": "Europe/London",
+ "now": "2026-03-29T01:30:00.250000+00:00",
+ "display_precision": {"sensor.power": 2},
+ "states": [
+  {"entity_id": "binary_sensor.door", "state": "on", "attributes": {}, "last_changed": "2026-03-29T01:00:00+00:00"},
+  {"entity_id": "light.kitchen", "state": "on", "attributes": {"brightness": 255, "color_mode": "rgb", "effect": null, "friendly_name": "Kitchen Light", "rgb_color": [255, 0, 0], "supported_color_modes": ["rgb"]}, "last_changed": "2026-03-28T22:15:00+00:00", "last_updated": "2026-03-29T00:59:59.500000+00:00"},
+  {"entity_id": "light.porch", "state": "off", "attributes": {"friendly_name": "Porch"}, "last_changed": "2025-02-27T20:00:00+00:00"},
+  {"entity_id": "sensor.nested", "state": "3", "attributes": {"data": {"a": [1, 2, {"b": null}], "s": "x"}, "friendly_name": "Nested"}, "last_changed": "2026-03-29T01:29:59+00:00"},
+  {"entity_id": "sensor.power", "state": "1234.5678", "attributes": {"device_class": "power", "unit_of_measurement": "W"}, "last_changed": "2026-03-29T01:30:00.250000+00:00"},
+  {"entity_id": "sensor.temperature", "state": "21.456", "attributes": {"device_class": "temperature", "friendly_name": "Temperature", "state_class": "measurement", "unit_of_measurement": "°C"}, "last_changed": "2026-03-27T23:59:00+00:00"},
+  {"entity_id": "sensor.unknown_one", "state": "unknown", "attributes": {"friendly_name": "Unknown one"}, "last_changed": "2026-03-29T01:00:00+00:00"},
+  {"entity_id": "sun.sun", "state": "below_horizon", "attributes": {"elevation": -12.5, "friendly_name": "Sun", "next_rising": "2026-03-29T05:40:12.345678+00:00", "rising": true}, "last_changed": "2026-03-28T18:30:00+00:00"},
+  {"entity_id": "switch.unavailable_one", "state": "unavailable", "attributes": {"friendly_name": "Gone", "restored": true}, "last_changed": "2026-03-29T01:00:00+00:00"}
+ ]
+}

@@ -35,14 +35,32 @@
 //!   it. `namespace`, the one mutable value, isn't served (it could make a
 //!   reference cycle), and printing stops below a nesting of 100.
 //!
-//! Not here yet: **HA's own functions, filters and tests** (`states`,
-//! `is_state`, `now`, `as_timestamp`, `float`, `round`, …, every name in
-//! [`names`] that hars doesn't serve), and Jinja's `namespace`, `attr`,
-//! `indent`, `format`, `pprint`, `truncate`, `wordwrap` and the like. A
-//! template that uses one fails with `NotImplementedError: hars does not
-//! support …` instead of rendering: never a wrong value. Templates
-//! therefore read no states and no clock, so a render is a pure function of
-//! the template and its variables.
+//! - **HA's functions** for states, type casts, maths and time, as globals,
+//!   filters and tests as HA registers them (`extensions/state.py`,
+//!   `type_cast.py`, `math.py`, `datetime.py`; checked by
+//!   `vectors/functions.json`): `states` and `is_state`, `state_attr`,
+//!   `is_state_attr`, `has_value` (`home.rs`, which also reports what a
+//!   render read as HA's `RenderInfo`); `float`, `int`, `bool`,
+//!   `is_number`, `string_like`, the `math` functions and constants,
+//!   statistics, `min`/`max`, bitwise operators, `add`, `multiply`,
+//!   `round`, `clamp`, `wrap`, `remap` (`funcs.rs`, with Python's number
+//!   rules in `num.rs`); `now`, `utcnow`, `today_at`, `as_datetime`,
+//!   `as_local`, `as_timestamp`, `as_timedelta`, `strptime`,
+//!   `timedelta`, the `timestamp_*` filters, `relative_time`, `time_since`,
+//!   `time_until` and the `datetime` test, on Python's `datetime`,
+//!   `date`, `time` and `timedelta` values (`pytime.rs`). A render reads
+//!   the instance it is given ([`Home`]); without one these functions
+//!   aren't there, as in HA.
+//!
+//! Not here yet: **HA's other functions, filters and tests** (areas,
+//! devices, floors, labels, entities, `expand`, `closest`, `distance`,
+//! translations, regex, JSON, crypto, base64, collections, strings,
+//! issues, config entries, `iif` and the other functional ones,
+//! `version`: every name in [`names`] that hars doesn't serve), and
+//! Jinja's `namespace`, `attr`, `indent`, `format`, `pprint`, `truncate`,
+//! `wordwrap` and the like. A template that uses one fails with
+//! `NotImplementedError: hars does not support …` instead of rendering:
+//! never a wrong value.
 //!
 //! Deliberate differences, with Jinja's behaviour in brackets: an
 //! undefined value tested by `if` or looped over by `for` in lenient mode
@@ -55,16 +73,23 @@
 //! unclosed block keep minijinja's wording in Jinja's vocabulary; other
 //! runtime errors read `TemplateError: <minijinja's message>` (Python's
 //! exception); calling a method on a value (`'a'.upper()`) is not supported
-//! yet; an unknown filter or test in a branch that doesn't run is not
-//! reported (Jinja fails at compile); the budget.
+//! yet, except on HA's `datetime` and `timedelta` values; an unknown filter
+//! or test in a branch that doesn't run is not reported (Jinja fails at
+//! compile); integers past 128 bits are refused (Python has no limit);
+//! `strftime` is glibc's (HA's platform) everywhere; the budget.
 
+mod funcs;
+mod home;
 mod jinja;
 mod literal;
 mod names;
+mod num;
+mod pytime;
 mod syntax;
 #[cfg(test)]
 mod tests;
 
+pub use home::{DisplayPrecision, Home, RenderInfo};
 pub use literal::{Rendered, Unserializable, parse_result};
 
 use crate::py;
@@ -122,11 +147,13 @@ impl Level {
 /// What a render told HA's `log_fn`, in order.
 pub type Log = Vec<(Level, String)>;
 
-/// One render: the result or error, and what was logged on the way.
+/// One render: the result or error, what was logged on the way, and what
+/// it read.
 #[derive(Debug)]
 pub struct Render {
     pub result: Result<Rendered, TemplateError>,
     pub log: Log,
+    pub info: RenderInfo,
 }
 
 /// HA's `Template`: one template string, compiled on first render.
@@ -210,11 +237,22 @@ impl Template {
         Ok(self.compiled.get().expect("just set"))
     }
 
-    /// `async_render_to_info(variables, strict=strict).result()`, as
-    /// `render_template` uses it: the source for a static template,
-    /// otherwise the stripped, parsed output.
+    /// `async_render_to_info(variables, strict=strict).result()` with no
+    /// instance: HA's functions that read one aren't there.
     pub fn render(
         &self,
+        variables: Option<&Map<String, serde_json::Value>>,
+        strict: bool,
+    ) -> Render {
+        self.render_in(None, variables, strict)
+    }
+
+    /// `async_render_to_info(variables, strict=strict)`, as
+    /// `render_template` uses it: the source for a static template,
+    /// otherwise the stripped, parsed output, reading `home`.
+    pub fn render_in(
+        &self,
+        home: Option<&Home>,
         variables: Option<&Map<String, serde_json::Value>>,
         strict: bool,
     ) -> Render {
@@ -223,11 +261,13 @@ impl Template {
             return Render {
                 result: Ok(Rendered::text(self.source.to_string())),
                 log,
+                info: RenderInfo::default(),
             };
         }
+        let mut info = RenderInfo::default();
         let result = self
             .bound(strict)
-            .and_then(|bound| self.render_bound(bound, variables, &mut log))
+            .and_then(|bound| self.render_bound(bound, home, variables, &mut log, &mut info))
             .map(|out| {
                 let stripped = py::strip(&out);
                 parse_result(if stripped.len() == out.len() {
@@ -236,7 +276,7 @@ impl Template {
                     stripped.to_owned()
                 })
             });
-        Render { result, log }
+        Render { result, log, info }
     }
 
     /// `async_render_will_timeout`'s render: compiled first (an error
@@ -244,22 +284,26 @@ impl Template {
     /// and its log only.
     pub fn render_discarding(
         &self,
+        home: Option<&Home>,
         variables: Option<&Map<String, serde_json::Value>>,
         strict: bool,
     ) -> Render {
         let mut log = Log::new();
+        let mut info = RenderInfo::default();
         let result = self.bound(strict).and_then(|bound| {
-            self.render_bound(bound, variables, &mut log)
+            self.render_bound(bound, home, variables, &mut log, &mut info)
                 .map(|_| Rendered::text(String::new()))
         });
-        Render { result, log }
+        Render { result, log, info }
     }
 
     fn render_bound(
         &self,
         bound: &Bound,
+        home: Option<&Home>,
         variables: Option<&Map<String, serde_json::Value>>,
         log: &mut Log,
+        info: &mut RenderInfo,
     ) -> Result<String, TemplateError> {
         if let Some(name) = bound
             .unsupported
@@ -271,18 +315,29 @@ impl Template {
         let root = Value::from_object(Dict {
             entries: variables.map(convert_map).unwrap_or_default(),
             root: true,
+            type_name: "dict object",
         });
         SCRATCH.with_borrow_mut(|s| {
             s.miss = None;
             s.log.clear();
         });
+        home::begin(home, &self.source);
         let mut out = Limited::default();
         let rendered = bound
             .env
             .get_template(NAME)
             .and_then(|t| t.render_captured_to(root, &mut out).map(|_| ()));
-        let (miss, logged) =
+        let (read, poisoned) = home::end();
+        *info = read;
+        let (miss, mut logged) =
             SCRATCH.with_borrow_mut(|s| (s.miss.take(), std::mem::take(&mut s.log)));
+        // An error raised where minijinja couldn't return it: the render
+        // stopped there, and logged nothing after.
+        if let Some((message, at)) = poisoned {
+            logged.truncate(at);
+            log.extend(logged);
+            return Err(TemplateError(message));
+        }
         log.extend(logged);
         match rendered {
             Ok(_) => Ok(String::from_utf8(out.buf).expect("minijinja writes UTF-8")),
@@ -377,6 +432,11 @@ fn between<'a>(s: &'a str, prefix: &str, suffix: &str) -> &'a str {
     s.strip_suffix(suffix).unwrap_or(s)
 }
 
+/// [`unsupported`], raised inside a render.
+fn unsupported_error(kind: &str, name: &str) -> Error {
+    jinja::py_error(unsupported(kind, name).0)
+}
+
 /// A name HA has and hars doesn't serve yet.
 fn unsupported(kind: &str, name: &str) -> TemplateError {
     TemplateError(format!(
@@ -384,10 +444,62 @@ fn unsupported(kind: &str, name: &str) -> TemplateError {
     ))
 }
 
-/// The globals hars serves: Jinja's, which HA keeps. `namespace` is left
-/// out: its attributes can be set, so a template could make a reference
-/// cycle (`{% set n.me = n %}`) that outlives the render.
-const SERVED_GLOBALS: &[&str] = &["range", "dict"];
+/// The globals hars serves: Jinja's, which HA keeps, and HA's own for
+/// states, type casts, maths and time. `namespace` is left out: its
+/// attributes can be set, so a template could make a reference cycle
+/// (`{% set n.me = n %}`) that outlives the render.
+const SERVED_GLOBALS: &[&str] = &[
+    "range",
+    "dict",
+    // `StateExtension`
+    "states",
+    "is_state",
+    "state_attr",
+    "is_state_attr",
+    "has_value",
+    // `TypeCastExtension`
+    "float",
+    "int",
+    "bool",
+    "is_number",
+    // `MathExtension`
+    "e",
+    "pi",
+    "tau",
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "atan2",
+    "log",
+    "sqrt",
+    "average",
+    "median",
+    "statistical_mode",
+    "min",
+    "max",
+    "bitwise_and",
+    "bitwise_or",
+    "bitwise_xor",
+    "clamp",
+    "wrap",
+    "remap",
+    // `DateTimeExtension`
+    "as_datetime",
+    "as_local",
+    "as_timedelta",
+    "as_timestamp",
+    "strptime",
+    "timedelta",
+    "now",
+    "utcnow",
+    "relative_time",
+    "time_since",
+    "time_until",
+    "today_at",
+];
 
 /// minijinja's filters that Jinja hasn't got, HA replaces (`round`, `int`,
 /// `float`, `bool`), or whose output isn't Jinja's (`pprint`, and `format`,
@@ -428,9 +540,12 @@ struct Envs {
     strict: Environment<'static>,
 }
 
-static ENVS: LazyLock<Envs> = LazyLock::new(|| Envs {
-    lenient: environment(UndefinedBehavior::Lenient),
-    strict: environment(UndefinedBehavior::Strict),
+static ENVS: LazyLock<Envs> = LazyLock::new(|| {
+    minijinja::value::set_missing_hook(missing_attribute);
+    Envs {
+        lenient: environment(UndefinedBehavior::Lenient),
+        strict: environment(UndefinedBehavior::Strict),
+    }
 });
 
 fn environment(undefined: UndefinedBehavior) -> Environment<'static> {
@@ -476,6 +591,8 @@ fn environment(undefined: UndefinedBehavior) -> Environment<'static> {
     env.add_function("range", jinja::range);
     jinja::add_tests(&mut env);
     jinja::add_filters(&mut env);
+    home::add(&mut env);
+    funcs::add(&mut env);
     env
 }
 
@@ -555,6 +672,8 @@ impl<'a, W: fmt::Write> Charged<'a, W> {
 fn py_str<W: fmt::Write>(out: &mut Charged<'_, W>, v: &Value) -> Result<(), Error> {
     match v.as_str() {
         Some(s) if v.kind() == ValueKind::String => out.put(s),
+        // `datetime`, `timedelta`, …: their `__str__`.
+        _ if pytime::py_type_name(v).is_some() => out.put(&v.to_string()),
         _ => py_repr(out, v, 0),
     }
 }
@@ -563,6 +682,15 @@ fn py_str<W: fmt::Write>(out: &mut Charged<'_, W>, v: &Value) -> Result<(), Erro
 fn py_repr<W: fmt::Write>(out: &mut Charged<'_, W>, v: &Value, depth: usize) -> Result<(), Error> {
     if depth > MAX_REPR_DEPTH {
         return Err(Error::new(ErrorKind::InvalidOperation, RECURSION));
+    }
+    if let Some(done) = home::py_repr(out, v) {
+        return done;
+    }
+    if v.kind() == ValueKind::Plain {
+        let mut s = String::new();
+        if pytime::py_repr(v, &mut s) {
+            return out.put(&s);
+        }
     }
     match v.kind() {
         ValueKind::Undefined => out.put("Undefined"),
@@ -670,12 +798,72 @@ fn note_miss(message: String) {
     SCRATCH.with_borrow_mut(|s| s.miss = Some(message));
 }
 
+/// Jinja's undefined message for an attribute or item a value hasn't got
+/// (`'None' has no attribute 'state'`, `list object has no element 5`),
+/// for the values that don't word their own (hars's objects do).
+fn missing_attribute(parent: &Value, key: &Value) {
+    if let Some(o) = parent.as_object() {
+        let own = o.downcast_ref::<Dict>().is_some()
+            || o.downcast_ref::<home::TemplateState>().is_some()
+            || o.downcast_ref::<home::AllStates>().is_some()
+            || o.downcast_ref::<home::DomainStates>().is_some()
+            || o.downcast_ref::<home::Context>().is_some()
+            || pytime::py_type_name(parent).is_some();
+        if own {
+            return;
+        }
+    }
+    // `object_type_repr`.
+    let ty = match parent.kind() {
+        ValueKind::None => "None",
+        ValueKind::Bool => "bool object",
+        ValueKind::Number if parent.is_integer() => "int object",
+        ValueKind::Number => "float object",
+        ValueKind::String => "str object",
+        ValueKind::Seq | ValueKind::Map => match jinja::type_name(parent) {
+            "list" => "list object",
+            "tuple" => "tuple object",
+            "range" => "range object",
+            "dict" => "dict object",
+            _ => return,
+        },
+        _ => return,
+    };
+    let mut message = String::new();
+    match key.as_str() {
+        Some(name) if key.kind() == ValueKind::String => {
+            message.push('\'');
+            message.push_str(ty);
+            message.push_str("' has no attribute ");
+            py::repr_str(&mut message, name);
+        }
+        _ => {
+            message.push_str(ty);
+            message.push_str(" has no element ");
+            let mut w = String::new();
+            if key.kind() == ValueKind::Number && !key.is_integer() {
+                w = f64::try_from(key.clone()).map_or_else(|_| key.to_string(), py::repr_float);
+            } else if key.kind() == ValueKind::None {
+                w.push_str("None");
+            } else if key.kind() == ValueKind::Bool {
+                w.push_str(if key.is_true() { "True" } else { "False" });
+            } else {
+                w.push_str(&key.to_string());
+            }
+            message.push_str(&w);
+        }
+    }
+    note_miss(message);
+}
+
 /// A dict from the variables, or the variables themselves (`root`): a
 /// missing key is remembered for Jinja's message about it.
 #[derive(Debug)]
 struct Dict {
     entries: BTreeMap<String, Value>,
     root: bool,
+    /// Jinja's `object_type_repr` of it, for its messages.
+    type_name: &'static str,
 }
 
 impl Object for Dict {
@@ -696,11 +884,14 @@ impl Object for Dict {
                 message.push_str(" is undefined");
             }
             Some(name) => {
-                message.push_str("'dict object' has no attribute ");
+                message.push('\'');
+                message.push_str(self.type_name);
+                message.push_str("' has no attribute ");
                 py::repr_str(&mut message, name);
             }
             None => {
-                message.push_str("dict object has no element ");
+                message.push_str(self.type_name);
+                message.push_str(" has no element ");
                 // A key is a scalar: a number, `None` or a boolean.
                 match key.kind() {
                     ValueKind::None => message.push_str("None"),
@@ -756,6 +947,7 @@ fn convert(v: &serde_json::Value) -> Value {
         serde_json::Value::Object(m) => Value::from_object(Dict {
             entries: convert_map(m),
             root: false,
+            type_name: "dict object",
         }),
     }
 }

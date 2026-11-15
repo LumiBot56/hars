@@ -28,7 +28,7 @@ pub(super) fn py_error(message: String) -> Error {
 /// see).
 pub(super) const QUIET_UNDEFINED: &str = "undefined (not logged)";
 
-fn quiet_undefined() -> Error {
+pub(super) fn quiet_undefined() -> Error {
     Error::new(ErrorKind::UndefinedError, QUIET_UNDEFINED)
 }
 
@@ -37,7 +37,10 @@ fn strict(state: &State) -> bool {
 }
 
 /// Python's type name of a value, for `TypeError` messages.
-fn type_name(v: &Value) -> &'static str {
+pub(super) fn type_name(v: &Value) -> &'static str {
+    if let Some(name) = super::pytime::py_type_name(v) {
+        return name;
+    }
     match v.kind() {
         ValueKind::Undefined => "Undefined",
         ValueKind::None => "NoneType",
@@ -103,6 +106,10 @@ fn py_eq_at(state: &State, a: &Value, b: &Value, depth: usize) -> Result<bool, E
         return Err(Error::new(ErrorKind::InvalidOperation, super::RECURSION));
     }
     visit(state, a)?;
+    // `datetime`, `timedelta`, …: their own `__eq__`.
+    if let Some(rv) = minijinja::value::object_binop(minijinja::value::BinOp::Eq, a, b) {
+        return rv.map(|v| v.is_true());
+    }
     if let (Some(x), Some(y)) = (num(a), num(b)) {
         return Ok(match (x, y) {
             (Num::Int(x), Num::Int(y)) => x == y,
@@ -169,6 +176,19 @@ fn py_order_at(
         return Err(Error::new(ErrorKind::InvalidOperation, super::RECURSION));
     }
     visit(state, a)?;
+    if a.as_object().is_some() || b.as_object().is_some() {
+        let lt = minijinja::value::object_binop(minijinja::value::BinOp::Lt, a, b);
+        let gt = minijinja::value::object_binop(minijinja::value::BinOp::Gt, a, b);
+        if let (Some(lt), Some(gt)) = (lt, gt) {
+            return Ok(Some(if lt?.is_true() {
+                Ordering::Less
+            } else if gt?.is_true() {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }));
+        }
+    }
     if let (Some(x), Some(y)) = (num(a), num(b)) {
         return Ok(match (x, y) {
             (Num::Int(x), Num::Int(y)) => Some(x.cmp(&y)),
@@ -249,9 +269,26 @@ fn py_mod_is(v: &Value, n: &Value, want: i128) -> Result<bool, Error> {
     })
 }
 
+/// Python's `a < b`.
+pub(super) fn py_less(state: &State, a: &Value, b: &Value) -> Result<bool, Error> {
+    Ok(py_order(state, a, b, "<")? == Some(Ordering::Less))
+}
+
+/// Python's `bool(value)`: an undefined value warns (lenient) or raises.
+pub(super) fn truth(state: &State, v: &Value) -> Result<bool, Error> {
+    if v.is_undefined() {
+        if strict(state) {
+            return Err(Error::from(ErrorKind::UndefinedError));
+        }
+        warn_undefined();
+        return Ok(false);
+    }
+    Ok(v.is_true())
+}
+
 /// `str(value)` with Jinja's undefined handling: lenient warns and gives
 /// `""`, strict raises.
-fn text(state: &State, v: &Value) -> Result<String, Error> {
+pub(super) fn text(state: &State, v: &Value) -> Result<String, Error> {
     if v.is_undefined() {
         if strict(state) {
             return Err(Error::from(ErrorKind::UndefinedError));
@@ -692,7 +729,7 @@ fn sort_check(state: &State, v: &Value, kwargs: &Kwargs) -> Result<(), Error> {
             match &first {
                 None => first = Some(item),
                 Some(a) => {
-                    py_type_order(state, a, &item)?;
+                    py_type_order(state, &item, a)?;
                 }
             }
         }
@@ -705,7 +742,7 @@ fn sort_check(state: &State, v: &Value, kwargs: &Kwargs) -> Result<(), Error> {
             match first {
                 None => *first = Some(key),
                 Some(a) => {
-                    py_type_order(state, a, &key)?;
+                    py_type_order(state, &key, a)?;
                 }
             }
         }

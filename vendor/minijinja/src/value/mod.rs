@@ -228,7 +228,27 @@ pub use crate::value::argtypes::{
     from_args, ArgType, FunctionArgs, FunctionResult, Kwargs, Rest, StringInput, ValueOrKwargs,
 };
 pub use crate::value::merge_object::merge_maps;
-pub use crate::value::object::{DynObject, Enumerator, Object, ObjectExt, ObjectRepr};
+pub use crate::value::object::{BinOp, DynObject, Enumerator, Object, ObjectExt, ObjectRepr};
+/// hars patch: an operator an object answers for itself.
+pub use crate::value::ops::object_binop;
+
+/// hars patch: told about each attribute or item a defined value hasn't
+/// got (`x.y`, `x[k]`), so the embedder can word Jinja's undefined
+/// message. Set once.
+static MISSING: std::sync::OnceLock<fn(&Value, &Value)> = std::sync::OnceLock::new();
+
+/// hars patch: sets the hook [`missing`] calls.
+pub fn set_missing_hook(hook: fn(&Value, &Value)) {
+    let _ = MISSING.set(hook);
+}
+
+pub(crate) fn missing(parent: &Value, key: &Value) {
+    if !parent.is_undefined() {
+        if let Some(hook) = MISSING.get() {
+            hook(parent, key);
+        }
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct StaticKeyMap(pub(crate) Vec<(&'static str, Value)>);
