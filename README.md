@@ -65,6 +65,9 @@ checked by sha256 at build time), about 240 MB. Outside Docker, point
 `HARS_FRONTEND` at an unpacked `hass_frontend` directory to serve the UI. `docker stop` sends SIGTERM, which hars handles by draining HTTP for up to
 5 s and exiting 0, well inside Docker's default 10 s grace period. For LAN integrations (LIFX broadcast, mDNS) use `--network host`.
 
+To run `hars` beside HA for a week, with nothing it decides reaching a
+device, and compare its decisions with HA's, see [`docs/SHADOW.md`](docs/SHADOW.md).
+
 ## Development
 
 ```sh

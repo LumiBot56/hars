@@ -623,4 +623,43 @@ mod tests {
         };
         assert!(Arc::ptr_eq(service_data, &seen.lock()[1]));
     }
+
+    /// Shadow mode: the call is validated and its event fired, but a
+    /// handler that acts on a device doesn't run; `hars`'s own domains do.
+    #[tokio::test]
+    async fn shadow_mode_fires_the_event_and_holds_back_device_services() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hass = Hass::new();
+        let ran = Arc::new(AtomicUsize::new(0));
+        for domain in ["light", "automation"] {
+            let ran = ran.clone();
+            hass.services()
+                .register(domain, "turn_on", SupportsResponse::None, move |_| {
+                    let ran = ran.clone();
+                    async move {
+                        ran.fetch_add(1, Ordering::SeqCst);
+                        Ok(None)
+                    }
+                });
+        }
+        let mut rx = hass.bus().subscribe();
+        hass.set_shadow();
+        let call = |domain: &'static str| {
+            hass.call_service(domain, "turn_on", ServiceData::new(), None, false, None)
+        };
+        assert_eq!(call("light").await, Ok(None));
+        assert_eq!(ran.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            EventKind::CallService { .. }
+        ));
+        assert_eq!(call("automation").await, Ok(None));
+        assert_eq!(ran.load(Ordering::SeqCst), 1);
+        // Unknown services are still errors, shadow or not.
+        assert!(matches!(
+            hass.call_service("light", "nope", ServiceData::new(), None, false, None)
+                .await,
+            Err(ServiceError::NotFound { .. })
+        ));
+    }
 }

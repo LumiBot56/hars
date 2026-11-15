@@ -438,10 +438,14 @@ Fixtures are sanitised (no tokens, coordinates rounded) before they are committe
 - [ ] Acceptance: more-info history graphs and the Map trail render
 
 ### M7: Cutover
-- [ ] **Shadow mode**: HA stays authoritative; `hars` runs alongside it with
-      service dispatch suppressed and logs the calls it *would* make, and a
-      diff tool compares them with HA's `call_service` events. The phone stays
-      on HA. One week clean.
+- [x] **Shadow mode** (`HARS_SHADOW=1`, [`docs/SHADOW.md`](SHADOW.md)): HA
+      stays authoritative; `hars` runs alongside it with service handlers
+      that act on devices held back (the `call_service` event still fires),
+      and logs the calls it *would* make and its `automation_triggered`
+      events; `scripts/shadow-diff.py` compares them with HA's recorder
+      database (service, targets, data within 1 s; triggers per automation)
+- [ ] Run shadow mode for a week on the live install: no differences. The
+      phone stays on HA.
 - [x] Packaging: static musl binary in a `FROM scratch` image with tzdata
       (CA roots are compiled into the binary), a persistent volume and SIGTERM
       handling
