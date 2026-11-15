@@ -542,6 +542,11 @@ TEMPLATES = [
     "{{ states.light | unique(attribute='state') | map(attribute='entity_id') | list }}",
     "{{ states.light.kitchen.attributes | unique | list }}",
     "{{ states | unique(attribute='domain') | map(attribute='entity_id') | list }}",
+    "{{ [float('nan'), float('nan')] | unique | list | count }} {{ [float('nan'), 1, float('nan'), 1.0] | unique | list | count }}",
+    # Long formats and whitespace: Python's `ValueError`, so the default.
+    "{{ strptime('', 'x' * 1000, 'fallback') }} {{ strptime('2026', '%Y' ~ 'x' * 1000, 'fallback') }}",
+    "{{ strptime(' ' * 1000, ' %Y', 'fallback') }} {{ strptime(' ' * 1000 ~ '2026', ' %Y', 'fallback') }}",
+    "{{ states.light.kitchen.attributes['x' * 100] }}",
 ]
 
 # Conversations against the home: messages sent on one connection, in order.

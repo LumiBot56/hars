@@ -1457,6 +1457,9 @@ fn datetime_op(dt: &DateTime, op: BinOp, other: &Value, reflected: bool) -> Resu
 /// An attribute Python doesn't have: Jinja's undefined, with its hint.
 fn no_attribute<T: Object + 'static>(this: &T, key: &Value) -> Option<Value> {
     let _ = this;
+    if !super::pay_for(key.as_str().map_or(0, str::len)) {
+        return None;
+    }
     let name = std::any::type_name::<T>();
     let class = match name.rsplit("::").next() {
         Some("DateTime") => "datetime.datetime",
@@ -2496,10 +2499,16 @@ const YYYY: &[&str] = &["dddd"];
 
 /// The format as pieces, or Python's `ValueError`, or `None` for a
 /// directive hars doesn't parse yet.
-fn strptime_pieces(fmt: &str) -> Result<Option<Vec<Piece>>, String> {
+fn strptime_pieces(fmt: &str, most: usize) -> Result<Option<Vec<Piece>>, String> {
     let mut out = Vec::new();
     let mut chars = fmt.chars().peekable();
     while let Some(c) = chars.next() {
+        // Each piece matches at least one character: more pieces than the
+        // string has characters can't match (Python's `ValueError`), and
+        // aren't built.
+        if out.len() > most {
+            return Err("time data does not match format".into());
+        }
         if c.is_whitespace() {
             while chars.peek().is_some_and(|c| c.is_whitespace()) {
                 chars.next();
@@ -2607,14 +2616,20 @@ fn strptime_match(
                 tries.push((i + 1, None));
             }
         }
+        // `\s+`, longest first: each attempt made (and paid) only when
+        // the longer ones failed.
         Piece::Space => {
             let mut n = 0;
             while s.get(i + n).is_some_and(|c| c.is_whitespace()) {
                 n += 1;
             }
+            state.consume_fuel(n as u64 / 64)?;
             for k in (1..=n).rev() {
-                tries.push((i + k, None));
+                if let Some(end) = strptime_match(state, rest, s, i + k, found)? {
+                    return Ok(Some(end));
+                }
             }
+            return Ok(None);
         }
         Piece::Field(name, alts) => {
             for alt in alts.iter() {
@@ -2705,7 +2720,10 @@ pub(super) fn strptime(
     s: &str,
     fmt: &str,
 ) -> Result<Result<DateTime, String>, Error> {
-    let pieces = match strptime_pieces(fmt) {
+    // The format is read and the string copied as characters: paid first.
+    state
+        .consume_fuel((fmt.len() as u64).saturating_add((s.len() as u64).saturating_mul(4)) / 64)?;
+    let pieces = match strptime_pieces(fmt, s.chars().count()) {
         Ok(Some(p)) => p,
         Ok(None) => {
             return Err(py_error(
@@ -2720,15 +2738,11 @@ pub(super) fn strptime(
             "NotImplementedError: hars does not support strptime formats this long".into(),
         ));
     }
-    state.consume_fuel((s.len() as u64 + fmt.len() as u64) / 64)?;
     let chars: Vec<char> = s.chars().collect();
     let mut found = Found::new();
     let Some(end) = strptime_match(state, &pieces, &chars, 0, &mut found)? else {
-        let mut m = String::from("time data ");
-        crate::py::repr_str(&mut m, s);
-        m.push_str(" does not match format ");
-        crate::py::repr_str(&mut m, fmt);
-        return Ok(Err(m));
+        // Python names both; HA's caller only needs that it failed.
+        return Ok(Err("time data does not match format".into()));
     };
     if end != chars.len() {
         let rest: String = chars[end..].iter().collect();

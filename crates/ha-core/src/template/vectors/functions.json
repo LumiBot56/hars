@@ -13714,5 +13714,124 @@
    "domains": [],
    "time": false
   }
+ },
+ {
+  "template": "{{ [float('nan'), float('nan')] | unique | list | count }} {{ [float('nan'), 1, float('nan'), 1.0] | unique | list | count }}",
+  "strict": false,
+  "result": {
+   "json": "2 3"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ [float('nan'), float('nan')] | unique | list | count }} {{ [float('nan'), 1, float('nan'), 1.0] | unique | list | count }}",
+  "strict": true,
+  "result": {
+   "json": "2 3"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ strptime('', 'x' * 1000, 'fallback') }} {{ strptime('2026', '%Y' ~ 'x' * 1000, 'fallback') }}",
+  "strict": false,
+  "result": {
+   "json": "fallback fallback"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ strptime('', 'x' * 1000, 'fallback') }} {{ strptime('2026', '%Y' ~ 'x' * 1000, 'fallback') }}",
+  "strict": true,
+  "result": {
+   "json": "fallback fallback"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ strptime(' ' * 1000, ' %Y', 'fallback') }} {{ strptime(' ' * 1000 ~ '2026', ' %Y', 'fallback') }}",
+  "strict": false,
+  "result": {
+   "json": "fallback 2026-01-01 00:00:00"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ strptime(' ' * 1000, ' %Y', 'fallback') }} {{ strptime(' ' * 1000 ~ '2026', ' %Y', 'fallback') }}",
+  "strict": true,
+  "result": {
+   "json": "fallback 2026-01-01 00:00:00"
+  },
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen.attributes['x' * 100] }}",
+  "strict": false,
+  "result": {
+   "json": ""
+  },
+  "log": [
+   [
+    "WARNING",
+    "'homeassistant.util.read_only_dict.ReadOnlyDict object' has no attribute 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'"
+   ]
+  ],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [],
+   "time": false
+  }
+ },
+ {
+  "template": "{{ states.light.kitchen.attributes['x' * 100] }}",
+  "strict": true,
+  "error": "UndefinedError: 'homeassistant.util.read_only_dict.ReadOnlyDict object' has no attribute 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'",
+  "log": [],
+  "listeners": {
+   "all": false,
+   "entities": [
+    "light.kitchen"
+   ],
+   "domains": [],
+   "time": false
+  }
  }
 ]

@@ -52,8 +52,9 @@ fn home(attributes: impl Fn(usize) -> serde_json::Value) -> Home {
     Home::new(hass)
 }
 
-/// Each template fails with an error containing `want`, allocating less
-/// than `limit` bytes over what was there before it ran.
+/// Each template fails with an error containing `want` (or, for
+/// `=text`, renders `text`), allocating less than `limit` bytes over what
+/// was there before it ran.
 fn check(home: &Home, limit: usize, cases: &[(&str, &str)]) {
     // Build the environments first.
     let _ = Template::new("{{ states | count }}").render_in(Some(home), None, false);
@@ -64,8 +65,16 @@ fn check(home: &Home, limit: usize, cases: &[(&str, &str)]) {
             .render_in(Some(home), None, false)
             .result;
         let peak = PEAK.load(Ordering::Relaxed) - before;
-        let err = result.expect_err(source);
-        assert!(err.0.contains(want), "{source}: {err}");
+        match want.strip_prefix('=') {
+            Some(text) => {
+                let rendered = result.expect(source);
+                assert_eq!(rendered.as_text(), Some(text), "{source}");
+            }
+            None => {
+                let err = result.expect_err(source);
+                assert!(err.0.contains(want), "{source}: {err}");
+            }
+        }
         assert!(peak < limit, "{source}: peak {} KiB", peak / 1024);
     }
 }
@@ -234,4 +243,57 @@ fn reading_large_state_data_stays_within_the_budget() {
             ("{{ states.sensor.big0 | string | length }}", BUDGET),
         ],
     );
+    drop(nulls);
+
+    // Messages and parsing driven by long strings from a state: a missing
+    // key's warning, and `strptime`'s format and whitespace.
+    let long = home(|i| {
+        if i == 0 {
+            serde_json::json!({
+                "key": "x".repeat(1_000_000),
+                "fmt": "x".repeat(1_000_000),
+                "spaces": " ".repeat(1_000_000),
+            })
+        } else {
+            serde_json::json!({})
+        }
+    });
+    let key = "{% set k = state_attr('sensor.big0', 'key') %}";
+    let missing = [
+        "states.sensor.big0.attributes[k]",
+        "{}[k]",
+        "none[k]",
+        "(1)[k]",
+        "[1][k]",
+        "now()[k]",
+        "states.sensor[k]",
+        "states.sensor.big0[k]",
+        "states.sensor.big0[k ~ '_']",
+        "x | default(k) | float(none) | string ~ (k | float(0) | string)",
+    ]
+    .map(|m| format!("{key}{{% for i in range(100) %}}{{{{ {m} }}}}{{% endfor %}}"));
+    let mut cases: Vec<(&str, &str)> = missing.iter().map(|m| (m.as_str(), BUDGET)).collect();
+    // The first error raised where minijinja can't return one is the
+    // render's; the loop goes on paying for each message until the budget.
+    let domain = format!("{key}{{% for i in range(100) %}}{{{{ states[k ~ 'X'] }}}}{{% endfor %}}");
+    cases.push((&domain, "Invalid domain name"));
+    cases.extend([
+        // Python: more format than string is a `ValueError`, so the default.
+        (
+            "{{ strptime('', state_attr('sensor.big0', 'fmt'), 'fallback') }}",
+            "=fallback",
+        ),
+        (
+            "{{ strptime('2026', '%Y' ~ state_attr('sensor.big0', 'fmt'), 'fallback') }}",
+            "=fallback",
+        ),
+        // A million ways to read the spaces: each paid as it is tried.
+        (
+            "{{ strptime(state_attr('sensor.big0', 'spaces'), ' %Y', 'fallback') }}",
+            BUDGET,
+        ),
+    ]);
+    // The warnings are kept (HA's log gets each one); their total is the
+    // budget's.
+    check(&long, 40 * MIB, &cases);
 }

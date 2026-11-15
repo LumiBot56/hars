@@ -195,6 +195,8 @@ fn snapshot() -> Arc<[Arc<HaState>]> {
     };
     let mut all = hass.states().all();
     all.sort_unstable_by(|a, b| a.entity_id.as_str().cmp(b.entity_id.as_str()));
+    // One pointer per state, uncharged: proportional to what the state
+    // machine already holds (100,000 states are 1.6 MB), taken once.
     let all: Arc<[Arc<HaState>]> = all.into();
     CTX.with_borrow_mut(|c| c.snapshot = Some(all.clone()));
     all
@@ -341,6 +343,9 @@ impl Attributes {
     }
 
     fn missing(key: &Value) {
+        if !super::pay_for_key(key) {
+            return;
+        }
         let mut message = String::new();
         match key.as_str().filter(|_| key.kind() == ValueKind::String) {
             Some(name) => {
@@ -449,6 +454,11 @@ impl Object for AllStates {
             ));
             return None;
         };
+        // Looking it up copies it (lower-cased, collected, or in a
+        // message): paid first.
+        if !super::pay_for(name.len()) {
+            return None;
+        }
         if name.contains('.') {
             return state_if_valid(name);
         }
@@ -509,6 +519,10 @@ impl Object for DomainStates {
     }
 
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        // The id is built from it: paid first (a container isn't a name).
+        if !super::pay_for_key(key) {
+            return None;
+        }
         let mut id = String::from(self.0.as_str());
         id.push('.');
         match key.as_str() {
@@ -680,6 +694,9 @@ impl Object for TemplateState {
                 return None;
             }
             _ if name.starts_with('_') => {
+                if !super::pay_for(name.len()) {
+                    return None;
+                }
                 super::note_miss(format!(
                     "access to attribute '{name}' of 'TemplateState' object is unsafe."
                 ));
@@ -744,6 +761,9 @@ impl Object for TemplateState {
 }
 
 fn state_no_attribute(key: &Value) -> Option<Value> {
+    if !super::pay_for_key(key) {
+        return None;
+    }
     let mut message = String::from(
         "'homeassistant.helpers.template.states.TemplateState object' has no attribute ",
     );

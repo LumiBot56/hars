@@ -94,6 +94,9 @@ fn raise_no_default(state: &State, function: &str, value: &Value) -> Error {
 /// `str(value)`, which for an undefined value warns each time it is
 /// printed (minijinja's printer warns once).
 fn text_again(state: &State, value: &Value) -> Result<String, Error> {
+    // Keeping the message for the second warning copies it: paid first.
+    let kept = super::SCRATCH.with_borrow(|s| s.miss.as_ref().map_or(0, String::len));
+    state.consume_fuel(1 + kept as u64 / 64)?;
     let miss = super::SCRATCH.with_borrow(|s| s.miss.clone());
     let shown = text(state, value);
     if value.is_undefined() {

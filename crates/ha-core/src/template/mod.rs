@@ -803,6 +803,32 @@ fn note_miss(message: String) {
     SCRATCH.with_borrow_mut(|s| s.miss = Some(message));
 }
 
+/// Pays the running render, before it is built, for a message or copy
+/// naming `len` bytes from the template or a state (escapes take up to
+/// four bytes per byte). Undefined values' messages are kept in the log,
+/// so their total is bounded by the budget, as everything else is. Once
+/// the budget is spent this answers false (the render fails with the
+/// budget's error) and nothing is built.
+pub(super) fn pay_for(len: usize) -> bool {
+    match minijinja::value::consume_fuel_now(1 + (len as u64).saturating_mul(4) / 64) {
+        Ok(()) => true,
+        Err(_) => {
+            home::poison(OUT_OF_BUDGET.clone());
+            false
+        }
+    }
+}
+
+/// [`pay_for`] a key named in a message: a string's bytes, a scalar's
+/// few; a container (never a key in Python) isn't named.
+fn pay_for_key(key: &Value) -> bool {
+    match key.kind() {
+        ValueKind::String => pay_for(key.as_str().map_or(0, str::len)),
+        ValueKind::Seq | ValueKind::Map | ValueKind::Iterable | ValueKind::Plain => false,
+        _ => pay_for(0),
+    }
+}
+
 /// Jinja's undefined message for an attribute or item a value hasn't got
 /// (`'None' has no attribute 'state'`, `list object has no element 5`),
 /// for the values that don't word their own (hars's objects do).
@@ -818,6 +844,9 @@ fn missing_attribute(parent: &Value, key: &Value) {
         if own {
             return;
         }
+    }
+    if !pay_for_key(key) {
+        return;
     }
     // `object_type_repr`.
     let ty = match parent.kind() {
@@ -880,6 +909,12 @@ impl Object for Dict {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         if let Some(found) = key.as_str().and_then(|k| self.entries.get(k)) {
             return Some(found.clone());
+        }
+        if self.root && key.as_str().is_some_and(|n| SERVED_GLOBALS.contains(&n)) {
+            return None;
+        }
+        if !pay_for_key(key) {
+            return None;
         }
         let mut message = String::new();
         match key.as_str() {

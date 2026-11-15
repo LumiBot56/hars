@@ -752,6 +752,9 @@ fn set_key(state: &State, v: &Value, lower: bool) -> Result<Option<Key>, Error> 
         ValueKind::Seq | ValueKind::Iterable | ValueKind::Map => return Ok(None),
         _ => match num(v) {
             Some(Num::Int(i)) => Key::Int(i),
+            // A NaN is only ever its own object, and hars's values have no
+            // identity: each one is kept (`[nan, nan] | unique` is two).
+            Some(Num::Float(f)) if f.is_nan() => return Ok(None),
             Some(Num::Float(f)) if f.fract() == 0.0 && f.abs() < 1e38 => Key::Int(f as i128),
             Some(Num::Float(f)) => Key::Float(f.to_bits()),
             None => return Ok(None),
