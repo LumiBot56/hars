@@ -18,7 +18,8 @@ install another way.
    commit to `main`, for x86-64 and ARM64.
 3. Make the `hars` folder (`hars/config` holds the data) and `hars/hars.env`
    (settings). If a container named `hars` already runs from that folder,
-   remove it; the data stays. It refuses to touch a `hars` container that
+   stop it (giving hars its minute to save) and remove it; the data stays.
+   It checks the port first, and refuses to touch a `hars` container that
    keeps its data anywhere else.
 4. With `HARS_IMPORT`, run `hars import` on the Home Assistant copy.
 5. Start the container: named `hars`, restarted by Docker after a crash or a
@@ -41,7 +42,7 @@ macOS, `$env:HARS_PORT = '8124'; irm … | iex` in PowerShell.
 |---|---|
 | `HARS_DIR` | where hars keeps its folder (default: `hars` in your home folder) |
 | `HARS_PORT` | the web port (default: 8123, or the next free one up to 8133) |
-| `HARS_IMPORT` | a copy of a Home Assistant 2026.6 config folder to bring over before hars starts |
+| `HARS_IMPORT` | a copy of a Home Assistant 2026.6 config folder to bring over before hars first starts (a new install only; otherwise [import by hand](#importing-by-hand)) |
 | `HARS_YES=1` | answer yes to the questions (installing Docker), for unattended installs |
 | `HARS_IMAGE` | another image, such as one you built (`docker build -t hars .`) |
 

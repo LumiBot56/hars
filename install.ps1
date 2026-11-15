@@ -45,6 +45,14 @@ function Install-Hars {
             return ($null -ne $_.Exception.Response)
         }
     }
+    # Docker Desktop reports a bind mount as C:\x, /run/desktop/mnt/host/c/x
+    # or /host_mnt/c/x: compare them as c:/x.
+    function NormPath($p) {
+        if (-not $p) { return $null }
+        $p = ($p -replace '\\', '/').TrimEnd('/').ToLowerInvariant()
+        if ($p -match '^/(?:run/desktop/mnt/host|host_mnt|mnt)/([a-z])(/.*)?$') { $p = $Matches[1] + ':' + $Matches[2] }
+        return $p
+    }
     function PortFree($port) {
         $client = New-Object System.Net.Sockets.TcpClient
         try { $client.Connect('127.0.0.1', $port); return $false } catch { return $true } finally { $client.Close() }
@@ -98,16 +106,25 @@ function Install-Hars {
 
     # An earlier install from this folder is replaced; its data stays. Never
     # take over a `hars` container that keeps its data somewhere else.
+    # Plain JSON: Windows PowerShell mangles quotes inside a -f template.
     $replace = $false
-    $old = & docker inspect -f '{{range .Mounts}}{{if eq .Destination "/config"}}{{.Source}}{{end}}{{end}}' hars 2> $null
+    $runPort = $null
+    $json = & docker inspect hars 2> $null
     if ($LASTEXITCODE -eq 0) {
-        $same = $old -and (($old -replace '\\', '/').TrimEnd('/') -ieq ($config -replace '\\', '/').TrimEnd('/') -or
-            $old -like "*$(($config -replace '\\', '/').Substring(2))")
+        $info = @($json | Out-String | ConvertFrom-Json)[0]
+        $old = ($info.Mounts | Where-Object { $_.Destination -eq '/config' } | Select-Object -First 1).Source
+        $same = $old -and ((NormPath $old) -eq (NormPath $config))
         if (-not $same) {
             Fail "a container named hars already exists and keeps its data in $old. To upgrade it, set `$env:HARS_DIR to the folder that holds that config folder and run this again. To start fresh instead, remove it first: docker rm -f hars"
             return
         }
+        if ($import) {
+            Fail "hars is already installed in $dir, and HARS_IMPORT only goes into a new install. Run Remove-Item Env:HARS_IMPORT and the install command again, or import by hand: see docs/INSTALL.md, `"Importing by hand`"."
+            return
+        }
         $replace = $true
+        # The port the running hars really listens on (hars.env may have been edited since).
+        foreach ($e in @($info.Config.Env)) { if ($e -match '^HARS_BIND=.*:(\d+)$') { $runPort = $Matches[1] } }
     }
 
     # Check the port before stopping anything.
@@ -122,7 +139,7 @@ function Install-Hars {
         $port = (8123..8133 | Where-Object { PortFree $_ } | Select-Object -First 1)
         if (-not $port) { Fail 'ports 8123 to 8133 are all in use; pick one with $env:HARS_PORT'; return }
         if ($port -ne 8123) { Say "Port 8123 is in use (Home Assistant?), so hars uses $port" }
-    } elseif (-not $replace -or "$port" -ne "$oldPort") {
+    } elseif (-not $replace -or "$port" -ne "$runPort") {
         # The running hars holds its own port; any other must be free.
         if (-not (PortFree ([int]$port))) {
             Fail "port $port is in use by another program (Home Assistant?). Stop it, or pick another port with `$env:HARS_PORT."
@@ -146,8 +163,11 @@ function Install-Hars {
     [IO.File]::WriteAllText($envFile, $text)
 
     if ($replace) {
-        Say 'Replacing the running hars (your data stays)'
-        & docker rm -f hars | Out-Null
+        # `docker stop` gives hars its minute to save; `rm -f` would kill it.
+        Say 'Stopping the running hars (your data stays)'
+        & docker stop hars | Out-Null
+        if ($LASTEXITCODE -ne 0) { Fail "couldn't stop the running hars; it is left as it was."; return }
+        & docker rm hars | Out-Null
     }
 
     # Before hars first starts, so the import doesn't meet its new files.

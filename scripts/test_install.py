@@ -16,14 +16,27 @@ SCRIPT = pathlib.Path(__file__).resolve().parent.parent / "install.sh"
 # The only real commands the installer sees: a real docker (CI runners have
 # one) or sudo must never be found.
 TOOLS = ["sh", "mkdir", "sed", "grep", "mv", "cat", "id", "sleep", "awk",
-         "touch", "rm"]
+         "touch", "rm", "tail"]
 
 DOCKER = r"""#!/bin/sh
 printf '%s\n' "$*" >> "$FAKE/calls"
 case $1 in
 info) exit 0 ;;
-inspect) [ -n "${FAKE_MOUNT+x}" ] && printf '%s\n' "$FAKE_MOUNT" && exit 0; exit 1 ;;
-run) touch "$FAKE/running" ;;
+inspect)
+    [ -n "${FAKE_MOUNT+x}" ] || exit 1
+    case $* in
+    *Mounts*) printf '%s\n' "$FAKE_MOUNT" ;;
+    *Env*) cat "$FAKE/container_env" 2>/dev/null ;;
+    esac
+    exit 0 ;;
+run)
+    touch "$FAKE/running"
+    # The container keeps the env file's values as they were at `run`.
+    prev=
+    for a; do
+        [ "$prev" = --env-file ] && grep -v '^#' "$a" > "$FAKE/container_env"
+        prev=$a
+    done ;;
 esac
 exit 0
 """
@@ -120,8 +133,9 @@ class InstallTests(unittest.TestCase):
         env_file.write_text(env_file.read_text().replace("#RUST_LOG", "RUST_LOG"))
         result, calls = self.install(FAKE_MOUNT=f"{self.data()}/config")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("rm -f hars", calls)
-        self.assertLess(calls.index("rm -f hars"), calls.index(self.run_call(calls)))
+        # Stopped first, so hars saves; then removed and started again.
+        self.assertLess(calls.index("stop hars"), calls.index("rm hars"))
+        self.assertLess(calls.index("rm hars"), calls.index(self.run_call(calls)))
         text = env_file.read_text()
         self.assertIn("HARS_BIND=0.0.0.0:8124\n", text)
         self.assertIn("\nRUST_LOG=debug\n", text)
@@ -139,7 +153,7 @@ class InstallTests(unittest.TestCase):
         result, calls = self.install(FAKE_MOUNT="/srv/other/config")
         self.assertEqual(result.returncode, 1)
         self.assertIn("/srv/other/config", result.stderr)
-        self.assertNotIn("rm -f hars", calls)
+        self.assertNotIn("stop hars", calls)
         self.assertFalse(any(c.startswith("run ") for c in calls))
 
     def test_imports_home_assistant_before_the_first_start(self):
@@ -171,7 +185,27 @@ class InstallTests(unittest.TestCase):
                                      FAKE_MOUNT=f"{self.data()}/config")
         self.assertEqual(result.returncode, 1)
         self.assertIn("port 9000 is in use", result.stderr)
-        self.assertNotIn("rm -f hars", calls)
+        self.assertNotIn("stop hars", calls)
+
+    def test_a_port_edited_in_hars_env_is_checked_too(self):
+        self.install()
+        env_file = self.data() / "hars.env"
+        env_file.write_text(env_file.read_text().replace(":8123", ":8130"))
+        result, calls = self.install(FAKE_BUSY="8130",
+                                     FAKE_MOUNT=f"{self.data()}/config")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("port 8130 is in use", result.stderr)
+        self.assertNotIn("stop hars", calls)
+
+    def test_an_import_into_an_existing_install_is_refused_first(self):
+        self.install()
+        ha = self.tmp / "ha-copy"
+        (ha / ".storage").mkdir(parents=True)
+        result, calls = self.install(HARS_IMPORT=str(ha),
+                                     FAKE_MOUNT=f"{self.data()}/config")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("only goes into a new install", result.stderr)
+        self.assertNotIn("stop hars", calls)
 
     def test_rejects_a_port_that_is_not_a_number(self):
         result, calls = self.install(HARS_PORT="80a",

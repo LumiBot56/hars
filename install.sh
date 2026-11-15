@@ -55,13 +55,20 @@ main() {
 	# An earlier install from this folder is replaced; its data stays. Never
 	# take over a `hars` container that keeps its data somewhere else.
 	REPLACE=
+	RUN_PORT=
 	if old=$(dk inspect -f '{{range .Mounts}}{{if eq .Destination "/config"}}{{.Source}}{{end}}{{end}}' hars 2>/dev/null); then
 		if [ "$old" != "$DIR/config" ]; then
 			die "a container named hars already exists and keeps its data in ${old:-a Docker volume}.
        To upgrade it, run this again with HARS_DIR set to the folder that holds that config folder.
        To start fresh instead, remove it first: ${SUDO:+sudo }docker rm -f hars"
 		fi
+		[ -z "$IMPORT" ] ||
+			die "hars is already installed in $DIR, and HARS_IMPORT only goes into a new install.
+       Run the install command without HARS_IMPORT, or import by hand: see docs/INSTALL.md, \"Importing by hand\"."
 		REPLACE=1
+		# The port the running hars really listens on (hars.env may have been edited since).
+		RUN_PORT=$(dk inspect -f '{{range .Config.Env}}{{println .}}{{end}}' hars |
+			sed -n 's/^HARS_BIND=.*:\([0-9][0-9]*\)$/\1/p' | tail -n 1)
 	fi
 
 	# Check the port before stopping anything.
@@ -73,7 +80,7 @@ main() {
 	PORT=${HARS_PORT:-$OLD_PORT}
 	if [ -z "$PORT" ]; then
 		PORT=$(free_port) || exit 1
-	elif [ -z "$REPLACE" ] || [ "$PORT" != "$OLD_PORT" ]; then
+	elif [ -z "$REPLACE" ] || [ "$PORT" != "$RUN_PORT" ]; then
 		# The running hars holds its own port; any other must be free.
 		port_free "$PORT" ||
 			die "port $PORT is in use by another program (Home Assistant?). Stop it, or pick another port with HARS_PORT."
@@ -94,8 +101,10 @@ main() {
 	fi
 
 	if [ -n "$REPLACE" ]; then
-		say "Replacing the running hars (your data stays)"
-		dk rm -f hars >/dev/null
+		# `docker stop` gives hars its minute to save; `rm -f` would kill it.
+		say "Stopping the running hars (your data stays)"
+		dk stop hars >/dev/null || die "couldn't stop the running hars; it is left as it was."
+		dk rm hars >/dev/null
 	fi
 
 	# Before hars first starts, so the import doesn't meet its new files.
