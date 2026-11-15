@@ -264,6 +264,23 @@ class ShadowDiff(unittest.TestCase):
                 status = sd.main(["--hars-log", base, "--ha-jsonl", ha, "--until", str(T0 + 3600)])
             self.assertEqual(status, 2, row)
 
+    def test_database_rows_that_cannot_be_classified_are_errors(self):
+        for mangle in (
+            "UPDATE events SET context_id_bin = NULL",          # who made it?
+            "UPDATE event_data SET shared_data = '{\"domain\": \"light\", \"service\": \"turn_on\", \"service_data\": null}'",
+        ):
+            r = Run(self, [call(T0 + 1, "light", "turn_on", LIGHT)], [], db=True)
+            db = os.path.join(r.dir.name, "ha.db")
+            con = sqlite3.connect(db)
+            con.execute(mangle)
+            con.commit()
+            con.close()
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                status = sd.main(["--hars-log", os.path.join(r.dir.name, "hars.jsonl"),
+                                  "--ha-db", db, "--until", str(T0 + 3600)])
+            self.assertEqual(status, 2, mangle)
+
     def test_a_reversed_window_is_an_error_not_a_pass(self):
         out = io.StringIO()
         with contextlib.redirect_stderr(out):

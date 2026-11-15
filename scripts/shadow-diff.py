@@ -230,12 +230,19 @@ def read_ha_db(path, since, until):
         try:
             data = json.loads(shared)
             if kind == "call_service":
+                if not isinstance(data["service_data"], dict) or not data["domain"]:
+                    raise TypeError
+                if has_ctx and not ctx["id"] and data["domain"] not in RUNS:
+                    # Nothing says who made it: not safe to leave out as "not an automation's".
+                    raise InputError(f"{path}: a call_service row at {t} has no context id")
                 calls.append(
                     Call(t, data["domain"], data["service"], data["service_data"], ctx)
                 )
             else:
+                if not data["entity_id"]:
+                    raise TypeError
                 triggers.append(Trigger(t, data["entity_id"], data.get("name"), ctx and ctx["id"]))
-        except (TypeError, KeyError, json.JSONDecodeError):
+        except (TypeError, KeyError, AttributeError, json.JSONDecodeError):
             raise InputError(f"{path}: a {kind} row at {t} that is not in HA's shape")
     # A run that started before the window can still call a service inside
     # it: its trigger's context is needed whenever the trigger was.
