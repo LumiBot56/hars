@@ -12,6 +12,7 @@ mod commands;
 mod entities;
 mod frontend;
 mod manifest;
+mod mobile_app;
 mod sensor;
 mod weather;
 
@@ -608,7 +609,7 @@ fn py_repr(out: &mut String, v: &Value) {
 
 /// Python's `repr` of a `str`: single quotes unless only `'` is inside,
 /// escapes for `\\`, the quote and control characters.
-fn py_repr_str(out: &mut String, s: &str) {
+pub(crate) fn py_repr_str(out: &mut String, s: &str) {
     let quote = if s.contains('\'') && !s.contains('"') {
         '"'
     } else {
