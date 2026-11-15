@@ -218,13 +218,25 @@ impl std::fmt::Debug for PushChannel {
     }
 }
 
+/// Locking: the channel map's lock is held while a channel is looked up and
+/// sent to, torn down, confirmed, or opened, so none of these interleave
+/// (HA runs each in one go on its event loop). A channel's state lock is
+/// only ever taken inside it, never the other way round, and neither is
+/// held across an await.
 impl PushChannel {
-    /// `async_send_notification`.
-    fn notify(self: &Arc<Self>, n: &Shared, reg: Arc<Registration>, fallback: Fallback) {
+    /// `async_send_notification`, with the map lock held. `false` if the
+    /// channel was torn down: the caller sends by cloud instead.
+    fn notify(self: &Arc<Self>, n: &Shared, reg: Arc<Registration>, fallback: Fallback) -> bool {
         if !self.support_confirm {
+            if self.state.lock().torn_down {
+                return false;
+            }
             let json = n.lock().to_json();
             (self.send)(&json);
-            return;
+            return true;
+        }
+        if self.state.lock().torn_down {
+            return false;
         }
         // `random_uuid_hex`.
         let id = format!("{:032x}", rand::random::<u128>());
@@ -254,6 +266,7 @@ impl PushChannel {
             });
         }
         (self.send)(&json);
+        true
     }
 
     /// `handle_push_failed`: unconfirmed in time. The channel is dropped
@@ -288,19 +301,27 @@ impl PushChannel {
     /// it is still this channel there), and everything pending taken, its
     /// timers stopped. `None` if already torn down.
     fn begin_teardown(&self) -> Option<Vec<Pending>> {
+        match self.channels.upgrade() {
+            Some(channels) => self.teardown_locked(&mut channels.lock()),
+            None => self.teardown_locked(&mut HashMap::new()),
+        }
+    }
+
+    /// [`PushChannel::begin_teardown`] with the map lock held.
+    fn teardown_locked(
+        &self,
+        channels: &mut HashMap<Arc<str>, Arc<PushChannel>>,
+    ) -> Option<Vec<Pending>> {
         let mut state = self.state.lock();
         if state.torn_down {
             return None;
         }
         state.torn_down = true;
-        if let Some(channels) = self.channels.upgrade() {
-            let mut channels = channels.lock();
-            if channels
-                .get(&self.webhook_id)
-                .is_some_and(|c| std::ptr::eq(Arc::as_ptr(c), self))
-            {
-                channels.remove(&self.webhook_id);
-            }
+        if channels
+            .get(&self.webhook_id)
+            .is_some_and(|c| std::ptr::eq(Arc::as_ptr(c), self))
+        {
+            channels.remove(&self.webhook_id);
         }
         let pending = std::mem::take(&mut state.pending);
         for p in &pending {
@@ -411,12 +432,18 @@ impl Notifier {
             cloud: self.cloud.clone(),
             state: Mutex::new(ChannelState::default()),
         });
-        let old = self.channels.lock().get(&webhook_id).cloned();
-        let pending = old.and_then(|old| old.begin_teardown()).unwrap_or_default();
+        // Lookup, teardown of the channel displaced and insert in one step,
+        // so two opens at once can't both miss each other.
+        let mut channels = self.channels.lock();
+        let old = channels.get(&webhook_id).cloned();
+        let pending = old
+            .and_then(|old| old.teardown_locked(&mut channels))
+            .unwrap_or_default();
         if pending.is_empty() {
-            self.channels.lock().insert(webhook_id, channel.clone());
+            channels.insert(webhook_id, channel.clone());
             return (channel, None);
         }
+        drop(channels);
         let channels = self.channels.clone();
         let new = channel.clone();
         let cloud = self.cloud.clone();
@@ -425,21 +452,43 @@ impl Notifier {
                 new.mark_torn_down();
                 return Err(e);
             }
-            // Unless the app gave up on it meanwhile.
-            let state = new.state.lock();
-            if !state.torn_down {
-                channels.lock().insert(webhook_id, new.clone());
+            // Unless the app gave up on it meanwhile, or a channel opened
+            // since has taken its place (the newest open wins; HA would
+            // overwrite that one without tearing it down).
+            let mut channels = channels.lock();
+            let mut state = new.state.lock();
+            if !state.torn_down && !channels.contains_key(&webhook_id) {
+                channels.insert(webhook_id, new.clone());
+            } else {
+                state.torn_down = true;
             }
             Ok(())
         });
         (channel, Some(opening))
     }
 
+    /// Send over the app's channel, looked up and sent to under the map
+    /// lock; `false` if it has none (the caller goes by cloud).
+    fn send_local(
+        &self,
+        webhook_id: &str,
+        n: &Shared,
+        reg: &Arc<Registration>,
+        fallback: Fallback,
+    ) -> bool {
+        let channels = self.channels.lock();
+        channels
+            .get(webhook_id)
+            .is_some_and(|c| c.notify(n, reg.clone(), fallback))
+    }
+
     /// `handle_push_notification_confirm` once checked: `false` when the
     /// app has no channel or nothing waits under `confirm_id`.
     pub fn confirm(&self, webhook_id: &str, confirm_id: &str) -> bool {
-        let channel = self.channels.lock().get(webhook_id).cloned();
-        channel.is_some_and(|c| c.confirm(confirm_id))
+        let channels = self.channels.lock();
+        channels
+            .get(webhook_id)
+            .is_some_and(|c| c.confirm(confirm_id))
     }
 
     /// `push_registrations`: device name to webhook id for every
@@ -582,9 +631,7 @@ impl Notifier {
             let Some(reg) = self.registrations.read().get(&*target).cloned() else {
                 return Err(ServiceError::Unknown(key_error(&target)));
             };
-            let channel = self.channels.lock().get(&*target).cloned();
-            if let Some(channel) = channel {
-                channel.notify(&shared, reg.clone(), Fallback::Legacy);
+            if self.send_local(&target, &shared, &reg, Fallback::Legacy) {
                 self.record(&reg, None);
                 continue;
             }
@@ -654,12 +701,12 @@ impl Notifier {
         n: Notification,
         context: Context,
     ) -> Result<(), ServiceError> {
-        let channel = self.channels.lock().get(&*reg.webhook_id).cloned();
-        if let Some(channel) = channel {
-            channel.notify(&Arc::new(Mutex::new(n)), reg.clone(), Fallback::Entity);
-        } else if has_push_url(&reg) {
+        let shared = Arc::new(Mutex::new(n));
+        let sent = self.send_local(&reg.webhook_id, &shared, &reg, Fallback::Entity);
+        if !sent && has_push_url(&reg) {
+            let n = shared.lock().clone();
             send_cloud(&self.cloud, &reg, &n).await?;
-        } else {
+        } else if !sent {
             return Err(raised(
                 "device_not_connected_for_local_push_notifications",
                 &reg.title,
@@ -1181,6 +1228,241 @@ mod tests {
         );
         assert_eq!(target("mobile_app_my_phone").as_deref(), Some("a"));
         assert_eq!(target("mobile_app_tablet"), None);
+    }
+
+    /// A relay that answers every push with 200 and counts them.
+    #[derive(Debug, Default)]
+    struct Counting(std::sync::atomic::AtomicUsize);
+
+    impl Relay for Counting {
+        fn post(&self, _: &str, _: String) -> RelayFuture {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async {
+                Ok(RelayAnswer {
+                    status: 200,
+                    content_type: "application/json".into(),
+                    body: b"{}".to_vec(),
+                })
+            })
+        }
+    }
+
+    impl Counting {
+        fn count(&self) -> usize {
+            self.0.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    /// One app (webhook `w`) with cloud push, its services registered.
+    fn phone_notifier() -> (Hass, Arc<Notifier>, Arc<Counting>) {
+        let hass = Hass::new();
+        hass.start();
+        let registry = Registry::in_memory(&hass, Default::default());
+        let entry = json!({"entry_id": "e", "title": "Phone", "data": {
+            "webhook_id": "w", "device_name": "Phone", "device_id": "d", "app_id": "a",
+            "app_version": "1", "os_version": "2",
+            "app_data": {"push_token": "t", "push_url": "https://relay.test/push"}}});
+        let reg = Arc::new(Registration::from_entry(entry.as_object().unwrap()).unwrap());
+        let regs: Registrations = Default::default();
+        regs.write().insert(reg.webhook_id.clone(), reg);
+        let relay = Arc::new(Counting::default());
+        let n = Notifier::new(&hass, registry, regs, relay.clone());
+        n.register_services();
+        (hass, n, relay)
+    }
+
+    /// What one channel's connection was sent, and how many of those went
+    /// to a channel already torn down (never allowed).
+    #[derive(Default)]
+    struct Probe {
+        events: Mutex<Vec<Value>>,
+        channel: std::sync::OnceLock<Weak<PushChannel>>,
+        dead: std::sync::atomic::AtomicUsize,
+    }
+
+    fn open(
+        n: &Notifier,
+        confirm: bool,
+        probe: &Arc<Probe>,
+    ) -> (Arc<PushChannel>, Option<Opening>) {
+        let p = probe.clone();
+        let send = Box::new(move |event: &str| {
+            if let Some(c) = p.channel.get().and_then(Weak::upgrade)
+                && c.state.lock().torn_down
+            {
+                p.dead.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            p.events.lock().push(serde_json::from_str(event).unwrap());
+        });
+        let (channel, opening) = n.open_channel("w", confirm, send);
+        let _ = probe.channel.set(Arc::downgrade(&channel));
+        (channel, opening)
+    }
+
+    async fn notify(hass: &Hass, i: usize) {
+        let mut data = Map::new();
+        data.insert("message".into(), json!(format!("m{i}")));
+        hass.call_service(NOTIFY, "mobile_app_phone", data, None, false, None)
+            .await
+            .unwrap();
+    }
+
+    /// Run `f` until it holds (spawned fallbacks finish on other workers).
+    async fn eventually(f: impl Fn() -> bool) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !f() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("settled");
+    }
+
+    /// Every channel a test opened, and what its connection was sent.
+    type Opened = Arc<Mutex<Vec<(Arc<PushChannel>, Arc<Probe>)>>>;
+
+    /// Open a channel as the WS command does, waiting for what replacing
+    /// the old one left to do.
+    async fn open_awaited(n: &Notifier, confirm: bool, opened: &Opened) {
+        let probe = Arc::new(Probe::default());
+        let (channel, opening) = open(n, confirm, &probe);
+        opened.lock().push((channel, probe));
+        if let Some(opening) = opening {
+            opening.await.unwrap();
+        }
+    }
+
+    /// After a run of `sends` notifications: none reached a torn-down
+    /// channel; every channel opened is either the registered one or torn
+    /// down (none overwritten and left live); and each notification was
+    /// delivered once. Without confirm that is one channel event or one
+    /// cloud push. With confirm (nothing confirms during the run), what
+    /// reached a channel since torn down went by cloud, as in HA, and what
+    /// reached the live channel can still be confirmed.
+    async fn delivered_once(
+        n: &Notifier,
+        relay: &Counting,
+        opened: &Opened,
+        confirm: bool,
+        sends: usize,
+    ) {
+        let live = n.channels.lock().get("w").cloned();
+        let opened = opened.lock().clone();
+        let mut live_events = Vec::new();
+        let mut events = 0;
+        for (channel, probe) in &opened {
+            assert_eq!(
+                probe.dead.load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "sent to a dead channel"
+            );
+            let registered = live.as_ref().is_some_and(|l| Arc::ptr_eq(l, channel));
+            assert_ne!(
+                registered,
+                channel.state.lock().torn_down,
+                "registered xor torn down"
+            );
+            events += probe.events.lock().len();
+            if registered {
+                live_events = probe.events.lock().clone();
+            }
+        }
+        if confirm {
+            for e in &live_events {
+                assert!(n.confirm("w", e["hass_confirm_id"].as_str().unwrap()));
+            }
+            let want = sends - live_events.len();
+            eventually(|| relay.count() >= want).await;
+            assert_eq!(relay.count(), want);
+        } else {
+            assert_eq!(events + relay.count(), sends);
+        }
+    }
+
+    /// Review regression: notifications racing the app's channel being
+    /// closed or replaced, over and over, in both confirm modes, are each
+    /// delivered once: never queued on a torn-down channel, never lost,
+    /// never both on a live channel and by cloud.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn sends_racing_teardown_deliver_once() {
+        const SENDERS: usize = 4;
+        const EACH: usize = 50;
+        for confirm in [false, true] {
+            for replace in [false, true] {
+                for _ in 0..10 {
+                    let (hass, n, relay) = phone_notifier();
+                    let opened: Opened = Default::default();
+                    open_awaited(&n, confirm, &opened).await;
+                    let senders: Vec<_> = (0..SENDERS)
+                        .map(|_| {
+                            let hass = hass.clone();
+                            tokio::spawn(async move {
+                                for i in 0..EACH {
+                                    notify(&hass, i).await;
+                                }
+                            })
+                        })
+                        .collect();
+                    let mutator = {
+                        let (n, opened) = (n.clone(), opened.clone());
+                        tokio::spawn(async move {
+                            for _ in 0..EACH {
+                                if !replace {
+                                    let last = opened.lock().last().unwrap().0.clone();
+                                    last.close();
+                                    tokio::task::yield_now().await;
+                                }
+                                open_awaited(&n, confirm, &opened).await;
+                                tokio::task::yield_now().await;
+                            }
+                        })
+                    };
+                    for s in senders {
+                        s.await.unwrap();
+                    }
+                    mutator.await.unwrap();
+                    delivered_once(&n, &relay, &opened, confirm, SENDERS * EACH).await;
+                }
+            }
+        }
+    }
+
+    /// Review regression: connections opening the app's channel at once,
+    /// with notifications sent and confirmed between the opens: one
+    /// channel ends up registered and every other is torn down, so nothing
+    /// is confirmed on a channel that was overwritten and then sent again
+    /// by its timer.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_opens_leave_one_live_channel() {
+        const OPENERS: usize = 4;
+        const EACH: usize = 25;
+        const SENDS: usize = 100;
+        for _ in 0..10 {
+            let (hass, n, relay) = phone_notifier();
+            let opened: Opened = Default::default();
+            let mut tasks: Vec<_> = (0..OPENERS)
+                .map(|_| {
+                    let (n, opened) = (n.clone(), opened.clone());
+                    tokio::spawn(async move {
+                        for _ in 0..EACH {
+                            open_awaited(&n, true, &opened).await;
+                            tokio::task::yield_now().await;
+                        }
+                    })
+                })
+                .collect();
+            tasks.push(tokio::spawn(async move {
+                for i in 0..SENDS {
+                    notify(&hass, i).await;
+                    tokio::task::yield_now().await;
+                }
+            }));
+            for t in tasks {
+                t.await.unwrap();
+            }
+            assert!(n.channels.lock().get("w").is_some());
+            delivered_once(&n, &relay, &opened, true, SENDS).await;
+        }
     }
 
     /// The relay over real HTTP: a JSON POST, and the answer as it came; a
