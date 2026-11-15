@@ -1,0 +1,190 @@
+# Installing hars: the details
+
+The [README](../README.md#install) has the one command most people need.
+This page is for when you want to know what it does, change how it runs, or
+install another way.
+
+## What the install command does
+
+[install.sh](../install.sh) (Linux, macOS) and [install.ps1](../install.ps1)
+(Windows) do the same steps:
+
+1. Check for Docker. If it's missing, ask, then install it: Docker's
+   official script on Linux, Docker Desktop through Homebrew (macOS) or
+   winget (Windows). If Docker Desktop is installed but stopped, start it.
+   On Linux, if your user can't use Docker, use `sudo`.
+2. Download the hars image, `ghcr.io/adamt94/homeassistant-rust:latest`.
+   [A workflow](../.github/workflows/publish.yml) publishes it from every
+   commit to `main`, for x86-64 and ARM64.
+3. Make the `hars` folder (`hars/config` holds the data) and `hars/hars.env`
+   (settings). If a container named `hars` already runs from that folder,
+   stop it (giving hars its minute to save) and remove it; the data stays.
+   It checks the port first, and refuses to touch a `hars` container that
+   keeps its data anywhere else.
+4. With `HARS_IMPORT`, run `hars import` on the Home Assistant copy.
+5. Start the container: named `hars`, restarted by Docker after a crash or a
+   reboot, given a minute to save when stopped. On Linux it shares the
+   host's network (`--network host`), so hars can find devices on your LAN.
+   Docker Desktop can't, so on macOS and Windows the port is published
+   instead (`-p 8123:8123`). hars still reaches devices at the addresses
+   they were set up with, but network broadcasts don't get out, so it can't
+   find a LIFX bulb that moved to a new IP address.
+6. Wait until hars answers, print the address, and open it in your browser.
+
+Running it again does the same: that is the upgrade.
+
+### Its settings
+
+Set these before the command: `curl -fsSL … | HARS_PORT=8124 sh` on Linux and
+macOS, `$env:HARS_PORT = '8124'; irm … | iex` in PowerShell.
+
+| Setting | Does |
+|---|---|
+| `HARS_DIR` | where hars keeps its folder (default: `hars` in your home folder) |
+| `HARS_PORT` | the web port (default: 8123, or the next free one up to 8133) |
+| `HARS_IMPORT` | a copy of a Home Assistant 2026.6 config folder to bring over before hars first starts (a new install only; otherwise [import by hand](#importing-by-hand)) |
+| `HARS_YES=1` | answer yes to the questions (installing Docker), for unattended installs |
+| `HARS_IMAGE` | another image, such as one you built (`docker build -t hars .`) |
+
+`hars/hars.env` is passed to the container. It holds `HARS_BIND` (the port;
+the installer keeps it across upgrades) and can hold `RUST_LOG=debug` for
+more detail in the log. Edit it, then run the install command again.
+
+## Your data and backups
+
+Everything is in `hars/config`:
+
+- `.storage/`: logins, registries, dashboards, integrations' settings, the
+  location, in Home Assistant's own formats.
+- `.hars/recorder/`: history, 10 days or 64 MiB by default.
+- `configuration.yaml` and the files it includes, and `import-report.json`
+  if you imported.
+
+Upgrades keep it. To back up, stop hars and copy the folder. On Linux some
+files belong to root:
+
+```sh
+docker stop hars
+sudo tar czf hars-backup-$(date +%F).tar.gz -C ~/hars config
+docker start hars
+```
+
+To restore, stop hars, move `config` aside, `sudo tar xzf` the backup in its
+place (`-C ~/hars`) and start hars.
+
+On stop, hars finishes open requests (up to 5 s), saves, and flushes
+history.
+
+## Docker Compose
+
+If you'd rather manage hars with Compose, on a Linux machine with Docker and
+Docker Compose:
+
+```sh
+mkdir hars && cd hars
+curl -fsSLO https://raw.githubusercontent.com/adamt94/homeassistant-rust/main/compose.yaml
+docker compose up -d
+```
+
+Then open `http://<your-machine>:8123` and follow the onboarding screens.
+The data is in `./config` next to `compose.yaml`. The container is also
+named `hars`, so `docker logs -f hars` works; run the other commands in the
+folder with `compose.yaml`:
+
+| To | Run |
+|---|---|
+| stop / start | `docker compose stop` / `docker compose start` |
+| upgrade | `docker compose pull && docker compose up -d` |
+| remove (data stays) | `docker compose down` |
+
+In a clone of this repository Compose builds the image from the
+[Dockerfile](../Dockerfile) when it can't pull it (`git pull && docker
+compose up -d --build` to upgrade). To change the port, add
+`environment: [HARS_BIND=0.0.0.0:8124]` under the service. With Docker
+Desktop (macOS, Windows) host networking is off by default: turn it on in
+Docker Desktop's settings, or replace `network_mode: host` with
+`ports: ["8123:8123"]` (then hars can't find a LIFX bulb that changes IP
+address).
+
+To move from Home Assistant with Compose, before the first
+`docker compose up`:
+
+```sh
+docker compose run --rm -v /path/to/ha-copy:/ha:ro hars import /ha --dry-run
+docker compose run --rm -v /path/to/ha-copy:/ha:ro hars import /ha
+```
+
+## Without a browser (scripted setup)
+
+To set hars up from a script, create the owner before the first start. This
+completes onboarding, so the browser goes straight to the login page. With
+the installer, set `HARS_YES=1`, run it, then:
+
+```sh
+docker stop hars
+docker run --rm -v ~/hars/config:/config ghcr.io/adamt94/homeassistant-rust auth add YOUR_NAME YOUR_PASSWORD
+docker start hars
+```
+
+(With Compose: `docker compose run --rm hars auth add YOUR_NAME
+YOUR_PASSWORD` before `docker compose up -d`.) It prints `created owner
+"YOUR_NAME"; onboarding is complete`. To keep the password out of your
+shell history, run `read -rs PW`, type it, and write `"$PW"` in its place.
+The same command adds more logins later.
+
+The location then stays at Home Assistant's defaults (0,0, time zone UTC,
+metric units, named "Home"), which sunrise and sunset, time triggers and the
+days in history follow. Write your own to `config/.storage/core.config`
+(Home Assistant's own file) and restart:
+
+```sh
+sudo tee ~/hars/config/.storage/core.config >/dev/null <<'END'
+{"version": 1, "minor_version": 4, "key": "core.config", "data": {
+  "latitude": 51.5072, "longitude": -0.1276, "elevation": 11,
+  "unit_system_v2": "metric", "location_name": "Home",
+  "time_zone": "Europe/London", "currency": "GBP", "country": "GB",
+  "language": "en", "radius": 100, "external_url": null, "internal_url": null}}
+END
+docker restart hars
+```
+
+Put in your own values. `unit_system_v2` is `metric` or `us_customary`.
+`time_zone` is a name like `America/New_York`; hars reads it only from this
+file, not from `TZ`, and an unknown name means UTC. `elevation` and `radius`
+(the size of the home zone) are in meters. Keep every key: if the file
+doesn't load, hars won't start and `docker logs hars` says why.
+
+## Importing by hand
+
+The installer's `HARS_IMPORT` runs this. To check first what would come
+across, or to import into an install that is already set up:
+
+```sh
+docker stop hars
+docker run --rm -v ~/hars/config:/config -v /path/to/ha-copy:/ha:ro ghcr.io/adamt94/homeassistant-rust import /ha --dry-run
+docker run --rm -v ~/hars/config:/config -v /path/to/ha-copy:/ha:ro ghcr.io/adamt94/homeassistant-rust import /ha
+docker start hars
+```
+
+If hars already has a login, or has run once, the import refuses to replace
+what's there; add `--force` to replace it. Stop Home Assistant before
+starting hars if both use port 8123.
+
+## Troubleshooting
+
+- **The browser shows Home Assistant's onboarding screen** and the log says
+  `not set up yet`: there is no login yet. Follow the screens, or set up
+  [without a browser](#without-a-browser-scripted-setup).
+- **`Error: Address already in use (os error 98)` in the log:** something
+  else, often Home Assistant, already uses the port. Stop it, or pick
+  another port (`HARS_PORT`, or `HARS_BIND` in `hars.env`).
+
+## Just the binary, or from source
+
+- **The binary:** the image's `/hars` is a static Linux binary:
+  `docker cp "$(docker create ghcr.io/adamt94/homeassistant-rust)":/hars .`
+  It reads `HARS_CONFIG` (default `./config`), `HARS_BIND` and
+  `HARS_FRONTEND` (an unpacked `hass_frontend` folder; without it only the
+  API is served).
+- **From source:** `cargo build --release`; see
+  [CONTRIBUTING.md](../CONTRIBUTING.md).

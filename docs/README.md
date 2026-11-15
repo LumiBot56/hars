@@ -2,10 +2,13 @@
 
 ## Using hars
 
-- [Install, set your location, upgrade, back up,
-  troubleshoot](../README.md#install): the main README.
+- [Install, upgrade, troubleshoot](../README.md#install): the main README,
+  with the one-command install.
 - [Moving from Home Assistant](../README.md#moving-from-home-assistant):
   importing an existing install.
+- [Installing in detail](INSTALL.md): what the install command does and its
+  settings, data and backups, Docker Compose, setting up without a browser,
+  the plain binary.
 - [Shadow mode](SHADOW.md): run hars beside Home Assistant, with nothing it
   decides reaching a device, and compare their decisions.
 - [Security policy](../SECURITY.md): reporting a vulnerability, and what
@@ -40,8 +43,8 @@
 
 ### Launch checklist
 
-The [install steps](../README.md#install) assume a public repository and a
-public image. Before announcing hars, in this order:
+The [install command](../README.md#install) assumes a public repository and
+a public image. Before announcing hars, in this order:
 
 1. Make the repository public (**Settings**, **General**, **Danger Zone**,
    **Change visibility**).
@@ -75,7 +78,8 @@ public image. Before announcing hars, in this order:
    docker pull ghcr.io/adamt94/homeassistant-rust:latest
    ```
 
-7. Follow the README's install steps word for word in an empty folder
-   outside any clone, starting with its `curl` of the raw `compose.yaml`.
-   Without a clone there is no Dockerfile to fall back on, so this proves
-   the image and the download both work. Log in at `http://localhost:8123`.
+7. Paste the README's install command, outside any clone, on Linux, macOS
+   and Windows. It downloads the raw `install.sh` or `install.ps1` and pulls
+   the image, so this proves both are public. Create a login at the address
+   it prints. Then follow [the Compose steps](INSTALL.md#docker-compose) in
+   an empty folder (no Dockerfile there to fall back on).
