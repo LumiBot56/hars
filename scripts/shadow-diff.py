@@ -14,12 +14,14 @@ the same service and targets but different data is a *mismatch*; anything left
 is *missing* (HA did it, hars didn't) or *extra* (hars would have, HA didn't).
 Automation triggers match on entity id and time.
 
-By default only calls made on behalf of an automation (a context with a parent
-and no user) in the domains hars holds back are compared; --all-contexts
-includes calls from the UI and the apps too.
+By default only calls made on behalf of an automation, in the domains hars holds
+back, are compared: a call whose context is the context of an
+`automation_triggered` (or a child of it). --all-contexts includes calls from
+the UI and the apps too.
 
-Exit status: 0 when nothing is missing, extra or mismatched; 1 otherwise; 2 on
-a usage or input error.
+Exit status: 0 when nothing is missing, extra or mismatched and hars's log has
+no gaps; 1 otherwise; 2 on a usage or input error (an unreadable log, a
+reversed window): a result is never given from input it could not read.
 """
 
 import argparse
@@ -40,6 +42,26 @@ RUNS = {
     "weather",
     "labs",
 }
+
+
+class InputError(Exception):
+    pass
+
+
+_CROCKFORD = {c: i for i, c in enumerate("0123456789ABCDEFGHJKMNPQRSTVWXYZ")}
+
+
+def ulid_bytes(text):
+    """A context id's 16 bytes, as HA's recorder stores it (`context_id_bin`)."""
+    if not text:
+        return None
+    try:
+        n = 0
+        for c in text.upper():
+            n = n * 32 + _CROCKFORD[c]
+        return n.to_bytes(16, "big")
+    except (KeyError, OverflowError):
+        return None
 
 
 def parse_time(text):
@@ -78,6 +100,7 @@ def entity_ids(data):
 
 class Call:
     def __init__(self, t, domain, service, data, ctx=None):
+        """`ctx`: {"id", "parent_id", "user_id"} with ids as bytes (or None)."""
         self.t = t
         self.domain = domain
         self.service = service
@@ -97,19 +120,33 @@ class Call:
 
 
 class Trigger:
-    def __init__(self, t, entity_id, name):
+    def __init__(self, t, entity_id, name, ctx_id=None):
         self.t = t
         self.entity_id = entity_id
         self.name = name
+        self.ctx_id = ctx_id
 
     def show(self):
         stamp = datetime.datetime.fromtimestamp(self.t, datetime.timezone.utc)
         return f"{stamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}Z {self.entity_id} ({self.name})"
 
 
+def context_of(row):
+    ctx = row.get("context") or {}
+    return {
+        "id": ulid_bytes(ctx.get("id")),
+        "parent_id": ulid_bytes(ctx.get("parent_id")),
+        "user_id": ctx.get("user_id"),
+    }
+
+
 def read_jsonl(path):
-    """(calls, triggers, starts) from a shadow-format JSON Lines file."""
-    calls, triggers, starts = [], [], []
+    """(calls, triggers, starts, gaps) from a shadow-format JSON Lines file.
+
+    A line that is not JSON is an error, except one cut off by a crash: the
+    last line, or one the next start of hars marked off with `shadow_started`."""
+    calls, triggers, starts, gaps = [], [], [], []
+    bad = None
     with open(path, encoding="utf-8") as f:
         for n, line in enumerate(f, 1):
             line = line.strip()
@@ -117,22 +154,37 @@ def read_jsonl(path):
                 continue
             try:
                 row = json.loads(line)
-            except json.JSONDecodeError:
-                # A line cut off by a crash: only the last one can be.
-                print(f"{path}:{n}: skipping an unreadable line", file=sys.stderr)
+                kind = row.get("type")
+            except (json.JSONDecodeError, AttributeError):
+                if bad is not None:
+                    raise InputError(f"{path}:{bad}: not JSON")
+                bad = n
                 continue
-            kind = row.get("type")
-            if kind == "call_service":
-                ctx = row.get("context") or {}
-                calls.append(
-                    Call(row["t"], row["domain"], row["service"], row.get("service_data") or {}, ctx)
-                )
-            elif kind == "automation_triggered":
-                d = row.get("data") or {}
-                triggers.append(Trigger(row["t"], d.get("entity_id"), d.get("name")))
-            elif kind == "shadow_started":
-                starts.append(row["t"])
-    return calls, triggers, starts
+            if bad is not None and kind != "shadow_started":
+                raise InputError(f"{path}:{bad}: not JSON")
+            if bad is not None:
+                print(f"{path}:{bad}: skipping a line cut off by a crash", file=sys.stderr)
+                bad = None
+            try:
+                if kind == "call_service":
+                    calls.append(
+                        Call(row["t"], row["domain"], row["service"],
+                             row.get("service_data") or {}, context_of(row))
+                    )
+                elif kind == "automation_triggered":
+                    d = row.get("data") or {}
+                    triggers.append(
+                        Trigger(row["t"], d.get("entity_id"), d.get("name"), context_of(row)["id"])
+                    )
+                elif kind == "shadow_started":
+                    starts.append(row["t"])
+                elif kind == "shadow_gap":
+                    gaps.append((row["t"], row["until"], row.get("dropped", 0)))
+            except (KeyError, TypeError) as e:
+                raise InputError(f"{path}:{n}: a {kind} line without {e}")
+    if bad is not None:
+        print(f"{path}:{bad}: skipping a last line cut off by a crash", file=sys.stderr)
+    return calls, triggers, starts, gaps
 
 
 def read_ha_db(path, since, until):
@@ -143,10 +195,10 @@ def read_ha_db(path, since, until):
     for need in ("time_fired_ts", "event_type_id", "data_id"):
         if need not in cols:
             raise SystemExit(f"{path}: not a Home Assistant recorder database (events.{need} missing)")
-    has_ctx = {"context_parent_id_bin", "context_user_id_bin"} <= cols
+    has_ctx = {"context_id_bin", "context_parent_id_bin", "context_user_id_bin"} <= cols
     select = "e.time_fired_ts, d.shared_data, t.event_type"
     if has_ctx:
-        select += ", e.context_parent_id_bin, e.context_user_id_bin"
+        select += ", e.context_id_bin, e.context_parent_id_bin, e.context_user_id_bin"
     rows = db.execute(
         f"SELECT {select} FROM events e"
         " JOIN event_types t ON t.event_type_id = e.event_type_id"
@@ -161,7 +213,9 @@ def read_ha_db(path, since, until):
         t, shared, kind = row[:3]
         ctx = None
         if has_ctx:
-            ctx = {"parent_id": row[3], "user_id": row[4]}
+            ctx = {"id": bytes(row[3]) if row[3] else None,
+                   "parent_id": bytes(row[4]) if row[4] else None,
+                   "user_id": row[5]}
         try:
             data = json.loads(shared)
         except (TypeError, json.JSONDecodeError):
@@ -169,14 +223,15 @@ def read_ha_db(path, since, until):
         if kind == "call_service":
             calls.append(Call(t, data["domain"], data["service"], data.get("service_data") or {}, ctx))
         else:
-            triggers.append(Trigger(t, data.get("entity_id"), data.get("name")))
+            triggers.append(Trigger(t, data.get("entity_id"), data.get("name"), ctx and ctx["id"]))
     return calls, triggers, has_ctx
 
 
-def automation_made(call):
-    """A call an automation made: it has a parent context and no user."""
+def automation_made(call, contexts):
+    """A call an automation made: its context is the one of an
+    `automation_triggered`, or a child of it."""
     ctx = call.ctx or {}
-    return bool(ctx.get("parent_id")) and not ctx.get("user_id")
+    return ctx.get("id") in contexts or ctx.get("parent_id") in contexts
 
 
 def window(items, since, until):
@@ -184,21 +239,19 @@ def window(items, since, until):
 
 
 def pair(ours, theirs, tolerance, same):
-    """Match `ours` to `theirs` (both sorted by time) one to one: each of ours
-    takes the nearest unmatched one of theirs within `tolerance` for which
-    `same(a, b)` holds. Returns (pairs, ours left, theirs left)."""
+    """Match `ours` to `theirs` (both sorted by time) one to one: each of ours,
+    in time order, takes the *earliest* unmatched one of theirs within
+    `tolerance` for which `same(a, b)` holds. With one tolerance for every
+    item that finds a complete matching whenever there is one (taking the
+    nearest instead can strand a later item). Returns (pairs, ours left,
+    theirs left)."""
     times = [b.t for b in theirs]
     used = [False] * len(theirs)
     pairs, left = [], []
     for a in ours:
         lo = bisect.bisect_left(times, a.t - tolerance)
         hi = bisect.bisect_right(times, a.t + tolerance)
-        best = None
-        for i in range(lo, hi):
-            if used[i] or not same(a, theirs[i]):
-                continue
-            if best is None or abs(theirs[i].t - a.t) < abs(theirs[best].t - a.t):
-                best = i
+        best = next((i for i in range(lo, hi) if not used[i] and same(a, theirs[i])), None)
         if best is None:
             left.append(a)
         else:
@@ -329,36 +382,48 @@ def main(argv=None):
     if bool(args.ha_db) == bool(args.ha_jsonl):
         p.error("give exactly one of --ha-db and --ha-jsonl")
 
-    hars_calls, hars_trig, starts = read_jsonl(args.hars_log)
     try:
+        hars_calls, hars_trig, starts, gaps = read_jsonl(args.hars_log)
         since = parse_time(args.since) if args.since else (min(starts) if starts else None)
         until = parse_time(args.until) if args.until else datetime.datetime.now(datetime.timezone.utc).timestamp()
         excludes = []
         for span in args.exclude:
             a, _, b = span.partition(",")
             excludes.append((parse_time(a), parse_time(b)))
-    except ValueError as e:
-        p.error(f"bad time: {e}")
-    if since is None:
-        p.error("the log has no shadow_started line: give --since")
-
-    if args.ha_db:
-        ha_calls, ha_trig, has_ctx = read_ha_db(args.ha_db, since, until)
-    else:
-        ha_calls, ha_trig, _ = read_jsonl(args.ha_jsonl)
-        has_ctx = True
+        if since is None:
+            raise InputError("the log has no shadow_started line: give --since")
+        if since >= until:
+            raise InputError("the window is empty or reversed: --since must be before --until")
+        if args.ha_db:
+            ha_calls, ha_trig, has_ctx = read_ha_db(args.ha_db, since, until)
+        else:
+            ha_calls, ha_trig, _, _ = read_jsonl(args.ha_jsonl)
+            has_ctx = True
+    except (InputError, ValueError, OSError, sqlite3.Error) as e:
+        print(f"shadow-diff: {e}", file=sys.stderr)
+        return 2
     if not has_ctx and not args.all_contexts:
         print("note: this database has no context columns, so calls are not told apart by who made them",
               file=sys.stderr)
 
-    def keep(c):
-        if c.domain in RUNS:
-            return False
-        return args.all_contexts or c.ctx is None or automation_made(c) or not has_ctx
+    # A gap in hars's log (a write that failed) is time it can't vouch for:
+    # leave it out of both sides, and the result is not clean.
+    excludes += [(a, b) for a, b, _ in gaps]
 
-    # hars's own log can hold calls of every context too: its automations' have a parent.
-    ha_calls = [c for c in ha_calls if keep(c)]
-    hars_calls = [c for c in hars_calls if keep(c)]
+    def keeper(triggers):
+        contexts = {t.ctx_id for t in triggers if t.ctx_id}
+
+        def keep(c):
+            if c.domain in RUNS:
+                return False
+            return args.all_contexts or not has_ctx or automation_made(c, contexts)
+
+        return keep
+
+    # Each side's automation calls are those in a context one of its own
+    # `automation_triggered` events started.
+    ha_calls = list(filter(keeper(ha_trig), ha_calls))
+    hars_calls = list(filter(keeper(hars_trig), hars_calls))
 
     def inside(items):
         items = window(items, since, until)
@@ -372,6 +437,11 @@ def main(argv=None):
     clean = all(out["calls"][k] == 0 for k in ("mismatched", "missing", "extra")) and all(
         out["triggers"][k] == 0 for k in ("missing", "extra")
     )
+    if gaps:
+        clean = False
+        if not args.json:
+            dropped = sum(n for _, _, n in gaps)
+            print(f"\nhars's log has {len(gaps)} gap(s), {dropped} decision(s) lost: not clean")
     if not args.json:
         print("\nCLEAN" if clean else "\nDIFFERENCES FOUND")
     return 0 if clean else 1

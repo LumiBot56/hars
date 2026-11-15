@@ -15,8 +15,22 @@ sd = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sd)
 
 T0 = 1_768_464_000.0  # 2026-01-15T08:00:00Z
-AUTO = {"id": "01", "parent_id": "02", "user_id": None}
-USER = {"id": "03", "parent_id": None, "user_id": "abc"}
+_B32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def ulid(n):
+    """A context id: the number as a 26-character ULID."""
+    out = ""
+    for _ in range(26):
+        out = _B32[n % 32] + out
+        n //= 32
+    return out
+
+
+# An automation's run has one context, shared by its trigger and its calls
+# (a time trigger has no parent). A person's call has its own, with a user.
+AUTO = {"id": ulid(1), "parent_id": None, "user_id": None}
+USER = {"id": ulid(3), "parent_id": None, "user_id": "abc"}
 
 
 def call(t, domain, service, data, ctx=AUTO):
@@ -24,15 +38,18 @@ def call(t, domain, service, data, ctx=AUTO):
             "service_data": data, "context": ctx}
 
 
-def trig(t, entity):
+def trig(t, entity, ctx=AUTO):
     return {"t": t, "type": "automation_triggered",
-            "data": {"name": entity, "entity_id": entity, "source": "x"}, "context": AUTO}
+            "data": {"name": entity, "entity_id": entity, "source": "x"}, "context": ctx}
 
 
 class Run:
     """Write the two sides, run the tool, keep its output and status."""
 
-    def __init__(self, test, ha, hars, *extra, starts=(T0 - 10,), db=False):
+    def __init__(self, test, ha, hars, *extra, starts=(T0 - 10,), db=False, auto=True):
+        if auto:
+            # Both sides' automation started the run whose context AUTO is.
+            ha, hars = [trig(T0 - 5, "automation.run")] + ha, [trig(T0 - 5, "automation.run")] + hars
         self.dir = tempfile.TemporaryDirectory()
         test.addCleanup(self.dir.cleanup)
         d = self.dir.name
@@ -66,7 +83,8 @@ def make_db(path, rows):
         CREATE TABLE event_types (event_type_id INTEGER PRIMARY KEY, event_type TEXT);
         CREATE TABLE event_data (data_id INTEGER PRIMARY KEY, shared_data TEXT);
         CREATE TABLE events (event_id INTEGER PRIMARY KEY, event_type_id INTEGER, data_id INTEGER,
-            time_fired_ts REAL, context_parent_id_bin BLOB, context_user_id_bin BLOB);
+            time_fired_ts REAL, context_id_bin BLOB, context_parent_id_bin BLOB,
+            context_user_id_bin BLOB);
         INSERT INTO event_types VALUES (1, 'call_service'), (2, 'automation_triggered');
     """)
     for i, row in enumerate(rows, 1):
@@ -79,9 +97,10 @@ def make_db(path, rows):
         ctx = row["context"]
         db.execute("INSERT INTO event_data VALUES (?, ?)", (i, json.dumps(data)))
         db.execute(
-            "INSERT INTO events (event_type_id, data_id, time_fired_ts, context_parent_id_bin,"
-            " context_user_id_bin) VALUES (?, ?, ?, ?, ?)",
-            (type_id, i, row["t"], ctx["parent_id"] and b"\x01", ctx["user_id"] and b"\x02"),
+            "INSERT INTO events (event_type_id, data_id, time_fired_ts, context_id_bin,"
+            " context_parent_id_bin, context_user_id_bin) VALUES (?, ?, ?, ?, ?, ?)",
+            (type_id, i, row["t"], sd.ulid_bytes(ctx["id"]), sd.ulid_bytes(ctx["parent_id"]),
+             ctx["user_id"] and b"\x02"),
         )
     db.commit()
     db.close()
@@ -169,12 +188,62 @@ class ShadowDiff(unittest.TestCase):
         hars = [call(T0, "light", "turn_on", {"entity_id": "light.a,light.b", "transition": 2.0})]
         self.assertEqual(Run(self, ha, hars).status, 0)
 
-    def test_a_cut_off_last_line_is_skipped(self):
+    def test_a_time_triggered_automation_is_compared_too(self):
+        # A time trigger has no parent context; its calls still belong to it.
+        ha = [call(T0, "light", "turn_on", LIGHT)]
+        hars = [call(T0, "light", "turn_off", LIGHT)]
+        r = Run(self, ha, hars, "--json")
+        self.assertEqual(r.status, 1)
+        out = json.loads(r.out)
+        self.assertEqual((out["calls"]["missing"], out["calls"]["extra"]), (1, 1))
+
+    def test_a_complete_pairing_is_found_when_there_is_one(self):
+        # HA at 0 and 1 s, hars at 0.6 and 1.6 s, tolerance 1 s: pairing each
+        # with the nearer one strands the second.
+        ha = [call(T0, "light", "turn_on", LIGHT), call(T0 + 1, "light", "turn_on", LIGHT)]
+        hars = [call(T0 + 0.6, "light", "turn_on", LIGHT), call(T0 + 1.6, "light", "turn_on", LIGHT)]
+        r = Run(self, ha, hars)
+        self.assertEqual(r.status, 0, r.out)
+
+    def test_a_cut_off_last_line_is_skipped_and_a_bad_one_inside_is_not(self):
         r = Run(self, [], [])
-        with open(os.path.join(r.dir.name, "hars.jsonl"), "a") as f:
+        path = os.path.join(r.dir.name, "hars.jsonl")
+        with open(path, "a") as f:
             f.write('{"t": 1768464000.5, "type": "call_ser')
-        calls, trig_, starts = sd.read_jsonl(os.path.join(r.dir.name, "hars.jsonl"))
-        self.assertEqual((calls, trig_, len(starts)), ([], [], 1))
+        calls, trig_, starts, gaps = sd.read_jsonl(path)
+        self.assertEqual((len(calls), len(trig_), len(starts)), (0, 1, 1))
+        # A restart after the crash marks the torn line off: still fine.
+        with open(path, "a") as f:
+            f.write("\n" + json.dumps({"t": T0, "type": "shadow_started"}) + "\n")
+        self.assertEqual(len(sd.read_jsonl(path)[2]), 2)
+        # A bad line with something real after it is corruption.
+        with open(path, "a") as f:
+            f.write("not json\n" + json.dumps(call(T0, "light", "turn_on", LIGHT)) + "\n")
+        with self.assertRaises(sd.InputError):
+            sd.read_jsonl(path)
+        r = Run(self, [], [])
+        with open(os.path.join(r.dir.name, "ha.jsonl"), "a") as f:
+            f.write("garbage\n" + json.dumps(trig(T0, "automation.a")) + "\n")
+        out = io.StringIO()
+        with contextlib.redirect_stderr(out), contextlib.redirect_stdout(io.StringIO()):
+            status = sd.main(["--hars-log", os.path.join(r.dir.name, "hars.jsonl"),
+                              "--ha-jsonl", os.path.join(r.dir.name, "ha.jsonl")])
+        self.assertEqual(status, 2)
+        self.assertIn("not JSON", out.getvalue())
+
+    def test_a_reversed_window_is_an_error_not_a_pass(self):
+        out = io.StringIO()
+        with contextlib.redirect_stderr(out):
+            r = Run(self, [], [], "--since", str(T0 + 100), "--until", str(T0))
+        self.assertEqual(r.status, 2)
+
+    def test_a_gap_in_hars_log_makes_the_result_not_clean(self):
+        gap = {"t": T0 + 50, "until": T0 + 80, "type": "shadow_gap", "dropped": 3}
+        ha = [call(T0 + 60, "light", "turn_on", LIGHT)]  # in the gap: left out, not "missing"
+        r = Run(self, ha, [gap])
+        self.assertEqual(r.status, 1)
+        self.assertIn("1 gap", r.out)
+        self.assertIn("missing 0", r.out)
 
 
 if __name__ == "__main__":

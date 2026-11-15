@@ -24,7 +24,10 @@ command arrives.
 
 Every held-back call and every `automation_triggered` goes to a JSON Lines
 file (`HARS_SHADOW_LOG`, default `<config>/.hars/shadow.jsonl`), appended to,
-with a `shadow_started` line each time `hars` starts.
+with a `shadow_started` line each time `hars` starts. If the disk stops
+accepting writes, `hars` keeps up to 4 MiB of decisions, retries every second,
+and when it recovers writes a `shadow_gap` line saying how many it had to
+drop; shutdown waits for the queue to be written (the final-write stage).
 
 Entities whose state only changes when *commanded* are the exception: the
 SwitchBot IR air conditioner (`assumed_state`) and its switch, and the Bot's
@@ -87,12 +90,17 @@ compares, over the window from `hars`'s first start to now:
 - **calls**: the same service, targets and data within 1 s. Different data on
   the same service and targets is a *mismatch*; HA's call with no match is
   *missing*; `hars`'s with no match is *extra*. Only calls made on behalf of an
-  automation are compared (`--all-contexts` adds the UI's and the apps').
+  automation are compared: those in a context an `automation_triggered` of
+  the same side started (`--all-contexts` adds the UI's and the apps'). Each
+  call is matched to the earliest unmatched one within the tolerance, which
+  finds a complete pairing whenever there is one.
 - **triggers**: HA's `automation_triggered` against `hars`'s, by automation and
   time, with a per-automation count.
 
-It exits 0 when nothing differs, 1 otherwise, so it can gate a script. When
-`hars` was down (it prints each start it saw), leave the gap out with
+It exits 0 when nothing differs and the log has no gaps, 1 otherwise, and 2
+when it can't read its input (a log line that isn't JSON, other than one a
+crash cut off; a reversed window), so it never certifies input it didn't read. When `hars` was down (it prints
+each start it saw), leave the gap out with
 `--exclude START,END`; otherwise HA's calls in it count as missing. If you
 change an automation in HA, import again (`--force`) and start the week over.
 
