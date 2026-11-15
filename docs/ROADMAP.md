@@ -70,8 +70,6 @@ as they are, and the importer carries them over.
 
 ### Explicitly out of MVP
 
-- Push notifications through `notify`: never called in the reference
-  install's 10 days of recorded history
 - Remote access (the reference install is LAN only)
 - SwitchBot webhooks: these need an external URL
 - Onboarding defaults that are installed but unused: `shopping_list`/`todo`,
@@ -427,7 +425,18 @@ Fixtures are sanitised (no tokens, coordinates rounded) before they are committe
         mode 0600), and `update_registration`'s device update
 - [x] `/api/mobile_app/registrations` for fresh registrations (re-pair fallback):
       HA's flow (tracker row, the user's person, a re-pair replaces the old
-      entry and saves its webhook id as deleted); plus the push-channel WS stubs
+      entry and saves its webhook id as deleted)
+- [x] Push notifications, as HA's `mobile_app` notify platform (asked for
+      after the MVP was scoped; ADR 0009 had deferred them):
+      `notify.mobile_app_<device>`, `notify.notify` and `notify.send_message`
+      (with the notify entity's last-sent state); the app's local push
+      channel (`mobile_app/push_notification_channel`, `_confirm`, the 10 s
+      confirm timeout, replacement and close falling back to cloud push);
+      cloud push to the registration's `push_url` with HA's body, 10 s
+      timeout, status handling, errors and log lines. All 126 steps of
+      `scripts/vectors/mobile_app_notify.py`'s 15 scenarios and its 20
+      rate-limit lines match. Not done: `notify.persistent_notification`,
+      Assist timer notifications (`mobile_app/timers.py`)
 - [x] WS `subscribe_entities` `include`/`exclude` filters (HA's `entityfilter`
       cases 1-6, `fnmatch` globs, `cv.entity_ids`): the app subscribes to
       zones and persons only
@@ -512,7 +521,6 @@ Fixtures are sanitised (no tokens, coordinates rounded) before they are committe
       install, published beside the same numbers for HA on the same host
 
 ## Post-MVP
-- Push notifications (`notify.<device>` via the relay, local push channel)
 - Remote access, SwitchBot webhooks
 - Jinja templates beyond the first slice: HA's functions, filters and tests
   (states, time, areas, devices, maths, regex, JSON, …), re-rendering

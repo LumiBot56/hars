@@ -33,6 +33,6 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry"] }
 
 [dev-dependencies]
-tokio = { version = "1.54.1", features = ["rt-multi-thread"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "test-util"] }
 tokio-tungstenite = "0.29"
 tower = { version = "0.5.3", features = ["util"] }

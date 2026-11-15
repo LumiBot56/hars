@@ -8,13 +8,14 @@ data in Home Assistant's own file formats. A fresh install idles at about
 
 It is early software. **Works today:** setting up in the browser with Home
 Assistant's onboarding screens, the web UI and login, dashboards, history and
-logbook, the iOS companion app, YAML automations (state, numeric-state and
-time triggers), the `sun`, `met`, `hue`, `lifx`, `switchbot_cloud`,
-`mobile_app`, `person` and `zone` integrations, and importing a Home
-Assistant 2026.6 install. **Not yet:** adding integrations or editing
-automations from the UI, templates beyond plain text and variables (no
-`states()` or `now()` yet), scripts, notifications and remote access. If you
-need those, keep Home Assistant for now.
+logbook, the iOS companion app (including push notifications to it), YAML
+automations (state, numeric-state and time triggers), the `sun`, `met`,
+`hue`, `lifx`, `switchbot_cloud`, `mobile_app`, `person` and `zone`
+integrations, and importing a Home Assistant 2026.6 install. **Not yet:**
+adding integrations or editing automations from the UI, templates beyond
+plain text and variables (no `states()` or `now()` yet), scripts, other
+kinds of notifications and remote access. If you need those, keep Home
+Assistant for now.
 
 ## Install
 

@@ -1,0 +1,4981 @@
+{
+ "rate_limits": {
+  "now": "2026-06-01T12:00:00+00:00",
+  "cases": [
+   {
+    "rateLimits": {
+     "successful": 3,
+     "errors": 1,
+     "maximum": 150,
+     "resetsAt": "2026-06-02T00:00:00.000Z"
+    },
+    "line": "mobile_app push notification rate limits for Phone: 3 sent, 150 allowed, 1 errors, resets in 12:00:00"
+   },
+   {
+    "rateLimits": {
+     "successful": 3,
+     "errors": 1,
+     "maximum": 150,
+     "resetsAt": "2026-06-01T12:00:05.5Z"
+    },
+    "line": "mobile_app push notification rate limits for Phone: 3 sent, 150 allowed, 1 errors, resets in 0:00:05"
+   },
+   {
+    "rateLimits": {
+     "successful": 3,
+     "errors": 1,
+     "maximum": 150,
+     "resetsAt": "2026-06-03T13:01:02Z"
+    },
+    "line": "mobile_app push notification rate limits for Phone: 3 sent, 150 allowed, 1 errors, resets in 2 days, 1:01:02"
+   },
+   {
+    "rateLimits": {
+     "successful": 3,
+     "errors": 1,
+     "maximum": 150,
+     "resetsAt": "2026-06-02T12:00:00Z"
+    },
+    "line": "mobile_app push notification rate limits for Phone: 3 sent, 150 allowed, 1 errors, resets in 1 day, 0:00:00"
+   },
+   {
+    "rateLimits": {
+     "successful": 3,
+     "errors": 1,
+     "maximum": 150,
+     "resetsAt": "2026-06-01T11:59:50Z"
+    },
+    "line": "mobile_app push notification rate limits for Phone: 3 sent, 150 allowed, 1 errors, resets in -1 day, 23:59:50"
+   },
+   {
+    "rateLimits": {
+     "successful": 3,
+     "errors": 1,
+     "maximum": 150,
+     "resetsAt": "2026-05-30T12:00:00Z"
+    },
+    "line": "mobile_app push notification rate limits for Phone: 3 sent, 150 allowed, 1 errors, resets in -2 days, 0:00:00"
+   },
+   {
+    "rateLimits": {
+     "successful": 3,
+     "errors": 1,
+     "maximum": 150,
+     "resetsAt": "2026-06-02T12:00:00+01:00"
+    },
+    "line": "mobile_app push notification rate limits for Phone: 3 sent, 150 allowed, 1 errors, resets in 23:00:00"
+   },
+   {
+    "rateLimits": {
+     "successful": 3,
+     "errors": 1,
+     "maximum": 150,
+     "resetsAt": "2026-06-01 12:30:00+00:00"
+    },
+    "line": "mobile_app push notification rate limits for Phone: 3 sent, 150 allowed, 1 errors, resets in 0:30:00"
+   },
+   {
+    "rateLimits": {
+     "successful": 3,
+     "errors": 1,
+     "maximum": 150,
+     "resetsAt": "2026-06-01T12:30:00"
+    },
+    "error": {
+     "type": "TypeError",
+     "message": "can't subtract offset-naive and offset-aware datetimes"
+    }
+   },
+   {
+    "rateLimits": {
+     "successful": 3,
+     "errors": 1,
+     "maximum": 150,
+     "resetsAt": "soon"
+    },
+    "error": {
+     "type": "TypeError",
+     "message": "unsupported operand type(s) for -: 'NoneType' and 'datetime.datetime'"
+    }
+   },
+   {
+    "rateLimits": {
+     "successful": 3,
+     "errors": 1,
+     "maximum": 150,
+     "resetsAt": 5
+    },
+    "error": {
+     "type": "TypeError",
+     "message": "argument must be str"
+    }
+   },
+   {
+    "rateLimits": {
+     "successful": 1,
+     "maximum": 2,
+     "errors": 0
+    },
+    "error": {
+     "type": "KeyError",
+     "message": "'resetsAt'"
+    }
+   },
+   {
+    "rateLimits": {
+     "resetsAt": "2026-06-02T00:00:00Z",
+     "maximum": 2,
+     "errors": 0
+    },
+    "error": {
+     "type": "KeyError",
+     "message": "'successful'"
+    }
+   },
+   {
+    "rateLimits": {
+     "resetsAt": "2026-06-02T00:00:00Z",
+     "successful": 1,
+     "errors": 0
+    },
+    "error": {
+     "type": "KeyError",
+     "message": "'maximum'"
+    }
+   },
+   {
+    "rateLimits": {
+     "resetsAt": "2026-06-02T00:00:00Z",
+     "successful": 1,
+     "maximum": 2
+    },
+    "error": {
+     "type": "KeyError",
+     "message": "'errors'"
+    }
+   },
+   {
+    "rateLimits": {
+     "successful": 2.7,
+     "errors": 1,
+     "maximum": 150.0,
+     "resetsAt": "2026-06-02T00:00:00.000Z"
+    },
+    "line": "mobile_app push notification rate limits for Phone: 2 sent, 150 allowed, 1 errors, resets in 12:00:00"
+   },
+   {
+    "rateLimits": [],
+    "error": {
+     "type": "TypeError",
+     "message": "list indices must be integers or slices, not str"
+    }
+   },
+   {
+    "rateLimits": "rateLimits",
+    "error": {
+     "type": "TypeError",
+     "message": "string indices must be integers, not 'str'"
+    }
+   },
+   {
+    "rateLimits": 7,
+    "error": {
+     "type": "TypeError",
+     "message": "'int' object is not subscriptable"
+    }
+   },
+   {
+    "rateLimits": null,
+    "error": {
+     "type": "TypeError",
+     "message": "'NoneType' object is not subscriptable"
+    }
+   }
+  ]
+ },
+ "scenarios": [
+  {
+   "name": "cloud",
+   "note": "Cloud push through the relay: bodies, titles, the default title, coercion.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-555555555555",
+     "device_name": "Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    },
+    {
+     "app_data": {
+      "push_websocket_channel": true
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-666666666666",
+     "device_name": "Tablet",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e"
+    },
+    {
+     "app_data": {},
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-777777777777",
+     "device_name": "Plain",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d"
+    },
+    {
+     "app_data": {
+      "push_token": "old-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-888888888888",
+     "device_name": "Old Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "17.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+    }
+   ],
+   "relay": [
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{\"rateLimits\": {\"successful\": 3, \"errors\": 1, \"maximum\": 150, \"resetsAt\": \"2026-06-02T00:00:00.000Z\"}}"
+    },
+    {
+     "status": 201,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 202,
+     "content_type": "application/json",
+     "body": "{\"rateLimits\": {\"successful\": 3, \"errors\": 1, \"maximum\": 150, \"resetsAt\": \"2026-06-02T00:00:00.000Z\"}}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{\"rateLimits\": {\"successful\": 3, \"errors\": 1, \"maximum\": 150, \"resetsAt\": \"2026-06-02T00:00:00.000Z\"}}"
+    }
+   ],
+   "steps": [
+    {
+     "step": {
+      "services": true
+     },
+     "services": [
+      "mobile_app_old_phone",
+      "mobile_app_phone",
+      "mobile_app_tablet",
+      "notify",
+      "persistent_notification",
+      "send_message"
+     ],
+     "sent": [],
+     "states": {
+      "notify.old_phone": "unknown",
+      "notify.phone": "unknown",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "Hello ✓",
+        "title": "Hi",
+        "data": {
+         "push": {
+          "badge": 1,
+          "sound": "default"
+         },
+         "url": "/lovelace/0"
+        }
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"Hello ✓\",\"title\":\"Hi\",\"data\":{\"push\":{\"badge\":1,\"sound\":\"default\"},\"url\":\"/lovelace/0\"},\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.old_phone": "unknown",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "mobile_app push notification rate limits for Phone: 3 sent, 150 allowed, 1 errors, resets in 12:00:00"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_old_phone",
+       {
+        "message": 42,
+        "title": "Home Assistant"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"42\",\"push_token\":\"old-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\",\"os_version\":\"17.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "x",
+        "title": "",
+        "target": [
+         "ignored"
+        ]
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"x\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "mobile_app push notification rate limits for Phone: 3 sent, 150 allowed, 1 errors, resets in 12:00:00"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "Entity",
+        "title": "Home Assistant"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"Entity\",\"title\":\"Home Assistant\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "Empty title",
+        "title": ""
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"Empty title\",\"title\":\"\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": [
+         "notify.phone",
+         "notify.missing"
+        ],
+        "message": 1.5
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"1.5\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "mobile_app push notification rate limits for Phone: 3 sent, 150 allowed, 1 errors, resets in 12:00:00"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.missing",
+        "message": "Nobody"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    }
+   ]
+  },
+  {
+   "name": "cloud_errors_legacy",
+   "note": "Each relay answer through `notify.mobile_app_phone`: errors are logged, not raised.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-555555555555",
+     "device_name": "Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    }
+   ],
+   "relay": [
+    {
+     "status": 400,
+     "content_type": "application/json",
+     "body": "{\"message\": \"Invalid push token\"}"
+    },
+    {
+     "status": 403,
+     "content_type": "application/json",
+     "body": "{\"message\": \"Forbidden.\"}"
+    },
+    {
+     "status": 429,
+     "content_type": "application/json",
+     "body": "{\"message\": \"Rate limited\", \"rateLimits\": {\"successful\": 3, \"errors\": 1, \"maximum\": 150, \"resetsAt\": \"2026-06-02T00:00:00.000Z\"}}"
+    },
+    {
+     "status": 500,
+     "content_type": "application/json",
+     "body": "{\"errorMessage\": \"Lambda failed\"}"
+    },
+    {
+     "status": 503,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 404,
+     "content_type": "application/json",
+     "body": "{\"message\": \"Not found!\", \"errorMessage\": \"ignored\"}"
+    },
+    {
+     "status": 502,
+     "content_type": "text/html",
+     "body": "<html>Bad gateway</html>"
+    },
+    {
+     "status": 200,
+     "content_type": "text/plain",
+     "body": "ok"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "nope"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": ""
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "  "
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{\"rateLimits\": {\"successful\": 1}}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{\"rateLimits\": {\"successful\": 3, \"errors\": 1, \"maximum\": 150, \"resetsAt\": \"soon\"}}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "[]"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "null"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "7"
+    },
+    {
+     "status": 400,
+     "content_type": "application/json",
+     "body": "[]"
+    },
+    {
+     "status": 400,
+     "content_type": "application/json",
+     "body": "{\"message\": \"\"}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json; charset=utf-8",
+     "body": "{\"message\": \"ignored on success\"}"
+    },
+    {
+     "status": 201,
+     "content_type": "application/problem+json",
+     "body": "{}"
+    }
+   ],
+   "steps": [
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m0"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m0\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone: Invalid push token. This message is generated externally to Home Assistant."
+      ],
+      [
+       "ERROR",
+       "Error sending notification to Phone"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m1"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m1\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone: Forbidden. This message is generated externally to Home Assistant."
+      ],
+      [
+       "ERROR",
+       "Error sending notification to Phone"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m2"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m2\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "mobile_app push notification rate limits for Phone: 3 sent, 150 allowed, 1 errors, resets in 12:00:00"
+      ],
+      [
+       "DEBUG",
+       "Error sending notification to Phone: Rate limited. This message is generated externally to Home Assistant."
+      ],
+      [
+       "WARNING",
+       "Rate limit exceeded sending notification to Phone"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m3"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m3\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone: Internal server error, please try again later: Lambda failed"
+      ],
+      [
+       "ERROR",
+       "Error sending notification to Phone"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m4"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m4\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone: Internal server error, please try again later: Unknown error"
+      ],
+      [
+       "ERROR",
+       "Error sending notification to Phone"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m5"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m5\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone: Not found! This message is generated externally to Home Assistant."
+      ],
+      [
+       "ERROR",
+       "Error sending notification to Phone"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m6"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m6\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone [<relay>/api/sendPushNotification]:"
+      ],
+      [
+       "ERROR",
+       "Error sending notification to Phone"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m7"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m7\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone [<relay>/api/sendPushNotification]:"
+      ],
+      [
+       "ERROR",
+       "Error sending notification to Phone"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m8"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "JSONDecodeError",
+       "message": "invalid literal: line 1 column 1 (char 0)"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m8\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m9"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "TypeError",
+       "message": "argument of type 'NoneType' is not a container or iterable"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m9\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m10"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "TypeError",
+       "message": "argument of type 'NoneType' is not a container or iterable"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m10\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m11"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "KeyError",
+       "message": "'resetsAt'"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m11\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m12"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "TypeError",
+       "message": "unsupported operand type(s) for -: 'NoneType' and 'datetime.datetime'"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m12\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m13"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m13\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m14"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "TypeError",
+       "message": "argument of type 'NoneType' is not a container or iterable"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m14\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m15"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "TypeError",
+       "message": "argument of type 'int' is not a container or iterable"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m15\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m16"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "AttributeError",
+       "message": "'list' object has no attribute 'get'"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m16\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m17"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "IndexError",
+       "message": "string index out of range"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m17\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m18"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m18\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "m19"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m19\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    }
+   ]
+  },
+  {
+   "name": "cloud_errors_entity",
+   "note": "Each relay answer through `notify.send_message`: errors are raised.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-555555555555",
+     "device_name": "Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    }
+   ],
+   "relay": [
+    {
+     "status": 400,
+     "content_type": "application/json",
+     "body": "{\"message\": \"Invalid push token\"}"
+    },
+    {
+     "status": 403,
+     "content_type": "application/json",
+     "body": "{\"message\": \"Forbidden.\"}"
+    },
+    {
+     "status": 429,
+     "content_type": "application/json",
+     "body": "{\"message\": \"Rate limited\", \"rateLimits\": {\"successful\": 3, \"errors\": 1, \"maximum\": 150, \"resetsAt\": \"2026-06-02T00:00:00.000Z\"}}"
+    },
+    {
+     "status": 500,
+     "content_type": "application/json",
+     "body": "{\"errorMessage\": \"Lambda failed\"}"
+    },
+    {
+     "status": 503,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 404,
+     "content_type": "application/json",
+     "body": "{\"message\": \"Not found!\", \"errorMessage\": \"ignored\"}"
+    },
+    {
+     "status": 502,
+     "content_type": "text/html",
+     "body": "<html>Bad gateway</html>"
+    },
+    {
+     "status": 200,
+     "content_type": "text/plain",
+     "body": "ok"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "nope"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": ""
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "  "
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{\"rateLimits\": {\"successful\": 1}}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{\"rateLimits\": {\"successful\": 3, \"errors\": 1, \"maximum\": 150, \"resetsAt\": \"soon\"}}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "[]"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "null"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "7"
+    },
+    {
+     "status": 400,
+     "content_type": "application/json",
+     "body": "[]"
+    },
+    {
+     "status": 400,
+     "content_type": "application/json",
+     "body": "{\"message\": \"\"}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json; charset=utf-8",
+     "body": "{\"message\": \"ignored on success\"}"
+    },
+    {
+     "status": 201,
+     "content_type": "application/problem+json",
+     "body": "{}"
+    }
+   ],
+   "steps": [
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m0"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Error sending notification to Phone",
+       "translation_domain": "mobile_app",
+       "translation_key": "error_sending_notification",
+       "translation_placeholders": {
+        "device_name": "Phone"
+       }
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m0\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone: Invalid push token. This message is generated externally to Home Assistant."
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m1"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Error sending notification to Phone",
+       "translation_domain": "mobile_app",
+       "translation_key": "error_sending_notification",
+       "translation_placeholders": {
+        "device_name": "Phone"
+       }
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m1\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone: Forbidden. This message is generated externally to Home Assistant."
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m2"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Rate limit exceeded sending notification to Phone",
+       "translation_domain": "mobile_app",
+       "translation_key": "rate_limit_exceeded_sending_notification",
+       "translation_placeholders": {
+        "device_name": "Phone"
+       }
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m2\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "mobile_app push notification rate limits for Phone: 3 sent, 150 allowed, 1 errors, resets in 12:00:00"
+      ],
+      [
+       "DEBUG",
+       "Error sending notification to Phone: Rate limited. This message is generated externally to Home Assistant."
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m3"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Error sending notification to Phone",
+       "translation_domain": "mobile_app",
+       "translation_key": "error_sending_notification",
+       "translation_placeholders": {
+        "device_name": "Phone"
+       }
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m3\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone: Internal server error, please try again later: Lambda failed"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m4"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Error sending notification to Phone",
+       "translation_domain": "mobile_app",
+       "translation_key": "error_sending_notification",
+       "translation_placeholders": {
+        "device_name": "Phone"
+       }
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m4\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone: Internal server error, please try again later: Unknown error"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m5"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Error sending notification to Phone",
+       "translation_domain": "mobile_app",
+       "translation_key": "error_sending_notification",
+       "translation_placeholders": {
+        "device_name": "Phone"
+       }
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m5\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone: Not found! This message is generated externally to Home Assistant."
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m6"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Error sending notification to Phone",
+       "translation_domain": "mobile_app",
+       "translation_key": "error_sending_notification",
+       "translation_placeholders": {
+        "device_name": "Phone"
+       }
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m6\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone [<relay>/api/sendPushNotification]:"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m7"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Error sending notification to Phone",
+       "translation_domain": "mobile_app",
+       "translation_key": "error_sending_notification",
+       "translation_placeholders": {
+        "device_name": "Phone"
+       }
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m7\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone [<relay>/api/sendPushNotification]:"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m8"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "JSONDecodeError",
+       "message": "invalid literal: line 1 column 1 (char 0)"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m8\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m9"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "TypeError",
+       "message": "argument of type 'NoneType' is not a container or iterable"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m9\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m10"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "TypeError",
+       "message": "argument of type 'NoneType' is not a container or iterable"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m10\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m11"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "KeyError",
+       "message": "'resetsAt'"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m11\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m12"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "TypeError",
+       "message": "unsupported operand type(s) for -: 'NoneType' and 'datetime.datetime'"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m12\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m13"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m13\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m14"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "TypeError",
+       "message": "argument of type 'NoneType' is not a container or iterable"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m14\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m15"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "TypeError",
+       "message": "argument of type 'int' is not a container or iterable"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m15\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m16"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "AttributeError",
+       "message": "'list' object has no attribute 'get'"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m16\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m17"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "IndexError",
+       "message": "string index out of range"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m17\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m18"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m18\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "m19"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"m19\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    }
+   ]
+  },
+  {
+   "name": "cloud_timeout",
+   "note": "A relay that never answers: HA's 10 s timeout.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-555555555555",
+     "device_name": "Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    }
+   ],
+   "relay": [
+    {
+     "hang": true
+    },
+    {
+     "hang": true
+    }
+   ],
+   "steps": [
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "late"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"late\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": [
+      [
+       "ERROR",
+       "Timeout sending notification to Phone"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "late"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Timeout sending notification to Phone",
+       "translation_domain": "mobile_app",
+       "translation_key": "timeout_sending_notification",
+       "translation_placeholders": {
+        "device_name": "Phone"
+       }
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"late\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    }
+   ]
+  },
+  {
+   "name": "cloud_refused",
+   "note": "A relay that refuses the connection.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<closed>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-555555555555",
+     "device_name": "Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    }
+   ],
+   "relay": [],
+   "steps": [
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "x"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone [<closed>/api/sendPushNotification]:"
+      ],
+      [
+       "ERROR",
+       "Error sending notification to Phone"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "x"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Error sending notification to Phone",
+       "translation_domain": "mobile_app",
+       "translation_key": "error_sending_notification",
+       "translation_placeholders": {
+        "device_name": "Phone"
+       }
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone [<closed>/api/sendPushNotification]:"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "name": "notify_service",
+   "note": "`notify.notify`: targets, all registrations, local-only and push-less ones, schemas.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-555555555555",
+     "device_name": "Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    },
+    {
+     "app_data": {
+      "push_websocket_channel": true
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-666666666666",
+     "device_name": "Tablet",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e"
+    },
+    {
+     "app_data": {},
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-777777777777",
+     "device_name": "Plain",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d"
+    },
+    {
+     "app_data": {
+      "push_token": "old-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-888888888888",
+     "device_name": "Old Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "17.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+    }
+   ],
+   "relay": [
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    }
+   ],
+   "steps": [
+    {
+     "step": {
+      "call": [
+       "notify",
+       "notify",
+       {
+        "message": "All"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Device(s) with webhook id(s) 1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e not connected to local push notifications"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"All\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      },
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"All\",\"push_token\":\"old-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\",\"os_version\":\"17.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "notify",
+       {
+        "message": "One",
+        "target": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "data": {
+         "push": {
+          "badge": 1
+         }
+        }
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"One\",\"data\":{\"push\":{\"badge\":1}},\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "notify",
+       {
+        "message": "Plain",
+        "target": [
+         "2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d"
+        ]
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Device(s) with webhook id(s) 2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d not connected to local push notifications"
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "notify",
+       {
+        "message": "x",
+        "target": [
+         "nope"
+        ]
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "KeyError",
+       "message": "'nope'"
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "notify",
+       {
+        "message": "Empty",
+        "target": []
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Device(s) with webhook id(s) 1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e not connected to local push notifications"
+      }
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"Empty\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      },
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"Empty\",\"push_token\":\"old-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\",\"os_version\":\"17.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "notify",
+       {
+        "message": "Two",
+        "target": [
+         "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+         "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+        ],
+        "title": "T"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"Two\",\"title\":\"T\",\"push_token\":\"old-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c\",\"os_version\":\"17.0\"}}"
+       }
+      },
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"Two\",\"title\":\"T\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_tablet",
+       {
+        "message": "x"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Device(s) with webhook id(s) 1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e not connected to local push notifications"
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.tablet",
+        "message": "x"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Device Tablet is not connected for local push notifications",
+       "translation_domain": "mobile_app",
+       "translation_key": "device_not_connected_for_local_push_notifications",
+       "translation_placeholders": {
+        "device_name": "Tablet"
+       }
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {}
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "MultipleInvalid",
+       "message": "required key not provided @ data['message']"
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": null
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "MultipleInvalid",
+       "message": "string value is None for dictionary value @ data['message']"
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": [
+         "a"
+        ]
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "MultipleInvalid",
+       "message": "value should be a string for dictionary value @ data['message']"
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "x",
+        "data": [
+         1
+        ]
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "MultipleInvalid",
+       "message": "expected dict for dictionary value @ data['data']"
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "x",
+        "data": null
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "MultipleInvalid",
+       "message": "expected dict for dictionary value @ data['data']"
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "x",
+        "title": null
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "MultipleInvalid",
+       "message": "string value is None for dictionary value @ data['title']"
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "x",
+        "extra": 1
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "MultipleInvalid",
+       "message": "extra keys not allowed @ data['extra']"
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "x",
+        "target": 5
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"x\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "MultipleInvalid",
+       "message": "required key not provided @ data['message']"
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "x",
+        "data": {}
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "MultipleInvalid",
+       "message": "extra keys not allowed @ data['data']"
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "message": "x"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "MultipleInvalid",
+       "message": "must contain at least one of entity_id, device_id, area_id, floor_id, label_id."
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.old_phone": "<time>",
+      "notify.phone": "<time>",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    }
+   ]
+  },
+  {
+   "name": "local",
+   "note": "The local push channel without confirmation.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-555555555555",
+     "device_name": "Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    },
+    {
+     "app_data": {
+      "push_websocket_channel": true
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-666666666666",
+     "device_name": "Tablet",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e"
+    }
+   ],
+   "relay": [
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    }
+   ],
+   "steps": [
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 1,
+        "type": "mobile_app/push_notification_channel",
+        "webhook_id": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "result",
+         "success": true,
+         "result": null
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_tablet",
+       {
+        "message": "Local",
+        "title": "T",
+        "data": {
+         "tag": "x"
+        }
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "event",
+         "event": {
+          "message": "Local",
+          "title": "T",
+          "data": {
+           "tag": "x"
+          }
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown",
+      "notify.tablet": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.tablet",
+        "message": "Entity",
+        "title": "E"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "event",
+         "event": {
+          "message": "Entity",
+          "title": "E"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown",
+      "notify.tablet": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "notify",
+       {
+        "message": "Both"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"Both\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      },
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "event",
+         "event": {
+          "message": "Both"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>",
+      "notify.tablet": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 2,
+        "type": "mobile_app/push_notification_confirm",
+        "webhook_id": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+        "confirm_id": "abc"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 2,
+         "type": "result",
+         "success": false,
+         "error": {
+          "code": "not_found",
+          "message": "Push notification channel not found"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>",
+      "notify.tablet": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 3,
+        "type": "unsubscribe_events",
+        "subscription": 1
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 3,
+         "type": "result",
+         "success": true,
+         "result": null
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>",
+      "notify.tablet": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_tablet",
+       {
+        "message": "Gone"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Device(s) with webhook id(s) 1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e not connected to local push notifications"
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.phone": "<time>",
+      "notify.tablet": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.tablet",
+        "message": "Gone"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Device Tablet is not connected for local push notifications",
+       "translation_domain": "mobile_app",
+       "translation_key": "device_not_connected_for_local_push_notifications",
+       "translation_placeholders": {
+        "device_name": "Tablet"
+       }
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.phone": "<time>",
+      "notify.tablet": "<time>"
+     },
+     "log": []
+    }
+   ]
+  },
+  {
+   "name": "confirm",
+   "note": "The local push channel with confirmation: confirmed in time.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-555555555555",
+     "device_name": "Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    }
+   ],
+   "relay": [],
+   "steps": [
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 1,
+        "type": "mobile_app/push_notification_channel",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "support_confirm": true
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "result",
+         "success": true,
+         "result": null
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "A"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "event",
+         "event": {
+          "message": "A",
+          "hass_confirm_id": "00000000000000000000000000000001"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 2,
+        "type": "mobile_app/push_notification_confirm",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "confirm_id": "00000000000000000000000000000001"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 2,
+         "type": "result",
+         "success": true,
+         "result": null
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 3,
+        "type": "mobile_app/push_notification_confirm",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "confirm_id": "00000000000000000000000000000001"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 3,
+         "type": "result",
+         "success": false,
+         "error": {
+          "code": "not_found",
+          "message": "Push notification channel not found"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "advance": 10
+     },
+     "timer_errors": [],
+     "sent": [],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "B"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "event",
+         "event": {
+          "message": "B",
+          "hass_confirm_id": "00000000000000000000000000000002"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 4,
+        "type": "mobile_app/push_notification_confirm",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "confirm_id": "00000000000000000000000000000002"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 4,
+         "type": "result",
+         "success": true,
+         "result": null
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "advance": 10
+     },
+     "timer_errors": [],
+     "sent": [],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    }
+   ]
+  },
+  {
+   "name": "confirm_timeout",
+   "note": "Unconfirmed for 10 s: the channel is dropped and everything pending goes by cloud.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-555555555555",
+     "device_name": "Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    }
+   ],
+   "relay": [
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    }
+   ],
+   "steps": [
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 1,
+        "type": "mobile_app/push_notification_channel",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "support_confirm": true
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "result",
+         "success": true,
+         "result": null
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "A"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "event",
+         "event": {
+          "message": "A",
+          "hass_confirm_id": "00000000000000000000000000000001"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "B"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "event",
+         "event": {
+          "message": "B",
+          "hass_confirm_id": "00000000000000000000000000000002"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "advance": 10
+     },
+     "timer_errors": [],
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"B\",\"hass_confirm_id\":\"00000000000000000000000000000002\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      },
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"A\",\"hass_confirm_id\":\"00000000000000000000000000000001\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "C"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"C\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 2,
+        "type": "mobile_app/push_notification_confirm",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "confirm_id": "00000000000000000000000000000001"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 2,
+         "type": "result",
+         "success": false,
+         "error": {
+          "code": "not_found",
+          "message": "Push notification channel not found"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 3,
+        "type": "unsubscribe_events",
+        "subscription": 1
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 3,
+         "type": "result",
+         "success": true,
+         "result": null
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    }
+   ]
+  },
+  {
+   "name": "confirm_timeout_local_only",
+   "note": "Unconfirmed on a registration with no cloud push to fall back to.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_websocket_channel": true
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-666666666666",
+     "device_name": "Tablet",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e"
+    }
+   ],
+   "relay": [],
+   "steps": [
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 1,
+        "type": "mobile_app/push_notification_channel",
+        "webhook_id": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+        "support_confirm": true
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "result",
+         "success": true,
+         "result": null
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_tablet",
+       {
+        "message": "A"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "event",
+         "event": {
+          "message": "A",
+          "hass_confirm_id": "00000000000000000000000000000001"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.tablet": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "advance": 10
+     },
+     "timer_errors": [
+      {
+       "type": "KeyError",
+       "message": "'push_url'"
+      }
+     ],
+     "sent": [],
+     "states": {
+      "notify.tablet": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_tablet",
+       {
+        "message": "B"
+       }
+      ]
+     },
+     "result": {
+      "error": {
+       "type": "HomeAssistantError",
+       "message": "Device(s) with webhook id(s) 1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e not connected to local push notifications"
+      }
+     },
+     "sent": [],
+     "states": {
+      "notify.tablet": "<time>"
+     },
+     "log": []
+    }
+   ]
+  },
+  {
+   "name": "replaced",
+   "note": "A second channel for the same app replaces the first; what was pending goes by cloud.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-555555555555",
+     "device_name": "Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    }
+   ],
+   "relay": [
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    }
+   ],
+   "steps": [
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 1,
+        "type": "mobile_app/push_notification_channel",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "support_confirm": true
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "result",
+         "success": true,
+         "result": null
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "A"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "event",
+         "event": {
+          "message": "A",
+          "hass_confirm_id": "00000000000000000000000000000001"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       1,
+       {
+        "id": 1,
+        "type": "mobile_app/push_notification_channel",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"A\",\"hass_confirm_id\":\"00000000000000000000000000000001\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      },
+      {
+       "ws": [
+        1,
+        {
+         "id": 1,
+         "type": "result",
+         "success": true,
+         "result": null
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "B"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "ws": [
+        1,
+        {
+         "id": 1,
+         "type": "event",
+         "event": {
+          "message": "B"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "advance": 10
+     },
+     "timer_errors": [],
+     "sent": [],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 2,
+        "type": "mobile_app/push_notification_confirm",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "confirm_id": "00000000000000000000000000000001"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 2,
+         "type": "result",
+         "success": false,
+         "error": {
+          "code": "not_found",
+          "message": "Push notification channel not found"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    }
+   ]
+  },
+  {
+   "name": "replaced_error",
+   "note": "Replacing a channel whose pending `send_message` fails by cloud fails the new channel.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-555555555555",
+     "device_name": "Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    }
+   ],
+   "relay": [
+    {
+     "status": 500,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    }
+   ],
+   "steps": [
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 1,
+        "type": "mobile_app/push_notification_channel",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "support_confirm": true
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "result",
+         "success": true,
+         "result": null
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "A"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "event",
+         "event": {
+          "message": "A",
+          "hass_confirm_id": "00000000000000000000000000000001"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       1,
+       {
+        "id": 1,
+        "type": "mobile_app/push_notification_channel",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"A\",\"hass_confirm_id\":\"00000000000000000000000000000001\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      },
+      {
+       "ws": [
+        1,
+        {
+         "id": 1,
+         "type": "result",
+         "success": false,
+         "error": {
+          "code": "home_assistant_error",
+          "message": "Error sending notification to Phone",
+          "translation_key": "error_sending_notification",
+          "translation_placeholders": {
+           "device_name": "Phone"
+          },
+          "translation_domain": "mobile_app"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": [
+      [
+       "DEBUG",
+       "Error sending notification to Phone: Internal server error, please try again later: Unknown error"
+      ]
+     ]
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "B"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"B\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    }
+   ]
+  },
+  {
+   "name": "closed",
+   "note": "The app's connection closes: what was pending goes by cloud.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-555555555555",
+     "device_name": "Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    }
+   ],
+   "relay": [
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    }
+   ],
+   "steps": [
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 1,
+        "type": "mobile_app/push_notification_channel",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "support_confirm": true
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "result",
+         "success": true,
+         "result": null
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "send_message",
+       {
+        "entity_id": "notify.phone",
+        "message": "A"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "event",
+         "event": {
+          "message": "A",
+          "hass_confirm_id": "00000000000000000000000000000001"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "close": 0
+     },
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"A\",\"hass_confirm_id\":\"00000000000000000000000000000001\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "mobile_app_phone",
+       {
+        "message": "B"
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"B\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "advance": 10
+     },
+     "timer_errors": [],
+     "sent": [],
+     "states": {
+      "notify.phone": "<time>"
+     },
+     "log": []
+    }
+   ]
+  },
+  {
+   "name": "shared_data",
+   "note": "`notify.notify` shares one message between its targets: a confirm id rides along.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-555555555555",
+     "device_name": "Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    },
+    {
+     "app_data": {
+      "push_websocket_channel": true
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-666666666666",
+     "device_name": "Tablet",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e"
+    }
+   ],
+   "relay": [
+    {
+     "status": 200,
+     "content_type": "application/json",
+     "body": "{}"
+    }
+   ],
+   "steps": [
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 1,
+        "type": "mobile_app/push_notification_channel",
+        "webhook_id": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+        "support_confirm": true
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "result",
+         "success": true,
+         "result": null
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.phone": "unknown",
+      "notify.tablet": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "call": [
+       "notify",
+       "notify",
+       {
+        "message": "Both",
+        "target": [
+         "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+         "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+        ]
+       }
+      ]
+     },
+     "result": "ok",
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "event",
+         "event": {
+          "message": "Both",
+          "hass_confirm_id": "00000000000000000000000000000001"
+         }
+        }
+       ]
+      },
+      {
+       "relay": {
+        "method": "POST",
+        "path": "/api/sendPushNotification",
+        "content_type": "application/json",
+        "body": "{\"message\":\"Both\",\"hass_confirm_id\":\"00000000000000000000000000000001\",\"push_token\":\"fake-push-token\",\"registration_info\":{\"app_id\":\"io.robbie.HomeAssistant\",\"app_version\":\"2026.9.0 (2026.2874)\",\"webhook_id\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\",\"os_version\":\"27.0\"}}"
+       }
+      }
+     ],
+     "states": {
+      "notify.phone": "<time>",
+      "notify.tablet": "<time>"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "advance": 10
+     },
+     "timer_errors": [
+      {
+       "type": "KeyError",
+       "message": "'push_url'"
+      }
+     ],
+     "sent": [],
+     "states": {
+      "notify.phone": "<time>",
+      "notify.tablet": "<time>"
+     },
+     "log": []
+    }
+   ]
+  },
+  {
+   "name": "ws_errors",
+   "note": "The commands' checks: unknown and foreign webhooks, no channel, schemas.",
+   "registrations": [
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-555555555555",
+     "device_name": "Phone",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<user>",
+     "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+    },
+    {
+     "app_data": {
+      "push_token": "fake-push-token",
+      "push_url": "<relay>/api/sendPushNotification"
+     },
+     "app_id": "io.robbie.HomeAssistant",
+     "app_name": "Home Assistant",
+     "app_version": "2026.9.0 (2026.2874)",
+     "device_id": "11111111-2222-4333-8444-999999999999",
+     "device_name": "Other",
+     "manufacturer": "Apple",
+     "model": "iPhone17,1",
+     "os_name": "iOS",
+     "os_version": "27.0",
+     "supports_encryption": false,
+     "user_id": "<other>",
+     "webhook_id": "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b"
+    }
+   ],
+   "relay": [],
+   "steps": [
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 1,
+        "type": "mobile_app/push_notification_channel",
+        "webhook_id": "nope"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 1,
+         "type": "result",
+         "success": false,
+         "error": {
+          "code": "not_found",
+          "message": "Webhook ID not found"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.other": "unknown",
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 2,
+        "type": "mobile_app/push_notification_confirm",
+        "webhook_id": "nope",
+        "confirm_id": "x"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 2,
+         "type": "result",
+         "success": false,
+         "error": {
+          "code": "not_found",
+          "message": "Webhook ID not found"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.other": "unknown",
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 3,
+        "type": "mobile_app/push_notification_channel",
+        "webhook_id": "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 3,
+         "type": "result",
+         "success": false,
+         "error": {
+          "code": "unauthorized",
+          "message": "User not linked to this webhook ID"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.other": "unknown",
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 4,
+        "type": "mobile_app/push_notification_confirm",
+        "webhook_id": "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+        "confirm_id": "x"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 4,
+         "type": "result",
+         "success": false,
+         "error": {
+          "code": "unauthorized",
+          "message": "User not linked to this webhook ID"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.other": "unknown",
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 5,
+        "type": "mobile_app/push_notification_confirm",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "confirm_id": "x"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 5,
+         "type": "result",
+         "success": false,
+         "error": {
+          "code": "not_found",
+          "message": "Push notification channel not found"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.other": "unknown",
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 6,
+        "type": "mobile_app/push_notification_channel"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 6,
+         "type": "result",
+         "success": false,
+         "error": {
+          "code": "invalid_format",
+          "message": "required key not provided @ data['webhook_id']. Got None"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.other": "unknown",
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 7,
+        "type": "mobile_app/push_notification_confirm",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 7,
+         "type": "result",
+         "success": false,
+         "error": {
+          "code": "invalid_format",
+          "message": "required key not provided @ data['confirm_id']. Got None"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.other": "unknown",
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 8,
+        "type": "mobile_app/push_notification_channel",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "support_confirm": "yes"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 8,
+         "type": "result",
+         "success": false,
+         "error": {
+          "code": "invalid_format",
+          "message": "expected bool for dictionary value @ data['support_confirm']. Got 'yes'"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.other": "unknown",
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 9,
+        "type": "mobile_app/push_notification_channel",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "support_confirm": false
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 9,
+         "type": "result",
+         "success": true,
+         "result": null
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.other": "unknown",
+      "notify.phone": "unknown"
+     },
+     "log": []
+    },
+    {
+     "step": {
+      "ws": [
+       0,
+       {
+        "id": 10,
+        "type": "mobile_app/push_notification_confirm",
+        "webhook_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "confirm_id": "x"
+       }
+      ]
+     },
+     "sent": [
+      {
+       "ws": [
+        0,
+        {
+         "id": 10,
+         "type": "result",
+         "success": false,
+         "error": {
+          "code": "not_found",
+          "message": "Push notification channel not found"
+         }
+        }
+       ]
+      }
+     ],
+     "states": {
+      "notify.other": "unknown",
+      "notify.phone": "unknown"
+     },
+     "log": []
+    }
+   ]
+  }
+ ]
+}

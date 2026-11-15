@@ -1,6 +1,5 @@
 //! `mobile_app`'s `device_tracker` (`device_tracker.py` and the
-//! `TrackerEntity` base) fed by `update_location`, and its `notify` entity
-//! (restored only: push notifications aren't sent).
+//! `TrackerEntity` base) fed by `update_location`.
 
 use super::{DOMAIN, Registration};
 use ha_components::zone;
@@ -351,71 +350,4 @@ fn state_name(s: &ha_core::State) -> String {
         .and_then(Value::as_str)
         .map(str::to_owned)
         .unwrap_or_else(|| s.entity_id.object_id().replace('_', " "))
-}
-
-/// The registrations' `notify` entities (`MobileAppNotifyEntity`), made
-/// when the app can receive push. Their state is the last message's time,
-/// restored; `hars` sends no push, so it never changes.
-pub fn setup_notify(hass: &Hass, registry: &Registry, registrations: &[Arc<Registration>]) {
-    let restore = hass.restore();
-    for reg in registrations {
-        let Some(entity_id) = notify_entity(registry, reg) else {
-            continue;
-        };
-        restore.register(entity_id.as_str(), None);
-        let state = restore
-            .last_state(entity_id.as_str())
-            .and_then(|s| s.get("state").and_then(Value::as_str).map(str::to_owned))
-            .filter(|s| s != "unavailable")
-            .unwrap_or_else(|| "unknown".into());
-        let mut a = Map::new();
-        // `has_entity_name` with no name: the device's name.
-        let row =
-            registry.entity_by_unique_id("notify", DOMAIN, &reg.device_id().unwrap_or_default());
-        let name = row
-            .and_then(|r| r.name.clone())
-            .or_else(|| reg.device_name());
-        if let Some(name) = name {
-            a.insert("friendly_name".into(), json!(name));
-        }
-        a.insert("supported_features".into(), json!(1));
-        hass.set_state(entity_id, state, a);
-    }
-}
-
-/// Whether the app can receive push (`supports_push`): cloud push, or the
-/// local push channel.
-pub fn supports_push(reg: &Registration) -> bool {
-    reg.with_data(|data| {
-        data.get("app_data")
-            .and_then(Value::as_object)
-            .is_some_and(|a| {
-                (a.contains_key("push_token") && a.contains_key("push_url"))
-                    || a.contains_key("push_websocket_channel")
-            })
-    })
-}
-
-/// The registration's enabled notify row's entity, when it supports push.
-fn notify_entity(registry: &Registry, reg: &Registration) -> Option<EntityId> {
-    if !supports_push(reg) {
-        return None;
-    }
-    let device_id = reg.device_id()?;
-    let row = registry
-        .entity_by_unique_id("notify", DOMAIN, &device_id)
-        .filter(|r| r.disabled_by.is_none())?;
-    EntityId::parse(&row.entity_id).ok()
-}
-
-/// The entry unloads: its notify entity goes (its state kept for restore).
-pub fn unload_notify(hass: &Hass, registry: &Registry, reg: &Registration) {
-    if let Some(entity_id) = reg
-        .device_id()
-        .and_then(|d| registry.entity_by_unique_id("notify", DOMAIN, &d))
-        .and_then(|r| EntityId::parse(&r.entity_id).ok())
-    {
-        hass.restore().unregister(hass, entity_id.as_str());
-        hass.remove_state(&entity_id);
-    }
 }

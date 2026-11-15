@@ -239,6 +239,7 @@ All of it is in `ha-api`; `ha_api::router` builds it.
 | Auth `/auth/…` | `auth.rs` | Login flow, token, revoke; HA's `.storage/auth*` files |
 | WebSocket `/api/websocket` | `ws/` | Authenticates in the protocol; `ws/commands.rs::dispatch` matches the command type, then asks each domain's module (`ws/weather.rs`, `ws/history.rs`, …) |
 | Companion app webhook `/api/webhook/{id}` | `mobile_app/` | The webhook id is the credential; encryption is required for registrations with `supports_encryption` enabled |
+| Companion app push channel (WS `mobile_app/push_notification_*`) | `ws/mobile_app.rs` | The commands only; the channels, the confirm timers and cloud push (through `ha-http`) are `ha_integrations::mobile_app::notify`'s, reached through `ApiConfig.mobile_app` |
 | Frontend `/`, `/frontend_latest/…` | `frontend.rs` | Served from `HARS_FRONTEND` on disk with precompressed files ([ADR 0004](adr/0004-frontend-from-disk.md)) |
 | Onboarding `/api/onboarding/…` | `onboarding.rs` | HA's views, registered only while a step is left. The status, installation type, `users` and `integration/wait` views are anonymous; the other steps need a `Bearer` token |
 | Brands `/api/brands/…` | `brands.rs` | Proxied from HA's CDN with HA's disk cache |
@@ -269,7 +270,8 @@ How it is kept:
 - **Vectors.** Where hars must give HA's answer, tests compare with inputs
   run through HA's own code at the pinned version. A new vector set commits
   the script that made it in `scripts/vectors/` (`onboarding.py`,
-  `render_template.py`). The sets made before that rule have no script yet;
+  `render_template.py`, `mobile_app_notify.py`). The sets made before that
+  rule have no script yet;
   they are listed as a backlog in
   [scripts/vectors/README.md](../scripts/vectors/README.md#vector-sets-made-before-this-rule)
   ([ADR 0008](adr/0008-vectors-from-home-assistant.md)).
