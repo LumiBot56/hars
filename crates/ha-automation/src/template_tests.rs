@@ -552,3 +552,125 @@ async fn a_template_trigger_sleeps_until_what_it_reads_changes() {
     assert_eq!(renders(), 5);
     assert_eq!(*calls.lock(), 1);
 }
+
+/// An engine for one YAML automation, with `light.turn_on` counted.
+async fn one_automation(
+    hass: &Hass,
+    yaml: &str,
+    registries: &Registries,
+) -> (Automations, Arc<PMutex<u32>>) {
+    let calls: Arc<PMutex<u32>> = Arc::default();
+    let c = calls.clone();
+    hass.services()
+        .register("light", "turn_on", SupportsResponse::None, move |_| {
+            *c.lock() += 1;
+            async { Ok(None) }
+        });
+    let ha_core::yaml::Yaml::Seq(items) = ha_core::yaml::parse(yaml).unwrap() else {
+        panic!("a list")
+    };
+    let autos = Automations::setup_yaml(hass, registries, &items).await;
+    hass.start();
+    autos.started();
+    settle().await;
+    (autos, calls)
+}
+
+/// A minute tick re-renders a template that now reads another entity: a
+/// change to it made after the render read it, before its listener is in,
+/// is still heard (HA renders and re-listens in one go).
+#[tokio::test(start_paused = true)]
+async fn a_change_while_a_timed_render_relistens_is_heard() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let sim = ha_core::SimulatedClock::new("2026-11-10T16:00:00Z".parse().unwrap());
+    let hass = Hass::with_clock(sim.clock());
+    for e in ["sensor.a", "sensor.b"] {
+        hass.set_state(EntityId::parse(e).unwrap(), "off", Map::new());
+    }
+    let (_autos, calls) = one_automation(
+        &hass,
+        "- {id: b, alias: b, triggers: [{trigger: template, value_template: \"{{ is_state('sensor.b', 'on') if now().minute >= 1 else is_state('sensor.a', 'on') }}\"}], actions: [{action: light.turn_on}]}",
+        &Registries::default(),
+    )
+    .await;
+    // Past this minute's tick, which still reads `sensor.a`.
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    settle().await;
+    let (reached, go) = track::gap::hold();
+    // 16:01's tick has rendered, reading `sensor.b` (off); its listener
+    // isn't in yet.
+    reached.notified().await;
+    hass.set_state(EntityId::parse("sensor.b").unwrap(), "on", Map::new());
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+    }
+    go.notify_one();
+    settle().await;
+    assert_eq!(*calls.lock(), 1, "sensor.b turning on fired the trigger");
+}
+
+/// A target's registry id resolves against the registry when the call is
+/// made: an entry removed while the render waited for a thread fails the
+/// call with HA's error.
+#[tokio::test(start_paused = true)]
+async fn a_registry_id_removed_while_rendering_fails_the_call() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let sim = ha_core::SimulatedClock::new("2026-11-10T16:00:00Z".parse().unwrap());
+    let hass = Hass::with_clock(sim.clock());
+    let logs = Logs(Arc::default(), sim.clock());
+    use tracing_subscriber::layer::SubscriberExt;
+    let _guard =
+        tracing::subscriber::set_default(tracing_subscriber::registry().with(logs.clone()));
+    let uuid = "1e2feb89414c343c1027c4d1c386bbc4";
+    let registries = Registries {
+        entities: vec![Arc::new(
+            serde_json::from_value(
+                json!({"entity_id": "light.hall", "id": uuid, "platform": "vectors"}),
+            )
+            .unwrap(),
+        )],
+        ..Default::default()
+    };
+    hass.set_state(
+        EntityId::parse("binary_sensor.w").unwrap(),
+        "off",
+        Map::new(),
+    );
+    let (autos, calls) = one_automation(
+        &hass,
+        &format!(
+            "- {{id: r, alias: r, triggers: [{{trigger: state, entity_id: binary_sensor.w, to: 'on'}}], actions: [{{action: light.turn_on, target: {{entity_id: \"{{{{ '{uuid}' }}}}\"}}}}]}}"
+        ),
+        &registries,
+    )
+    .await;
+    let registry = ha_registry::Registry::in_memory(&hass, registries);
+    autos.set_registry(registry.clone());
+    // Every render thread busy: the call's render waits.
+    let held = ha_core::template::run::take_all_renders().await;
+    hass.set_state(
+        EntityId::parse("binary_sensor.w").unwrap(),
+        "on",
+        Map::new(),
+    );
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+    }
+    registry.remove_entity("light.hall");
+    drop(held);
+    settle().await;
+    assert_eq!(*calls.lock(), 0);
+    let errors: Vec<String> = logs
+        .0
+        .lock()
+        .iter()
+        .filter(|(level, ..)| *level == tracing::Level::ERROR)
+        .map(|(_, _, msg, _)| msg.clone())
+        .collect();
+    assert!(
+        errors
+            .iter()
+            .any(|m| m.ends_with(&format!("Template rendered invalid entity IDs: {uuid}"))),
+        "{errors:?}"
+    );
+}

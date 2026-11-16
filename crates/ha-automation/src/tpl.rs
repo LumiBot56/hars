@@ -83,17 +83,41 @@ pub(crate) struct Prepared {
     pub service: String,
     pub data: Map<String, Value>,
     pub target: Option<Map<String, Value>>,
+    /// When the target names an entity by its registry id: its `entity_id`
+    /// as HA's error shows it, to resolve ([`resolve_ids`]) just before the
+    /// call.
+    pub shown: Option<String>,
+}
+
+impl Prepared {
+    /// A call with nothing to render.
+    pub(crate) fn fixed(
+        domain: &str,
+        service: &str,
+        data: Map<String, Value>,
+        target: Option<Map<String, Value>>,
+    ) -> Prepared {
+        let shown = target.as_ref().and_then(registry_ids_shown);
+        Prepared {
+            domain: domain.to_owned(),
+            service: service.to_owned(),
+            data,
+            target,
+            shown,
+        }
+    }
 }
 
 /// `async_prepare_call_from_config`: the service name, the target, then
-/// the data, rendered; the error is HA's `HomeAssistantError` text.
+/// the data, rendered; the error is HA's `HomeAssistantError` text. Entity
+/// registry ids in the target are checked for shape here and resolved
+/// against the registry as it is when the call is made ([`resolve_ids`]).
 pub(crate) fn prepare(
     service: &Service,
     data: &[Complex],
     target: Option<&Complex>,
     home: &Home,
     vars: &Vars,
-    registry: Option<&Registries>,
     out: &mut Out,
 ) -> Result<Prepared, String> {
     let (domain, service) = match service {
@@ -118,13 +142,9 @@ pub(crate) fn prepare(
             (d.to_owned(), s.to_owned())
         }
     };
-    let target = match target {
-        None => None,
-        Some(Complex::Static(Value::Object(t))) => {
-            let mut t = t.clone();
-            resolve_static(&mut t, registry)?;
-            Some(t)
-        }
+    let (target, shown) = match target {
+        None => (None, None),
+        Some(Complex::Static(Value::Object(t))) => (Some(t.clone()), registry_ids_shown(t)),
         Some(c) => {
             let rendered = complex(c, home, vars, out)
                 .map_err(|e| format!("Error rendering service target template: {e}"))?;
@@ -137,13 +157,15 @@ pub(crate) fn prepare(
                     ));
                 }
             };
+            let mut shown = None;
             if let Some(ids) = t.get("entity_id") {
-                let shown = Var::json(ids).to_py_str();
-                let ids = comp_entity_ids(ids, registry)
-                    .ok_or_else(|| format!("Template rendered invalid entity IDs: {shown}"))?;
+                let raw = Var::json(ids).to_py_str();
+                let ids = comp_entity_ids(ids)
+                    .ok_or_else(|| format!("Template rendered invalid entity IDs: {raw}"))?;
                 t.insert("entity_id".into(), ids);
+                shown = has_registry_ids(&t).then_some(raw);
             }
-            Some(t)
+            (Some(t), shown)
         }
     };
     let mut service_data = Map::new();
@@ -160,6 +182,7 @@ pub(crate) fn prepare(
         service,
         data: service_data,
         target,
+        shown,
     })
 }
 
@@ -170,39 +193,33 @@ fn is_registry_id(s: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// `entity_registry.async_validate_entity_id` for a registry id: the
-/// entity id it has now, if the registry has it.
-fn resolve(registry: Option<&Registries>, id: &str) -> Option<String> {
-    registry?
-        .entities
-        .iter()
-        .find(|e| e.id.as_deref() == Some(id))
-        .map(|e| e.entity_id.clone())
-}
-
-/// Whether a static target names an entity by its registry id.
-pub(crate) fn has_registry_ids(target: &Map<String, Value>) -> bool {
+/// Whether a target names an entity by its registry id.
+fn has_registry_ids(target: &Map<String, Value>) -> bool {
     matches!(target.get("entity_id"), Some(Value::Array(ids))
         if ids.iter().any(|i| i.as_str().is_some_and(is_registry_id)))
 }
 
-/// A static target's entity registry ids, resolved as
-/// `async_prepare_call_from_config` resolves them (other ids as they
-/// are); an unknown one is HA's error.
-pub(crate) fn resolve_static(
-    target: &mut Map<String, Value>,
-    registry: Option<&Registries>,
-) -> Result<(), String> {
-    if !has_registry_ids(target) {
-        return Ok(());
-    }
-    let Some(Value::Array(ids)) = target.get_mut("entity_id") else {
+/// A static target's `entity_id` as HA's error shows it, if it names a
+/// registry id (only those read the registry).
+fn registry_ids_shown(target: &Map<String, Value>) -> Option<String> {
+    has_registry_ids(target).then(|| Var::json(&target["entity_id"]).to_py_str())
+}
+
+/// `entity_registry.async_validate_entity_ids`, against the registry as
+/// it is now: each registry id in the target becomes the entity id it has;
+/// an unknown one is HA's error.
+pub(crate) fn resolve_ids(p: &mut Prepared, registry: Option<&Registries>) -> Result<(), String> {
+    let Some(shown) = &p.shown else {
         return Ok(());
     };
-    let shown = Var::json(&Value::Array(ids.clone())).to_py_str();
+    let Some(Value::Array(ids)) = p.target.as_mut().and_then(|t| t.get_mut("entity_id")) else {
+        return Ok(());
+    };
     for id in ids.iter_mut() {
         if let Some(s) = id.as_str().filter(|s| is_registry_id(s)) {
-            let entity = resolve(registry, s)
+            let entity = registry
+                .and_then(|r| r.entities.iter().find(|e| e.id.as_deref() == Some(s)))
+                .map(|e| e.entity_id.clone())
                 .ok_or_else(|| format!("Template rendered invalid entity IDs: {shown}"))?;
             *id = Value::String(entity);
         }
@@ -210,21 +227,18 @@ pub(crate) fn resolve_static(
     Ok(())
 }
 
-/// `cv.comp_entity_ids_or_uuids` on a rendered value, then
-/// `async_validate_entity_ids`: `all` or `none` as they are; otherwise ids
-/// (a comma-separated string or a list), each a valid entity id
-/// (lower-cased) or a registry id (resolved to its entity id), as a list.
-fn comp_entity_ids(v: &Value, registry: Option<&Registries>) -> Option<Value> {
+/// `cv.comp_entity_ids_or_uuids` on a rendered value: `all` or `none` as
+/// they are; otherwise ids (a comma-separated string or a list), each a
+/// valid entity id (lower-cased) or a registry id (resolved later, by
+/// [`resolve_ids`]), as a list.
+fn comp_entity_ids(v: &Value) -> Option<Value> {
     let one = |s: &str| {
         let s = s.trim();
         let lower = s.to_lowercase();
         if ha_core::valid_entity_id(&lower) {
             return Some(Value::String(lower));
         }
-        is_registry_id(s)
-            .then(|| resolve(registry, s))
-            .flatten()
-            .map(Value::String)
+        is_registry_id(s).then(|| Value::String(s.to_owned()))
     };
     match v {
         Value::String(s) => {

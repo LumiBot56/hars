@@ -384,6 +384,12 @@ impl TemplateTrigger {
         st.rate_timer = None;
         st.rate_last = Some(now);
         let home = sh.home();
+        // A render the feed doesn't wait for (a minute tick, a rate-limited
+        // change replayed): every change meanwhile is queued, so one to an
+        // entity this render starts to read is heard (HA renders and
+        // re-listens in one callback). Dropped once the new listeners are in.
+        let queued = (event.is_none() || replayed)
+            .then(|| sh.listeners.listen_all(st.next_seq, forward(&sh, tx)));
         drop(sh);
         let (t, v) = (self.template.clone(), self.vars.clone());
         let Some((result, read, mut out)) = ha_core::template::run::run(move || {
@@ -406,10 +412,12 @@ impl TemplateTrigger {
             failed: matches!(outcome, Outcome::Err(_)),
             read,
         };
+        #[cfg(test)]
+        gap::pause().await;
         let Some(sh) = shared.upgrade() else { return };
         st.time_listener(&sh);
         st.listen(&sh, tx);
-        drop(sh);
+        drop((sh, queued));
         if st.last.as_ref().is_some_and(|last| last.same(&outcome)) {
             return;
         }
@@ -725,6 +733,36 @@ impl NumericTemplate {
                 }
             }
             drop(guard);
+        }
+    }
+}
+
+/// A test's hold on a template trigger between its render and its new
+/// listeners, so a change can be made to land there.
+#[cfg(test)]
+pub(crate) mod gap {
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+    use tokio::sync::Notify;
+
+    /// (reached, go): a refresh says it has rendered, then waits.
+    type Hold = (Arc<Notify>, Arc<Notify>);
+
+    static HOLD: Mutex<Option<Hold>> = Mutex::new(None);
+
+    /// Hold the next refresh after its render: `reached` is told when it
+    /// is there, and it goes on when `go` is.
+    pub(crate) fn hold() -> Hold {
+        let pair = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+        *HOLD.lock() = Some(pair.clone());
+        pair
+    }
+
+    pub(super) async fn pause() {
+        let held = HOLD.lock().take();
+        if let Some((reached, go)) = held {
+            reached.notify_one();
+            go.notified().await;
         }
     }
 }

@@ -999,36 +999,18 @@ impl Automation {
                                     d.extend(m.clone());
                                 }
                             }
-                            let mut target = match target {
+                            let target = match target {
                                 Some(config::Complex::Static(Value::Object(t))) => Some(t.clone()),
                                 _ => None,
                             };
-                            // Only a target naming registry ids reads the
-                            // registry.
-                            match target
-                                .as_mut()
-                                .filter(|t| tpl::has_registry_ids(t))
-                                .map(|t| tpl::resolve_static(t, shared.registries().as_deref()))
-                            {
-                                Some(Err(e)) => Err(e),
-                                _ => Ok(tpl::Prepared {
-                                    domain: domain.clone(),
-                                    service: service.clone(),
-                                    data: d,
-                                    target,
-                                }),
-                            }
+                            Ok(tpl::Prepared::fixed(domain, service, d, target))
                         } else {
                             let (s, d, t, v) =
                                 (service.clone(), data.clone(), target.clone(), vars.clone());
-                            let (home, registry) = (shared.home(), shared.registries());
+                            let home = shared.home();
                             match ha_core::template::run::run(move || {
                                 let mut out = Out::default();
-                                let r = registry.as_deref();
-                                (
-                                    tpl::prepare(&s, &d, t.as_ref(), &home, &v, r, &mut out),
-                                    out,
-                                )
+                                (tpl::prepare(&s, &d, t.as_ref(), &home, &v, &mut out), out)
                             })
                             .await
                             {
@@ -1039,6 +1021,15 @@ impl Automation {
                                 None => Err("the template stopped unexpectedly".into()),
                             }
                         };
+                        // Registry ids resolve against the registry as it
+                        // is now, after any wait for a render (only a target
+                        // naming one reads it).
+                        let prepared = prepared.and_then(|mut p| {
+                            if p.shown.is_some() {
+                                tpl::resolve_ids(&mut p, shared.registries().as_deref())?;
+                            }
+                            Ok(p)
+                        });
                         // The call is made: the next change may be handled.
                         guard.take();
                         let result = match prepared {
