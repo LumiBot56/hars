@@ -358,7 +358,8 @@ Fixtures are sanitised (no tokens, coordinates rounded) before they are committe
       `now` as a local `datetime`), `this`, `variables` and
       `trigger_variables` (rendered limited); service calls render the
       action name, target and data with `render_complex` and
-      `_parse_result` (native numbers, lists, dicts) and HA's errors;
+      `_parse_result` (native numbers, lists, dicts) and HA's errors, a
+      target's entity registry ids resolved to entity ids;
       `template` conditions and the shorthand, `numeric_state`'s
       `value_template` (condition and trigger); the `template` trigger with
       `for`, re-rendered as `async_track_template_result` does (only on what
@@ -366,7 +367,7 @@ Fixtures are sanitised (no tokens, coordinates rounded) before they are committe
       and all-states rate limits); `choose` and `wait_for_trigger` with
       templates. Templates compile once when the config loads and render on
       the render threads `render_template` uses, never on the async
-      runtime. Matched against HA's own engine on 18 scenarios
+      runtime. Matched against HA's own engine on 19 scenarios
       (`scripts/vectors/automation_templates.py`), including the phone
       alert. Not yet, and refused when loading (the automation is
       `unavailable`, saying why): templates in `for`, `at` and `enabled`,

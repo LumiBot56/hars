@@ -33,6 +33,8 @@ pub(crate) struct Listeners {
     next: Mutex<u64>,
     map: Mutex<Map>,
     busy: Arc<Busy>,
+    #[cfg(test)]
+    delivered: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -120,6 +122,12 @@ impl Listeners {
     }
 
     /// A guard the feed waits for before the next change.
+    /// Changes handed to listeners so far (each listener counts once).
+    #[cfg(test)]
+    pub(crate) fn delivered(&self) -> usize {
+        self.delivered.load(Ordering::Relaxed)
+    }
+
     pub(crate) fn guard(&self) -> Guard {
         self.busy.count.fetch_add(1, Ordering::AcqRel);
         Guard(self.busy.clone())
@@ -157,6 +165,8 @@ impl Listeners {
         }
         cbs.sort_unstable_by_key(|(id, _)| *id);
         for (_, cb) in cbs {
+            #[cfg(test)]
+            self.delivered.fetch_add(1, Ordering::Relaxed);
             cb(seq, ev);
         }
         true

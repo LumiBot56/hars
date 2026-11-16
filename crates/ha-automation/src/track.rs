@@ -220,12 +220,13 @@ impl TemplateTrigger {
         shared: &Arc<Shared>,
         sink: Sink,
         since: u64,
-    ) -> (Listening, tokio::task::JoinHandle<()>) {
+    ) -> tokio::task::JoinHandle<()> {
         let (tx, rx) = mpsc::unbounded_channel();
+        // Every change from now is queued until the first render says what
+        // to listen to; this listener is then dropped (`State::listen`).
         let first = shared.listeners.listen_all(since, forward(shared, &tx));
         let weak = Arc::downgrade(shared);
-        let task = tokio::spawn(self.run(weak, tx, rx, since, sink, shared.turn()));
-        (first, task)
+        tokio::spawn(self.run(weak, tx, rx, (since, first), sink, shared.turn()))
     }
 
     async fn run(
@@ -233,7 +234,7 @@ impl TemplateTrigger {
         shared: Weak<Shared>,
         tx: mpsc::UnboundedSender<Msg>,
         mut rx: mpsc::UnboundedReceiver<Msg>,
-        since: u64,
+        (since, queued): (u64, Listening),
         sink: Sink,
         (before, turn): crate::Turn,
     ) {
@@ -285,7 +286,7 @@ impl TemplateTrigger {
             rate_last: None,
             rate_timer: None,
             tracking: None,
-            listening: Vec::new(),
+            listening: vec![queued],
             minute: None,
             armed,
             pending: None,

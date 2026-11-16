@@ -262,7 +262,23 @@ async fn replay(v: &Value, yaml: &[ha_core::yaml::Yaml], start: jiff::Timestamp)
     }
     settle().await;
     let items = v["automations"].as_array().unwrap().clone();
-    let autos = Automations::setup_yaml(&hass, &Registries::default(), yaml).await;
+    // The entity registry entries HA made, with their ids.
+    let entities = v["registry"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|e| {
+            let mut e = e.clone();
+            e["platform"] = json!("vectors");
+            Arc::new(serde_json::from_value(e).unwrap())
+        })
+        .collect();
+    let registries = Registries {
+        entities,
+        ..Default::default()
+    };
+    let autos = Automations::setup_yaml(&hass, &registries, yaml).await;
+    autos.set_registry(ha_registry::Registry::in_memory(&hass, registries));
     settle().await;
     hass.start();
     autos.started();
@@ -512,6 +528,9 @@ async fn a_template_trigger_sleeps_until_what_it_reads_changes() {
     };
     // The trigger's own render and the tracker's (which HA counts twice).
     assert_eq!(renders(), 3);
+    // Nobody listens to other entities: none of their changes is handed
+    // to the trigger (not even to be filtered out).
+    let delivered = autos.shared.listeners.delivered();
     for i in 0..50 {
         hass.set_state(
             EntityId::parse("sensor.other").unwrap(),
@@ -523,6 +542,11 @@ async fn a_template_trigger_sleeps_until_what_it_reads_changes() {
     tokio::time::sleep(Duration::from_secs(3600)).await;
     settle().await;
     assert_eq!(renders(), 3, "nothing it reads changed");
+    assert_eq!(
+        autos.shared.listeners.delivered(),
+        delivered,
+        "no change was delivered"
+    );
     hass.set_state(EntityId::parse("sensor.t").unwrap(), "28", Map::new());
     settle().await;
     assert_eq!(renders(), 5);

@@ -1705,6 +1705,201 @@
    ]
   },
   {
+   "name": "registry_id_targets",
+   "doc": "Rendered targets may name entities by their entity registry id (`comp_entity_ids_or_uuids`): resolved to the current entity id; an unknown one fails the call.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "by_registry_id",
+     "alias": "By registry id",
+     "variables": {
+      "selected": "1e2feb89414c343c1027c4d1c386bbc4"
+     },
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "binary_sensor.lounge_window",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "{{ selected }}"
+       }
+      },
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "{{ ['cd613e30d8f16adf91b7584a2265b1f5', 'light.hall'] }}"
+       }
+      },
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "{{ 'cd613e30d8f16adf91b7584a2265b1f5, light.hall' }}"
+       }
+      },
+      {
+       "action": "light.turn_off",
+       "target": {
+        "entity_id": "cd613e30d8f16adf91b7584a2265b1f5"
+       }
+      },
+      {
+       "action": "light.turn_off",
+       "target": {
+        "entity_id": "{{ '0123456789abcdef0123456789abcdef' }}"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 1
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.by_registry_id",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "light",
+     "service": "turn_on",
+     "data": {
+      "entity_id": [
+       "light.hall"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "light",
+     "service": "turn_on",
+     "data": {
+      "entity_id": [
+       "light.lounge",
+       "light.hall"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "light",
+     "service": "turn_on",
+     "data": {
+      "entity_id": [
+       "light.lounge",
+       "light.hall"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "light",
+     "service": "turn_off",
+     "data": {
+      "entity_id": [
+       "light.lounge"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.by_registry_id",
+     "msg": "By registry id: Error executing script. Error for call_service at pos 5: Template rendered invalid entity IDs: 0123456789abcdef0123456789abcdef"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.by_registry_id",
+     "msg": "Error while executing automation automation.by_registry_id: Template rendered invalid entity IDs: 0123456789abcdef0123456789abcdef"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "By registry id",
+      "entity_id": "automation.by_registry_id",
+      "source": "state of binary_sensor.lounge_window"
+     }
+    }
+   ],
+   "registry": [
+    {
+     "entity_id": "light.lounge",
+     "id": "cd613e30d8f16adf91b7584a2265b1f5"
+    },
+    {
+     "entity_id": "light.hall",
+     "id": "1e2feb89414c343c1027c4d1c386bbc4"
+    }
+   ]
+  },
+  {
    "name": "render_errors",
    "doc": "Templates that fail while running: in data (an error, an undefined value printed and used, data that isn't a dict), in the action name, in a target, and in a condition. Each stops that run; the next trigger runs again.",
    "states": [

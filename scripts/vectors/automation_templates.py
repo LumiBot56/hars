@@ -90,7 +90,8 @@ BASE_STATES = [
     set_("light.hall", "off", {"friendly_name": "Hall"}),
 ]
 
-# (name, doc, automations, steps[, initial states written over BASE_STATES])
+# (name, doc, automations, steps[, initial states written over BASE_STATES[,
+# entity ids to register, whose registry ids `<uuid:entity_id>` stands for]])
 SCENARIOS = [
     (
         "alert_numeric_state",
@@ -388,6 +389,34 @@ SCENARIOS = [
             }
         ],
         [set_("binary_sensor.lounge_window", "on"), wait(1)],
+    ),
+    (
+        "registry_id_targets",
+        "Rendered targets may name entities by their entity registry id "
+        "(`comp_entity_ids_or_uuids`): resolved to the current entity id; an "
+        "unknown one fails the call.",
+        [
+            {
+                "id": "by_registry_id",
+                "alias": "By registry id",
+                "variables": {"selected": "<uuid:light.hall>"},
+                "triggers": [{"trigger": "state", "entity_id": "binary_sensor.lounge_window",
+                              "to": "on"}],
+                "actions": [
+                    {"action": "light.turn_on", "target": {"entity_id": "{{ selected }}"}},
+                    {"action": "light.turn_on",
+                     "target": {"entity_id": "{{ ['<uuid:light.lounge>', 'light.hall'] }}"}},
+                    {"action": "light.turn_on",
+                     "target": {"entity_id": "{{ '<uuid:light.lounge>, light.hall' }}"}},
+                    {"action": "light.turn_off", "target": {"entity_id": "<uuid:light.lounge>"}},
+                    {"action": "light.turn_off",
+                     "target": {"entity_id": "{{ '0123456789abcdef0123456789abcdef' }}"}},
+                ],
+            }
+        ],
+        [set_("binary_sensor.lounge_window", "on"), wait(1)],
+        [],
+        ["light.lounge", "light.hall"],
     ),
     (
         "render_errors",
@@ -830,9 +859,12 @@ def plain(value):
     return f"<{type(value).__name__}> {value}"
 
 
-async def run(automations, steps, extra_states):
+async def run(automations, steps, extra_states, registered, registry):
+    """Run one scenario; `registry` gets the entity registry entries made
+    for `registered`, and `automations` their ids."""
     from homeassistant import bootstrap, core, loader
     from homeassistant.config_entries import ConfigEntries
+    from homeassistant.helpers import entity_registry as er
     from homeassistant.setup import async_setup_component
 
     random.seed(1)
@@ -865,6 +897,20 @@ async def run(automations, steps, extra_states):
             record("triggered", data=dict(event.data))
 
         hass.bus.async_listen("automation_triggered", triggered)
+        # Registry entries first (their states come after), then their ids
+        # where the automations say `<uuid:entity_id>`.
+        entries = er.async_get(hass)
+        for entity_id in registered:
+            domain, object_id = entity_id.split(".")
+            entry = entries.async_get_or_create(
+                domain, "vectors", object_id, suggested_object_id=object_id
+            )
+            assert entry.entity_id == entity_id, entry.entity_id
+            registry.append({"entity_id": entity_id, "id": entry.id})
+        text = json.dumps(automations)
+        for r in registry:
+            text = text.replace(f"<uuid:{r['entity_id']}>", r["id"])
+        automations[:] = json.loads(text)
         for s in BASE_STATES + extra_states:
             hass.states.async_set(s["entity_id"], s["state"], s["attributes"])
         assert await async_setup_component(hass, "homeassistant", {})
@@ -919,16 +965,22 @@ async def scenarios(rebind):
     for entry in SCENARIOS:
         name, doc, automations, steps = entry[:4]
         extra = entry[4] if len(entry) > 4 else []
+        registered = entry[5] if len(entry) > 5 else []
         rebind()
-        expected = await run(automations, steps, extra)
-        result.append({
+        automations = json.loads(json.dumps(automations))
+        registry = []
+        expected = await run(automations, steps, extra, registered, registry)
+        scenario = {
             "name": name,
             "doc": doc,
             "states": BASE_STATES + extra,
             "automations": automations,
             "steps": steps,
             "expected": expected,
-        })
+        }
+        if registry:
+            scenario["registry"] = registry
+        result.append(scenario)
     return result
 
 

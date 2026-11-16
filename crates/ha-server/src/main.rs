@@ -202,7 +202,7 @@ async fn run(thp_disabled: std::io::Result<bool>) -> anyhow::Result<()> {
             let items = ha_automation::from_config_yaml(config);
             let automations =
                 ha_automation::Automations::setup_yaml(&hass, &registries, &items).await;
-            automations.set_display_precision(registry.display_precision());
+            automations.set_registry(registry.clone());
             Some(automations)
         }
         None => None,

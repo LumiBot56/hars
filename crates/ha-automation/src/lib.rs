@@ -314,6 +314,8 @@ struct Shared {
     /// waits for it, so they set up (and log) in the order they attached,
     /// as HA's do.
     attach_chain: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    /// The live entity registry, once wired (`Automations::set_registry`).
+    registry: RwLock<Option<Arc<ha_registry::Registry>>>,
 }
 
 /// A rendering attachment's place in [`Shared::attach_chain`]: the one
@@ -326,6 +328,11 @@ pub(crate) type Turn = (
 impl Shared {
     fn home(&self) -> Home {
         self.home.read().clone()
+    }
+
+    /// The entity registry as it is now, if wired.
+    fn registries(&self) -> Option<Arc<Registries>> {
+        self.registry.read().as_ref().map(|r| r.snapshot())
     }
 
     /// The next place in [`Shared::attach_chain`].
@@ -563,7 +570,7 @@ fn attach_trigger(
             for_,
             renders,
         } => {
-            let (listening, task) = track::TemplateTrigger {
+            let task = track::TemplateTrigger {
                 trigger: t.clone(),
                 template: value_template.clone(),
                 for_: *for_,
@@ -573,7 +580,6 @@ fn attach_trigger(
                 renders: renders.0.clone(),
             }
             .spawn(shared, sink, since);
-            out.push(Attached::Listening(listening));
             out.push(Attached::Task(task));
         }
     }
@@ -993,23 +999,36 @@ impl Automation {
                                     d.extend(m.clone());
                                 }
                             }
-                            let target = match target {
+                            let mut target = match target {
                                 Some(config::Complex::Static(Value::Object(t))) => Some(t.clone()),
                                 _ => None,
                             };
-                            Ok(tpl::Prepared {
-                                domain: domain.clone(),
-                                service: service.clone(),
-                                data: d,
-                                target,
-                            })
+                            // Only a target naming registry ids reads the
+                            // registry.
+                            match target
+                                .as_mut()
+                                .filter(|t| tpl::has_registry_ids(t))
+                                .map(|t| tpl::resolve_static(t, shared.registries().as_deref()))
+                            {
+                                Some(Err(e)) => Err(e),
+                                _ => Ok(tpl::Prepared {
+                                    domain: domain.clone(),
+                                    service: service.clone(),
+                                    data: d,
+                                    target,
+                                }),
+                            }
                         } else {
                             let (s, d, t, v) =
                                 (service.clone(), data.clone(), target.clone(), vars.clone());
-                            let home = shared.home();
+                            let (home, registry) = (shared.home(), shared.registries());
                             match ha_core::template::run::run(move || {
                                 let mut out = Out::default();
-                                (tpl::prepare(&s, &d, t.as_ref(), &home, &v, &mut out), out)
+                                let r = registry.as_deref();
+                                (
+                                    tpl::prepare(&s, &d, t.as_ref(), &home, &v, r, &mut out),
+                                    out,
+                                )
                             })
                             .await
                             {
@@ -1405,6 +1424,7 @@ impl Automations {
             automations: Mutex::default(),
             home: RwLock::new(Home::new(hass.clone())),
             attach_chain: Mutex::default(),
+            registry: RwLock::default(),
         });
         // The state feed, to the listeners, one change at a time.
         {
@@ -1507,6 +1527,14 @@ impl Automations {
     /// `states(…, rounded=True)`.
     pub fn set_display_precision(&self, precision: DisplayPrecision) {
         self.shared.home.write().display_precision = Some(precision);
+    }
+
+    /// The live entity registry: what service calls resolve an entity
+    /// registry id in a target with (`async_validate_entity_ids`), and the
+    /// display precision templates read.
+    pub fn set_registry(&self, registry: Arc<ha_registry::Registry>) {
+        self.set_display_precision(registry.display_precision());
+        *self.shared.registry.write() = Some(registry);
     }
 
     /// The automation with this entity id.

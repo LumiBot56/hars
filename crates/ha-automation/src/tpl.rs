@@ -6,6 +6,7 @@
 use crate::cond::Out;
 use crate::config::{Complex, Service, Variable};
 use ha_core::template::{Home, TemplateError, Var, Vars};
+use ha_registry::Registries;
 use serde_json::{Map, Value};
 
 /// `render_complex(value, variables)`.
@@ -92,6 +93,7 @@ pub(crate) fn prepare(
     target: Option<&Complex>,
     home: &Home,
     vars: &Vars,
+    registry: Option<&Registries>,
     out: &mut Out,
 ) -> Result<Prepared, String> {
     let (domain, service) = match service {
@@ -118,7 +120,11 @@ pub(crate) fn prepare(
     };
     let target = match target {
         None => None,
-        Some(Complex::Static(Value::Object(t))) => Some(t.clone()),
+        Some(Complex::Static(Value::Object(t))) => {
+            let mut t = t.clone();
+            resolve_static(&mut t, registry)?;
+            Some(t)
+        }
         Some(c) => {
             let rendered = complex(c, home, vars, out)
                 .map_err(|e| format!("Error rendering service target template: {e}"))?;
@@ -133,7 +139,7 @@ pub(crate) fn prepare(
             };
             if let Some(ids) = t.get("entity_id") {
                 let shown = Var::json(ids).to_py_str();
-                let ids = comp_entity_ids(ids)
+                let ids = comp_entity_ids(ids, registry)
                     .ok_or_else(|| format!("Template rendered invalid entity IDs: {shown}"))?;
                 t.insert("entity_id".into(), ids);
             }
@@ -157,13 +163,68 @@ pub(crate) fn prepare(
     })
 }
 
-/// `cv.comp_entity_ids_or_uuids` on a rendered value: `all` or `none` as
-/// they are; otherwise ids (a comma-separated string or a list), each
-/// lower-cased and valid, as a list.
-fn comp_entity_ids(v: &Value) -> Option<Value> {
+/// `cv.fake_uuid4_hex`: an entity registry id (32 lower-case hex digits).
+fn is_registry_id(s: &str) -> bool {
+    s.len() == 32
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// `entity_registry.async_validate_entity_id` for a registry id: the
+/// entity id it has now, if the registry has it.
+fn resolve(registry: Option<&Registries>, id: &str) -> Option<String> {
+    registry?
+        .entities
+        .iter()
+        .find(|e| e.id.as_deref() == Some(id))
+        .map(|e| e.entity_id.clone())
+}
+
+/// Whether a static target names an entity by its registry id.
+pub(crate) fn has_registry_ids(target: &Map<String, Value>) -> bool {
+    matches!(target.get("entity_id"), Some(Value::Array(ids))
+        if ids.iter().any(|i| i.as_str().is_some_and(is_registry_id)))
+}
+
+/// A static target's entity registry ids, resolved as
+/// `async_prepare_call_from_config` resolves them (other ids as they
+/// are); an unknown one is HA's error.
+pub(crate) fn resolve_static(
+    target: &mut Map<String, Value>,
+    registry: Option<&Registries>,
+) -> Result<(), String> {
+    if !has_registry_ids(target) {
+        return Ok(());
+    }
+    let Some(Value::Array(ids)) = target.get_mut("entity_id") else {
+        return Ok(());
+    };
+    let shown = Var::json(&Value::Array(ids.clone())).to_py_str();
+    for id in ids.iter_mut() {
+        if let Some(s) = id.as_str().filter(|s| is_registry_id(s)) {
+            let entity = resolve(registry, s)
+                .ok_or_else(|| format!("Template rendered invalid entity IDs: {shown}"))?;
+            *id = Value::String(entity);
+        }
+    }
+    Ok(())
+}
+
+/// `cv.comp_entity_ids_or_uuids` on a rendered value, then
+/// `async_validate_entity_ids`: `all` or `none` as they are; otherwise ids
+/// (a comma-separated string or a list), each a valid entity id
+/// (lower-cased) or a registry id (resolved to its entity id), as a list.
+fn comp_entity_ids(v: &Value, registry: Option<&Registries>) -> Option<Value> {
     let one = |s: &str| {
-        let s = s.trim().to_lowercase();
-        ha_core::valid_entity_id(&s).then_some(Value::String(s))
+        let s = s.trim();
+        let lower = s.to_lowercase();
+        if ha_core::valid_entity_id(&lower) {
+            return Some(Value::String(lower));
+        }
+        is_registry_id(s)
+            .then(|| resolve(registry, s))
+            .flatten()
+            .map(Value::String)
     };
     match v {
         Value::String(s) => {
