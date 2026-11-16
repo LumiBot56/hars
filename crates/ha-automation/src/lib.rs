@@ -5,8 +5,8 @@
 //! How it runs, as HA 2026.6.1 does:
 //! - Triggers attach at `homeassistant_started` ([`Automations::started`]),
 //!   or at once when turned on later. State changes reach them from the
-//!   lossless state feed through listeners keyed by entity id; conditions
-//!   read the live state machine, so a batch an integration writes without
+//!   lossless state feed through listeners ([`listen`]); conditions read
+//!   the live state machine, so a batch an integration writes without
 //!   yielding is seen whole, as HA's `call_soon` dispatch sees it.
 //! - A trigger whose conditions pass starts a run (one task) at once:
 //!   `automation_triggered`, `last_triggered`, one state write; `single`
@@ -15,21 +15,59 @@
 //! - Time triggers sleep on the monotonic clock and re-check the wall clock
 //!   on waking: a clock stepped back never fires early, one stepped forward
 //!   fires late, as HA's timers do. Nothing polls.
+//!
+//! Templates, as HA's scripts use them (checked by `vectors/templates.json`,
+//! made by `scripts/vectors/automation_templates.py`):
+//! - **Variables.** A run's templates see `this` (the automation's state
+//!   as `State.as_dict` when it triggered), `trigger` (what the trigger
+//!   handed on: HA's `State` objects for `from_state`/`to_state`, a
+//!   `timedelta` for `for`, a local `datetime` for a time trigger's `now`),
+//!   the `variables` and `trigger_variables` rendered in order for the run
+//!   (an error stops it: `Error rendering variables`), the variables
+//!   `automation.trigger` passes, and `wait` after a `wait_for_trigger`.
+//!   `trigger_variables` render limited (no states, no clock) when the
+//!   triggers attach, for the triggers' own templates. An automation with
+//!   no template and no variable makes none of these.
+//! - **Service calls** render the action name, the target and the data
+//!   with `render_complex` and `_parse_result` (`{{ 5 }}` is the number 5),
+//!   and fail with HA's errors (`Error rendering data template: …`).
+//! - **Conditions** (`template`, its shorthand, `numeric_state`'s
+//!   `value_template`) and **triggers** (`template`, `numeric_state`'s
+//!   `value_template`, in [`track`]) render as HA's do.
+//! - Templates compile once, when the config loads ([`config`]); every
+//!   render runs on a render thread (`ha_core::template::run`, shared with
+//!   the WebSocket's `render_template`), never on the async runtime. What a
+//!   render logs is written back on the runtime, in order. A trigger whose
+//!   variables or conditions render does so before its run starts, in
+//!   trigger order; the state feed waits for that ([`listen`]), so the
+//!   next change is handled after it, as in HA.
+//!
+//! Deliberate differences: a render runs a moment after the change that
+//! caused it, so the states it reads may be newer than that change (as a
+//! condition's already may: see above); dict variables iterate their keys
+//! sorted (HA: in insertion order).
 
+mod cond;
 pub mod config;
+mod listen;
 mod time;
+mod tpl;
+mod track;
 
+use cond::Out;
 use config::{Action, Condition, Config, Mode, Trigger, TriggerKind};
+use ha_core::template::{DisplayPrecision, Home, Var, Vars};
 use ha_core::{
     Context, EntityId, Event, EventKind, Hass, Kind, Schema, ServiceError, State, SupportsResponse,
 };
 use ha_registry::Registries;
-use parking_lot::Mutex;
+use listen::{Guard, Listeners, Listening};
+use parking_lot::{Mutex, RwLock};
 use serde_json::{Map, Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use tokio::task::JoinHandle;
-use tokio::time::Instant;
 
 pub const DOMAIN: &str = "automation";
 
@@ -71,84 +109,6 @@ pub fn py_float(s: &str) -> Option<f64> {
     clean.parse().ok()
 }
 
-// ----- Listeners: state changes by entity id -----
-
-type Callback = Arc<dyn Fn(&Event) + Send + Sync>;
-
-/// A listener: (id, the first change it hears, callback).
-type Entry = (u64, u64, Callback);
-
-#[derive(Default)]
-struct Listeners {
-    next: Mutex<u64>,
-    /// Per entity: (id, the first change it hears, callback).
-    by_entity: Mutex<HashMap<String, Vec<Entry>>>,
-}
-
-/// A listener; dropping it unsubscribes.
-struct Listening {
-    listeners: Weak<Listeners>,
-    entity: String,
-    id: u64,
-}
-
-impl Drop for Listening {
-    fn drop(&mut self) {
-        if let Some(l) = self.listeners.upgrade() {
-            let mut map = l.by_entity.lock();
-            if let Some(v) = map.get_mut(&self.entity) {
-                v.retain(|(id, _, _)| *id != self.id);
-                if v.is_empty() {
-                    map.remove(&self.entity);
-                }
-            }
-        }
-    }
-}
-
-impl Listeners {
-    /// Listen to an entity's changes from `since` on (the state feed's
-    /// sequence when attaching: a change made earlier but still queued
-    /// isn't heard, as in HA, where it was dispatched before).
-    fn listen(self: &Arc<Self>, entity: &str, since: u64, cb: Callback) -> Listening {
-        let id = {
-            let mut n = self.next.lock();
-            *n += 1;
-            *n
-        };
-        self.by_entity
-            .lock()
-            .entry(entity.to_owned())
-            .or_default()
-            .push((id, since, cb));
-        Listening {
-            listeners: Arc::downgrade(self),
-            entity: entity.to_owned(),
-            id,
-        }
-    }
-
-    /// Every listener of the event's entity, in the order they attached.
-    /// Whether there were any.
-    fn dispatch(&self, seq: u64, ev: &Event) -> bool {
-        let EventKind::StateChanged { entity_id, .. } = &ev.kind else {
-            return false;
-        };
-        let cbs: Vec<Callback> = match self.by_entity.lock().get(entity_id.as_str()) {
-            Some(v) => v
-                .iter()
-                .filter(|(_, since, _)| seq >= *since)
-                .map(|(_, _, cb)| cb.clone())
-                .collect(),
-            None => return false,
-        };
-        for cb in cbs {
-            cb(ev);
-        }
-        true
-    }
-}
-
 /// A `state_changed` event's (old, new) states.
 type Change<'a> = (Option<&'a Arc<State>>, Option<&'a Arc<State>>);
 
@@ -163,16 +123,78 @@ fn change(ev: &Event) -> Option<Change<'_>> {
     }
 }
 
-// ----- Trigger variables and conditions -----
+// ----- Trigger variables -----
 
-/// What a trigger hands the run (`trigger` variables). Only `id` and the
-/// description are read by the supported config.
+/// What a trigger hands the run: what the engine reads (`id`, the
+/// description) and, when templates may read it, HA's `trigger` variable.
 #[derive(Debug, Clone)]
 pub struct TriggerVars {
     pub id: String,
     pub idx: String,
+    pub alias: Option<String>,
     pub platform: Option<&'static str>,
     pub description: Option<String>,
+    /// HA's `trigger` dict.
+    pub var: Option<Var>,
+    /// The variables `automation.trigger` was called with.
+    pub extra: Option<Map<String, Value>>,
+}
+
+/// Where a fired trigger goes: an automation's run, or a waiting step.
+pub(crate) type Sink = Arc<dyn Fn(TriggerVars, Option<Context>) + Send + Sync>;
+
+/// `trigger`: the trigger's data (`id`, `idx`, `alias`), its platform, and
+/// what the platform adds.
+pub(crate) fn trigger_var(t: &Trigger, platform: &str, fields: Vec<(&str, Var)>) -> Var {
+    let mut entries = vec![
+        ("id".to_owned(), Var::str(&t.id)),
+        ("idx".to_owned(), Var::str(&t.idx.to_string())),
+        (
+            "alias".to_owned(),
+            t.alias.as_deref().map_or_else(Var::none, Var::str),
+        ),
+        ("platform".to_owned(), Var::str(platform)),
+    ];
+    entries.extend(fields.into_iter().map(|(k, v)| (k.to_owned(), v)));
+    Var::dict(entries)
+}
+
+/// A `numeric_state` trigger's firing.
+pub(crate) fn numeric_vars(
+    t: &Trigger,
+    entity: &str,
+    below: Option<f64>,
+    above: Option<f64>,
+    old: Option<&Arc<State>>,
+    new: &Arc<State>,
+    templated: bool,
+) -> TriggerVars {
+    let description = format!("numeric state of {entity}");
+    let float = |f: Option<f64>| f.map_or_else(Var::none, Var::float);
+    let var = templated.then(|| {
+        trigger_var(
+            t,
+            "numeric_state",
+            vec![
+                ("entity_id", Var::str(entity)),
+                ("below", float(below)),
+                ("above", float(above)),
+                ("from_state", Var::opt_state(old)),
+                ("to_state", Var::state(new.clone())),
+                ("for", Var::none()),
+                ("description", Var::str(&description)),
+            ],
+        )
+    });
+    TriggerVars {
+        id: t.id.clone(),
+        idx: t.idx.to_string(),
+        alias: t.alias.clone(),
+        platform: Some("numeric_state"),
+        description: Some(description),
+        var,
+        extra: None,
+    }
 }
 
 fn logger(entity_id: &EntityId) -> String {
@@ -182,90 +204,30 @@ fn logger(entity_id: &EntityId) -> String {
     )
 }
 
-/// `async_numeric_state` for one entity: `Ok(false)` for `unknown` or
-/// `unavailable`, `Err` for an absent entity or a non-number.
-fn numeric(hass: &Hass, eid: &str, below: Option<f64>, above: Option<f64>) -> Result<bool, String> {
-    let state = EntityId::parse(eid)
-        .ok()
-        .and_then(|id| hass.states().get(&id))
-        .ok_or_else(|| format!("In 'numeric_state' condition: unknown entity {eid}"))?;
-    numeric_of(&state, below, above)
-}
-
-fn numeric_of(state: &State, below: Option<f64>, above: Option<f64>) -> Result<bool, String> {
-    let s = state.state.as_str();
-    if matches!(s, "unavailable" | "unknown") {
-        return Ok(false);
-    }
-    let v = py_float(s).ok_or_else(|| {
-        format!(
-            "In 'numeric_state' condition: entity {} state '{s}' cannot be processed as a number",
-            state.entity_id
-        )
-    })?;
-    Ok(!(below.is_some_and(|b| v >= b) || above.is_some_and(|a| v <= a)))
-}
-
-fn check(hass: &Hass, c: &Condition, vars: &TriggerVars) -> Result<bool, String> {
-    match c {
-        Condition::NumericState {
-            entity_ids,
-            below,
-            above,
-        } => {
-            for e in entity_ids {
-                if !numeric(hass, e, *below, *above)? {
-                    return Ok(false);
-                }
-            }
-            Ok(true)
-        }
-        Condition::State { entity_ids, states } => {
-            for e in entity_ids {
-                let s = EntityId::parse(e)
-                    .ok()
-                    .and_then(|id| hass.states().get(&id))
-                    .ok_or_else(|| format!("In 'state' condition: unknown entity {e}"))?;
-                if !states.iter().any(|x| x == s.state.as_str()) {
-                    return Ok(false);
-                }
-            }
-            Ok(true)
-        }
-        Condition::Time { after, before } => {
-            let now = time::local_now(hass).time();
-            let after = after.unwrap_or(jiff::civil::Time::midnight());
-            let before = before.unwrap_or(jiff::civil::Time::MAX);
-            Ok(if after < before {
-                after <= now && now < before
-            } else {
-                !(before <= now && now < after)
-            })
-        }
-        Condition::Trigger { ids } => Ok(ids.contains(&vars.id)),
-    }
-}
-
-/// `ConditionsChecker`: AND, stopping at the first false; an error counts
-/// as false, with HA's warning when nothing else was false.
-fn conditions_pass(hass: &Hass, alias: &str, conds: &[Condition], vars: &TriggerVars) -> bool {
-    let mut errors = Vec::new();
-    for c in conds {
-        match check(hass, c, vars) {
-            Ok(true) => {}
-            Ok(false) => return false,
-            Err(e) => errors.push(e),
-        }
-    }
-    if !errors.is_empty() {
-        tracing::warn!(
-            logger = "homeassistant.helpers.condition",
-            "Error evaluating condition in '{alias}':\n{}",
-            errors.join("\n")
-        );
-        return false;
-    }
-    true
+/// `this`: the automation's state as `State.as_dict` (its
+/// `last_triggered` a `datetime`, as HA keeps it).
+fn this_var(hass: &Hass, entity_id: &EntityId) -> Var {
+    let Some(state) = hass.states().get(entity_id) else {
+        return Var::none();
+    };
+    let Ok(Value::Object(dict)) = serde_json::to_value(&*state) else {
+        return Var::none();
+    };
+    Var::dict(dict.into_iter().map(|(k, v)| {
+        let value = match (k.as_str(), v) {
+            ("attributes", Value::Object(attrs)) => Var::dict(attrs.into_iter().map(|(a, x)| {
+                let x = match (a.as_str(), &x) {
+                    ("last_triggered", Value::String(t)) => t
+                        .parse::<jiff::Timestamp>()
+                        .map_or_else(|_| Var::json(&x), |t| Var::datetime(t, "UTC")),
+                    _ => Var::json(&x),
+                };
+                (a, x)
+            })),
+            (_, v) => Var::json(&v),
+        };
+        (k, value)
+    }))
 }
 
 // ----- Automations -----
@@ -283,6 +245,11 @@ struct Live {
     next_run: u64,
     /// Listeners and timers of the attached triggers.
     attached: Vec<Attached>,
+    /// Counts detachments: an attachment still rendering its
+    /// `trigger_variables` attaches only if none happened since.
+    generation: u64,
+    /// An attachment is rendering its `trigger_variables`.
+    attaching: bool,
     /// The context the entity writes with, and when it was set.
     context: Option<(Context, jiff::Timestamp)>,
 }
@@ -299,7 +266,7 @@ impl Drop for Attached {
         match self {
             Attached::Task(h) => h.abort(),
             Attached::Pending(p) => {
-                if let Some((_, h)) = p.lock().take() {
+                for (_, _, h) in p.lock().drain(..) {
                     h.abort();
                 }
             }
@@ -308,8 +275,9 @@ impl Drop for Attached {
     }
 }
 
-/// A state trigger's pending `for`: the value waited on, and its timer.
-type PendingFor = Arc<Mutex<Option<(String, JoinHandle<()>)>>>;
+/// A state trigger's pending `for`s: each one's id, the value it waits on,
+/// and its timer.
+type PendingFor = Arc<Mutex<Vec<(u64, String, JoinHandle<()>)>>>;
 
 /// How a run is asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -329,20 +297,300 @@ pub struct Automation {
     /// if HA couldn't encode it either).
     pub raw: Option<String>,
     /// The validated config, or why it isn't valid (`unavailable`).
-    config: Result<Config, String>,
+    config: Result<Arc<Config>, String>,
     live: Mutex<Live>,
+    /// Triggers waiting for their variables or conditions to render go
+    /// through one at a time, in order.
+    gate: tokio::sync::Mutex<()>,
 }
 
 struct Shared {
     hass: Hass,
     listeners: Arc<Listeners>,
     automations: Mutex<Vec<Arc<Automation>>>,
+    /// What templates read.
+    home: RwLock<Home>,
+    /// The last attachment that renders when it attaches: the next one
+    /// waits for it, so they set up (and log) in the order they attached,
+    /// as HA's do.
+    attach_chain: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+}
+
+/// A rendering attachment's place in [`Shared::attach_chain`]: the one
+/// before it, and its own (dropped when it has set up).
+pub(crate) type Turn = (
+    Option<tokio::sync::oneshot::Receiver<()>>,
+    tokio::sync::oneshot::Sender<()>,
+);
+
+impl Shared {
+    fn home(&self) -> Home {
+        self.home.read().clone()
+    }
+
+    /// The next place in [`Shared::attach_chain`].
+    pub(crate) fn turn(&self) -> Turn {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        (self.attach_chain.lock().replace(rx), tx)
+    }
 }
 
 /// Every automation, its listeners and its services.
 #[derive(Clone)]
 pub struct Automations {
     shared: Arc<Shared>,
+}
+
+/// Attach one trigger: its listeners or timers go in `out`, and its
+/// firings to `sink`. `vars` are what its templates render with (`this`,
+/// `trigger_variables`, or a waiting run's variables); `templated` says
+/// whether to make the `trigger` variable; `since` is the first change it
+/// hears.
+#[allow(clippy::too_many_arguments)]
+fn attach_trigger(
+    shared: &Arc<Shared>,
+    name: &str,
+    t: &Trigger,
+    vars: &Arc<Vars>,
+    templated: bool,
+    sink: Sink,
+    since: u64,
+    out: &mut Vec<Attached>,
+) {
+    let make = |description: String, platform: &'static str, var: Option<Var>| TriggerVars {
+        id: t.id.clone(),
+        idx: t.idx.to_string(),
+        alias: t.alias.clone(),
+        platform: Some(platform),
+        description: Some(description),
+        var,
+        extra: None,
+    };
+    match &t.kind {
+        TriggerKind::State {
+            entity_ids,
+            to,
+            for_,
+            match_all,
+        } => {
+            for e in entity_ids {
+                let (to, for_, match_all, sink) = (to.clone(), *for_, *match_all, sink.clone());
+                let description = format!("state of {e}");
+                let t = t.clone();
+                let fire = move |old: Option<&Arc<State>>, new: &Arc<State>| {
+                    let var = templated.then(|| {
+                        trigger_var(
+                            &t,
+                            "state",
+                            vec![
+                                ("entity_id", Var::str(new.entity_id.as_str())),
+                                ("from_state", Var::opt_state(old)),
+                                ("to_state", Var::state(new.clone())),
+                                ("for", for_.map_or_else(Var::none, Var::timedelta)),
+                                ("attribute", Var::none()),
+                                ("description", Var::str(&description)),
+                            ],
+                        )
+                    });
+                    TriggerVars {
+                        id: t.id.clone(),
+                        idx: t.idx.to_string(),
+                        alias: t.alias.clone(),
+                        platform: Some("state"),
+                        description: Some(description.clone()),
+                        var,
+                        extra: None,
+                    }
+                };
+                // With `for`: the pending firings (id, value, timer).
+                let pending: PendingFor = Arc::default();
+                let next_pending = Arc::new(AtomicU64::new(0));
+                out.push(Attached::Pending(pending.clone()));
+                out.push(Attached::Listening(shared.listeners.listen(
+                    e,
+                    since,
+                    Arc::new(move |_, ev| {
+                        let Some((old, new)) = change(ev) else { return };
+                        // `async_track_same_state`: another value (or
+                        // removal) cancels each pending `for`.
+                        let new_s = new.map(|n| n.state.as_str());
+                        pending.lock().retain(|(_, v, h)| {
+                            let same = Some(v.as_str()) == new_s;
+                            if !same {
+                                h.abort();
+                            }
+                            same
+                        });
+                        let Some(new) = new else { return };
+                        let new_s = new.state.as_str();
+                        let to_ok = to.as_ref().is_none_or(|t| t.iter().any(|x| x == new_s));
+                        // With no `to`, any change fires (an attribute's
+                        // too); with one, only a new state.
+                        let same = old.map(|s| s.state.as_str()) == Some(new_s);
+                        if !to_ok || (!match_all && same) {
+                            return;
+                        }
+                        let vars = fire(old, new);
+                        match for_ {
+                            None => sink(vars, Some(new.context.clone())),
+                            Some(d) => {
+                                let (sink, ctx) = (sink.clone(), new.context.clone());
+                                let p2 = pending.clone();
+                                // One timer per change: a pending one for
+                                // the same value (an attribute change with
+                                // no `to`) runs on, as HA's does.
+                                let mut p = pending.lock();
+                                let id = next_pending.fetch_add(1, Ordering::Relaxed);
+                                let h = tokio::spawn(async move {
+                                    tokio::time::sleep(d).await;
+                                    p2.lock().retain(|(i, _, _)| *i != id);
+                                    sink(vars, Some(ctx));
+                                });
+                                p.push((id, new_s.to_owned(), h));
+                            }
+                        }
+                    }),
+                )));
+            }
+        }
+        TriggerKind::NumericState {
+            entity_ids,
+            below,
+            above,
+            value_template: Some(template),
+        } => {
+            let (listening, task) = track::NumericTemplate {
+                trigger: t.clone(),
+                entity_ids: entity_ids.clone(),
+                below: *below,
+                above: *above,
+                template: template.clone(),
+                name: name.to_owned(),
+                vars: vars.clone(),
+                templated,
+            }
+            .spawn(shared, sink, since);
+            out.extend(listening.into_iter().map(Attached::Listening));
+            out.push(Attached::Task(task));
+        }
+        TriggerKind::NumericState {
+            entity_ids,
+            below,
+            above,
+            value_template: None,
+        } => {
+            let hass = &shared.hass;
+            let armed: Arc<Mutex<HashSet<String>>> = Arc::default();
+            for e in entity_ids {
+                // At attach: armed unless it matches already; an error
+                // (absent, not a number) leaves it unarmed.
+                match cond::numeric(hass, e, *below, *above, None) {
+                    Ok(false) => {
+                        armed.lock().insert(e.clone());
+                    }
+                    Ok(true) => {}
+                    Err(err) => tracing::warn!(
+                        logger = "homeassistant.components.homeassistant.triggers.numeric_state",
+                        "Error initializing '{name}' trigger: {err}"
+                    ),
+                }
+                let (armed, e2, sink) = (armed.clone(), e.clone(), sink.clone());
+                let (below, above) = (*below, *above);
+                let (name, t) = (name.to_owned(), t.clone());
+                out.push(Attached::Listening(shared.listeners.listen(
+                    e,
+                    since,
+                    Arc::new(move |_, ev| {
+                        let Some((old, Some(new))) = change(ev) else {
+                            return;
+                        };
+                        match cond::numeric_of(new, below, above, None) {
+                            Err(err) => tracing::warn!(
+                                logger =
+                                    "homeassistant.components.homeassistant.triggers.numeric_state",
+                                "Error in '{name}' trigger: {err}"
+                            ),
+                            Ok(false) => {
+                                armed.lock().insert(e2.clone());
+                            }
+                            Ok(true) => {
+                                if armed.lock().remove(&e2) {
+                                    let vars =
+                                        numeric_vars(&t, &e2, below, above, old, new, templated);
+                                    sink(vars, Some(new.context.clone()));
+                                }
+                            }
+                        }
+                    }),
+                )));
+            }
+        }
+        TriggerKind::Time { at } => {
+            for at in at {
+                let (at, sink) = (*at, sink.clone());
+                let hass = shared.hass.clone();
+                let t = t.clone();
+                out.push(Attached::Task(tokio::spawn(async move {
+                    // HA's tracker: a random 50-500 ms past the second,
+                    // fixed for the tracker's life.
+                    let micro = rand::random_range(50_000..=500_000);
+                    let mut from = hass.clock().now();
+                    loop {
+                        let Some(next) = time::next_local(&hass, from, at, micro) else {
+                            return;
+                        };
+                        time::sleep_until_wall(&hass, next).await;
+                        let var = templated.then(|| {
+                            let tz = hass.config().time_zone.clone();
+                            trigger_var(
+                                &t,
+                                "time",
+                                vec![
+                                    ("now", Var::datetime(hass.clock().now(), &tz)),
+                                    ("description", Var::str("time")),
+                                    ("entity_id", Var::none()),
+                                ],
+                            )
+                        });
+                        sink(make_time(&t, var), None);
+                        from = hass.clock().now() + jiff::SignedDuration::from_secs(1);
+                    }
+                })));
+            }
+        }
+        TriggerKind::Template {
+            value_template,
+            for_,
+            renders,
+        } => {
+            let (listening, task) = track::TemplateTrigger {
+                trigger: t.clone(),
+                template: value_template.clone(),
+                for_: *for_,
+                name: name.to_owned(),
+                vars: vars.clone(),
+                templated,
+                renders: renders.0.clone(),
+            }
+            .spawn(shared, sink, since);
+            out.push(Attached::Listening(listening));
+            out.push(Attached::Task(task));
+        }
+    }
+    let _ = make;
+}
+
+/// A time trigger's firing.
+fn make_time(t: &Trigger, var: Option<Var>) -> TriggerVars {
+    TriggerVars {
+        id: t.id.clone(),
+        idx: t.idx.to_string(),
+        alias: t.alias.clone(),
+        platform: Some("time"),
+        description: Some("time".into()),
+        var,
+        extra: None,
+    }
 }
 
 impl Automation {
@@ -352,6 +600,10 @@ impl Automation {
 
     fn mode(&self) -> Mode {
         self.config.as_ref().map_or(Mode::Single, |c| c.mode)
+    }
+
+    fn templated(&self) -> bool {
+        self.config.as_ref().is_ok_and(|c| c.templated)
     }
 
     fn attributes(&self, live: &Live) -> Map<String, Value> {
@@ -399,17 +651,101 @@ impl Automation {
         live.context = Some((ctx.clone(), now));
     }
 
-    /// Attach the triggers (enabled, valid, not yet attached).
+    /// Where this automation's triggers fire.
+    fn sink(self: &Arc<Self>) -> Sink {
+        let me = Arc::downgrade(self);
+        Arc::new(move |vars, ctx| {
+            if let Some(a) = me.upgrade() {
+                a.fired(vars, ctx.as_ref(), Fire::Trigger);
+            }
+        })
+    }
+
+    /// Attach the triggers (enabled, valid, not yet attached), with `this`
+    /// and the `trigger_variables` (`_async_attach_triggers`).
     fn attach(self: &Arc<Self>) {
         let (Ok(cfg), Some(shared)) = (&self.config, self.shared.upgrade()) else {
             return;
         };
         let mut live = self.live.lock();
-        if !live.enabled || !live.attached.is_empty() {
+        if !live.enabled || !live.attached.is_empty() || live.attaching {
             return;
         }
+        let since = shared.hass.states().seq();
+        let mut vars = Vars::new();
+        if cfg.templated {
+            vars.insert("this".into(), this_var(&shared.hass, &self.entity_id));
+        }
+        if cfg.trigger_variables.iter().all(|v| v.value.is_static()) {
+            tpl::static_variables(&cfg.trigger_variables, &mut vars);
+            self.attach_with(&shared, cfg, &Arc::new(vars), since, &mut live);
+            return;
+        }
+        // The variables render first (limited), on a render thread; the
+        // state feed waits.
+        live.attaching = true;
+        let generation = live.generation;
+        drop(live);
+        let guard = shared.listeners.guard();
+        let (me, cfg, home) = (self.clone(), cfg.clone(), shared.home());
+        tokio::spawn(async move {
+            let defs = cfg.trigger_variables.clone();
+            let rendered = ha_core::template::run::run(move || {
+                let mut out = Out::default();
+                (tpl::variables(&defs, vars, &home, &mut out), out)
+            })
+            .await;
+            let Some(shared) = me.shared.upgrade() else {
+                return;
+            };
+            let mut live = me.live.lock();
+            live.attaching = false;
+            if live.generation != generation {
+                // Turned off (and maybe on again) meanwhile: start over.
+                drop(live);
+                me.attach();
+                return;
+            }
+            let Some((rendered, mut out)) = rendered else {
+                return;
+            };
+            out.emit();
+            match rendered {
+                Err(e) => tracing::error!(
+                    logger = logger(&me.entity_id),
+                    "Error rendering trigger variables: {e}"
+                ),
+                Ok(vars) => {
+                    if live.enabled && live.attached.is_empty() {
+                        me.attach_with(&shared, &cfg, &Arc::new(vars), since, &mut live);
+                    }
+                }
+            }
+            drop(live);
+            drop(guard);
+        });
+    }
+
+    fn attach_with(
+        self: &Arc<Self>,
+        shared: &Arc<Shared>,
+        cfg: &Config,
+        vars: &Arc<Vars>,
+        since: u64,
+        live: &mut Live,
+    ) {
+        let sink = self.sink();
         for t in &cfg.triggers {
-            self.attach_trigger(&shared, t, &mut live.attached);
+            attach_trigger(
+                shared,
+                &self.name,
+                t,
+                vars,
+                cfg.templated,
+                sink.clone(),
+                since,
+                &mut live.attached,
+            );
         }
         tracing::info!(
             logger = logger(&self.entity_id),
@@ -418,165 +754,19 @@ impl Automation {
         );
     }
 
-    fn attach_trigger(
-        self: &Arc<Self>,
-        shared: &Arc<Shared>,
-        t: &Trigger,
-        out: &mut Vec<Attached>,
-    ) {
-        let me = Arc::downgrade(self);
-        let vars = |description: String, platform| TriggerVars {
-            id: t.id.clone(),
-            idx: t.idx.to_string(),
-            platform: Some(platform),
-            description: Some(description),
-        };
-        match &t.kind {
-            TriggerKind::State {
-                entity_ids,
-                to,
-                for_,
-                ..
-            } => {
-                for e in entity_ids {
-                    let (me, to, for_) = (me.clone(), to.clone(), *for_);
-                    let v = vars(format!("state of {e}"), "state");
-                    // With `for`: the pending firing (value, timer); any
-                    // other value (or removal) cancels it.
-                    let pending: PendingFor = Arc::default();
-                    out.push(Attached::Pending(pending.clone()));
-                    out.push(Attached::Listening(shared.listeners.listen(
-                        e,
-                        shared.hass.states().seq(),
-                        Arc::new(move |ev| {
-                            let Some((old, new)) = change(ev) else { return };
-                            let new_s = new.map(|n| n.state.to_string());
-                            {
-                                let mut p = pending.lock();
-                                if p.as_ref().is_some_and(|(v, _)| Some(v) != new_s.as_ref())
-                                    && let Some((_, h)) = p.take()
-                                {
-                                    h.abort();
-                                }
-                            }
-                            let Some(new) = new else { return };
-                            let old = old.map(|s| s.state.as_str());
-                            let new_s = new.state.as_str();
-                            let to_ok = to.as_ref().is_none_or(|t| t.iter().any(|x| x == new_s));
-                            if !to_ok || old == Some(new_s) {
-                                return;
-                            }
-                            match for_ {
-                                None => {
-                                    if let Some(a) = me.upgrade() {
-                                        a.fired(v.clone(), Some(&new.context), Fire::Trigger);
-                                    }
-                                }
-                                Some(d) => {
-                                    let (me, v, ctx) = (me.clone(), v.clone(), new.context.clone());
-                                    let p2 = pending.clone();
-                                    let h = tokio::spawn(async move {
-                                        tokio::time::sleep(d).await;
-                                        p2.lock().take();
-                                        if let Some(a) = me.upgrade() {
-                                            a.fired(v, Some(&ctx), Fire::Trigger);
-                                        }
-                                    });
-                                    *pending.lock() = Some((new_s.to_owned(), h));
-                                }
-                            }
-                        }),
-                    )));
-                }
-            }
-            TriggerKind::NumericState {
-                entity_ids,
-                below,
-                above,
-            } => {
-                let hass = &shared.hass;
-                let armed: Arc<Mutex<HashSet<String>>> = Arc::default();
-                for e in entity_ids {
-                    // At attach: armed unless it matches already; an error
-                    // (absent, not a number) leaves it unarmed.
-                    match numeric(hass, e, *below, *above) {
-                        Ok(false) => {
-                            armed.lock().insert(e.clone());
-                        }
-                        Ok(true) => {}
-                        Err(err) => tracing::warn!(
-                            logger =
-                                "homeassistant.components.homeassistant.triggers.numeric_state",
-                            "Error initializing '{}' trigger: {err}",
-                            self.name
-                        ),
-                    }
-                    let (me, armed, e2) = (me.clone(), armed.clone(), e.clone());
-                    let (below, above) = (*below, *above);
-                    let v = vars(format!("numeric state of {e}"), "numeric_state");
-                    let name = self.name.clone();
-                    out.push(Attached::Listening(shared.listeners.listen(
-                        e,
-                        shared.hass.states().seq(),
-                        Arc::new(move |ev| {
-                            let Some((_, Some(new))) = change(ev) else { return };
-                            match numeric_of(new, below, above) {
-                                Err(err) => tracing::warn!(
-                                    logger = "homeassistant.components.homeassistant.triggers.numeric_state",
-                                    "Error in '{name}' trigger: {err}"
-                                ),
-                                Ok(false) => {
-                                    armed.lock().insert(e2.clone());
-                                }
-                                Ok(true) => {
-                                    if armed.lock().remove(&e2)
-                                        && let Some(a) = me.upgrade()
-                                    {
-                                        a.fired(v.clone(), Some(&new.context), Fire::Trigger);
-                                    }
-                                }
-                            }
-                        }),
-                    )));
-                }
-            }
-            TriggerKind::Time { at } => {
-                for at in at {
-                    let (me, at) = (me.clone(), *at);
-                    let v = vars("time".into(), "time");
-                    let hass = shared.hass.clone();
-                    out.push(Attached::Task(tokio::spawn(async move {
-                        // HA's tracker: a random 50-500 ms past the second,
-                        // fixed for the tracker's life.
-                        let micro = rand::random_range(50_000..=500_000);
-                        let mut from = hass.clock().now();
-                        loop {
-                            let Some(next) = time::next_local(&hass, from, at, micro) else {
-                                return;
-                            };
-                            time::sleep_until_wall(&hass, next).await;
-                            let Some(a) = me.upgrade() else { return };
-                            a.fired(v.clone(), None, Fire::Trigger);
-                            from = hass.clock().now() + jiff::SignedDuration::from_secs(1);
-                        }
-                    })));
-                }
-            }
-        }
-    }
-
-    /// `async_trigger`: conditions (unless skipped), then the mode, the
-    /// event, `last_triggered` and a write, then the run. Returns the run
-    /// (to await, for `automation.trigger`).
+    /// `async_trigger`: `this`, the variables and the conditions (unless
+    /// skipped), then the mode, the event, `last_triggered` and a write,
+    /// then the run. Returns the run (to await, for `automation.trigger`).
     fn fired(
         self: &Arc<Self>,
         vars: TriggerVars,
         parent: Option<&Context>,
         how: Fire,
     ) -> Option<tokio::sync::oneshot::Receiver<()>> {
-        let (Ok(cfg), Some(hass)) = (&self.config, self.hass()) else {
+        let (Ok(cfg), Some(shared)) = (&self.config, self.shared.upgrade()) else {
             return None;
         };
+        let hass = shared.hass.clone();
         // `_async_trigger_if_enabled`: a trigger that raced `turn_off`.
         if how == Fire::Trigger && !self.live.lock().enabled {
             return None;
@@ -592,17 +782,121 @@ impl Automation {
         let now = hass.clock().now();
         let mut ctx = Context::at(now);
         ctx.parent_id = parent.map(|p| p.id);
-        if !skip_conditions && !conditions_pass(&hass, &self.name, &cfg.conditions, &vars) {
-            tracing::debug!(logger = log, "Conditions not met, aborting automation.");
-            return None;
+        // `{"this": this, **run_variables}`.
+        let mut run_vars = Vars::new();
+        if cfg.templated {
+            run_vars.insert("this".into(), this_var(&hass, &self.entity_id));
+            for (k, v) in vars.extra.iter().flatten() {
+                run_vars.insert(k.clone(), Var::json(v));
+            }
+            let trigger = vars
+                .var
+                .clone()
+                .unwrap_or_else(|| Var::dict([("platform".to_owned(), Var::none())]));
+            run_vars.insert("trigger".into(), trigger);
         }
+        // Made when the run ends (or never runs), which is what
+        // `automation.trigger` waits for.
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+        let renders = cfg.variables.iter().any(|v| !v.value.is_static())
+            || (!skip_conditions && cfg.conditions.iter().any(Condition::has_template));
+        if !renders {
+            tpl::static_variables(&cfg.variables, &mut run_vars);
+            if !skip_conditions {
+                let (pass, warning) = cond::all(&hass, &cfg.conditions, &vars.id, None);
+                if let Some(w) = warning {
+                    self.condition_warning(&w);
+                }
+                if !pass {
+                    tracing::debug!(logger = log, "Conditions not met, aborting automation.");
+                    return None;
+                }
+            }
+            self.start(vars, run_vars, ctx, done_tx, None);
+            return Some(done_rx);
+        }
+        // Rendered on a render thread, one trigger at a time; the state
+        // feed waits.
+        let guard = shared.listeners.guard();
+        let (me, cfg, home) = (self.clone(), cfg.clone(), shared.home());
+        tokio::spawn(async move {
+            let _gate = me.gate.lock().await;
+            let id = vars.id.clone();
+            let job_cfg = cfg.clone();
+            let job = ha_core::template::run::run(move || {
+                let mut out = Out::default();
+                let rendered = tpl::variables(&job_cfg.variables, run_vars, &home, &mut out);
+                let checked = match &rendered {
+                    Ok(v) if !skip_conditions => Some(cond::all(
+                        &hass,
+                        &job_cfg.conditions,
+                        &id,
+                        Some((&home, v, &mut out)),
+                    )),
+                    _ => None,
+                };
+                (rendered, checked, out)
+            })
+            .await;
+            let Some((rendered, checked, mut out)) = job else {
+                return;
+            };
+            out.emit();
+            let run_vars = match rendered {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!(logger = log, "Error rendering variables: {e}");
+                    return;
+                }
+            };
+            if let Some((pass, warning)) = checked {
+                if let Some(w) = warning {
+                    me.condition_warning(&w);
+                }
+                if !pass {
+                    tracing::debug!(logger = log, "Conditions not met, aborting automation.");
+                    return;
+                }
+            }
+            // Turned off while it rendered.
+            if how == Fire::Trigger && !me.live.lock().enabled {
+                return;
+            }
+            me.start(vars, run_vars, ctx, done_tx, Some(guard));
+        });
+        Some(done_rx)
+    }
+
+    /// `ConditionsChecker`'s warning.
+    fn condition_warning(&self, errors: &str) {
+        tracing::warn!(
+            logger = "homeassistant.components.automation",
+            "Error evaluating condition in '{}':\n{errors}",
+            self.name
+        );
+    }
+
+    /// The mode, the event, `last_triggered` and a write, then the run.
+    fn start(
+        self: &Arc<Self>,
+        vars: TriggerVars,
+        mut run_vars: Vars,
+        ctx: Context,
+        done_tx: tokio::sync::oneshot::Sender<()>,
+        guard: Option<Guard>,
+    ) {
+        let (Ok(cfg), Some(hass)) = (&self.config, self.hass()) else {
+            return;
+        };
+        let log = logger(&self.entity_id);
+        let now = hass.clock().now();
         let mut live = self.live.lock();
         Self::set_context(&mut live, &ctx, now);
         if !live.runs.is_empty() {
             match cfg.mode {
                 Mode::Single => {
                     tracing::warn!(logger = log, "{}: Already running", self.name);
-                    return None;
+                    return;
                 }
                 Mode::Restart => {
                     tracing::info!(logger = log, "{}: Restarting", self.name);
@@ -636,19 +930,21 @@ impl Automation {
         self.write(&mut live, Some(ctx.clone()));
         tracing::info!(logger = log, "{}: Running automation actions", self.name);
         let me = self.clone();
-        // Dropped when the run ends however it ends (a stopped run's task
-        // is dropped), which is what `automation.trigger` waits for.
-        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
         let handle = tokio::spawn(async move {
             let _done = done_tx;
+            let mut guard = guard;
             let Ok(cfg) = &me.config else { return };
-            if let Err(e) = me.run_actions(&cfg.actions, &vars, &ctx, None).await {
+            if let Err(e) = me
+                .run_actions(&cfg.actions, &vars, &ctx, None, &mut run_vars, &mut guard)
+                .await
+            {
                 tracing::error!(
-                    logger = "homeassistant.components.automation",
+                    logger = logger(&me.entity_id),
                     "Error while executing automation {}: {e}",
                     me.entity_id
                 );
             }
+            drop(guard);
             let mut live = me.live.lock();
             live.runs.retain(|r| r.id != run_id);
             me.write(&mut live, None);
@@ -656,26 +952,28 @@ impl Automation {
         if let Some(r) = live.runs.iter_mut().find(|r| r.id == run_id) {
             r.handle = Some(handle);
         }
-        Some(done_rx)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_actions<'a>(
         self: &'a Arc<Self>,
         actions: &'a [Action],
-        vars: &'a TriggerVars,
+        tv: &'a TriggerVars,
         ctx: &'a Context,
         choose: Option<String>,
+        vars: &'a mut Vars,
+        guard: &'a mut Option<Guard>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
-            let Some(hass) = self.hass() else {
+            let Some(shared) = self.shared.upgrade() else {
                 return Ok(());
             };
+            let hass = shared.hass.clone();
             let log = logger(&self.entity_id);
             let prefix = choose.unwrap_or_default();
             for (step, action) in actions.iter().enumerate() {
                 match action {
                     Action::Call {
-                        domain,
                         service,
                         data,
                         target,
@@ -685,22 +983,64 @@ impl Automation {
                             "{}: {prefix}Executing step call service",
                             self.name
                         );
-                        let target = (!target.is_empty()).then(|| target.clone());
-                        if let Err(e) = hass
-                            .call_service(
-                                domain,
-                                service,
-                                data.clone(),
-                                target,
-                                false,
-                                Some(ctx.clone()),
-                            )
-                            .await
-                        {
-                            let msg = match &e {
-                                ServiceError::Invalid(m) => m.clone(),
-                                e => e.to_string(),
+                        let prepared = if action.is_static_call() {
+                            let config::Service::Static { domain, service } = service else {
+                                unreachable!("a static call")
                             };
+                            let mut d = Map::new();
+                            for c in data {
+                                if let config::Complex::Static(Value::Object(m)) = c {
+                                    d.extend(m.clone());
+                                }
+                            }
+                            let target = match target {
+                                Some(config::Complex::Static(Value::Object(t))) => Some(t.clone()),
+                                _ => None,
+                            };
+                            Ok(tpl::Prepared {
+                                domain: domain.clone(),
+                                service: service.clone(),
+                                data: d,
+                                target,
+                            })
+                        } else {
+                            let (s, d, t, v) =
+                                (service.clone(), data.clone(), target.clone(), vars.clone());
+                            let home = shared.home();
+                            match ha_core::template::run::run(move || {
+                                let mut out = Out::default();
+                                (tpl::prepare(&s, &d, t.as_ref(), &home, &v, &mut out), out)
+                            })
+                            .await
+                            {
+                                Some((prepared, mut out)) => {
+                                    out.emit();
+                                    prepared
+                                }
+                                None => Err("the template stopped unexpectedly".into()),
+                            }
+                        };
+                        // The call is made: the next change may be handled.
+                        guard.take();
+                        let result = match prepared {
+                            Err(e) => Err(e),
+                            Ok(p) => hass
+                                .call_service(
+                                    &p.domain,
+                                    &p.service,
+                                    p.data,
+                                    p.target.filter(|t| !t.is_empty()),
+                                    false,
+                                    Some(ctx.clone()),
+                                )
+                                .await
+                                .map(|_| ())
+                                .map_err(|e| match &e {
+                                    ServiceError::Invalid(m) => m.clone(),
+                                    e => e.to_string(),
+                                }),
+                        };
+                        if let Err(msg) = result {
                             tracing::error!(
                                 logger = log,
                                 "{}: {prefix}Error executing script. Error for call_service at pos {}: {msg}",
@@ -711,17 +1051,17 @@ impl Automation {
                         }
                     }
                     Action::Choose { options, default } => {
-                        let chosen = options.iter().enumerate().find(|(_, (conds, _))| {
-                            conditions_pass(&hass, &self.name, conds, vars)
-                        });
+                        let chosen = self.choose(&shared, options, tv, vars).await;
                         match chosen {
-                            Some((i, (_, seq))) => {
+                            Some(i) => {
                                 let p = format!("Choose at step {}: choice {}: ", step + 1, i + 1);
-                                self.run_actions(seq, vars, ctx, Some(p)).await?;
+                                let seq = &options[i].1;
+                                self.run_actions(seq, tv, ctx, Some(p), vars, guard).await?;
                             }
                             None if !default.is_empty() => {
                                 let p = format!("Choose at step {}: default: ", step + 1);
-                                self.run_actions(default, vars, ctx, Some(p)).await?;
+                                self.run_actions(default, tv, ctx, Some(p), vars, guard)
+                                    .await?;
                             }
                             None => {}
                         }
@@ -732,82 +1072,115 @@ impl Automation {
                             "{}: {prefix}Executing step wait for trigger",
                             self.name
                         );
-                        self.wait_for(triggers).await;
+                        guard.take();
+                        let matched = self.wait_for(&shared, triggers, vars).await;
+                        if self.templated() {
+                            vars.insert(
+                                "wait".into(),
+                                Var::dict([
+                                    ("remaining".to_owned(), Var::none()),
+                                    ("completed".to_owned(), Var::bool(matched.is_some())),
+                                    (
+                                        "trigger".to_owned(),
+                                        matched.and_then(|m| m.var).unwrap_or_else(Var::none),
+                                    ),
+                                ]),
+                            );
+                        }
                     }
                 }
             }
+            guard.take();
             Ok(())
         })
     }
 
-    /// `wait_for_trigger` with state triggers: subscribed now (a state
-    /// already matching doesn't count), done when one matches (for its
-    /// `for`, kept through attribute-only writes, reset by any other value).
-    async fn wait_for(&self, triggers: &[Trigger]) {
-        let Some(shared) = self.shared.upgrade() else {
-            return;
+    /// `_async_step_choose`: the first option whose conditions pass
+    /// (`_test_conditions`: an error is logged and the option isn't taken).
+    async fn choose(
+        &self,
+        shared: &Arc<Shared>,
+        options: &[(Vec<Condition>, Vec<Action>)],
+        tv: &TriggerVars,
+        vars: &Vars,
+    ) -> Option<usize> {
+        let log = logger(&self.entity_id);
+        let rendered = options
+            .iter()
+            .any(|(c, _)| c.iter().any(Condition::has_template));
+        let (chosen, warnings, mut out) = if rendered {
+            let (hass, home, opts, v, id) = (
+                shared.hass.clone(),
+                shared.home(),
+                options.iter().map(|(c, _)| c.clone()).collect::<Vec<_>>(),
+                vars.clone(),
+                tv.id.clone(),
+            );
+            ha_core::template::run::run(move || {
+                let mut out = Out::default();
+                let mut warnings = Vec::new();
+                let chosen = opts.iter().position(|conds| {
+                    let (pass, w) =
+                        cond::test(&hass, conds, &id, "choose", Some((&home, &v, &mut out)));
+                    warnings.extend(w);
+                    pass
+                });
+                (chosen, warnings, out)
+            })
+            .await?
+        } else {
+            let mut warnings = Vec::new();
+            let chosen = options.iter().position(|(conds, _)| {
+                let (pass, w) = cond::test(&shared.hass, conds, &tv.id, "choose", None);
+                warnings.extend(w);
+                pass
+            });
+            (chosen, warnings, Out::default())
         };
-        // (trigger, entity, old value, new value; `None` = removed)
-        type Msg = (usize, String, Option<String>, Option<String>);
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Msg>();
-        let mut guards = Vec::new();
-        for (i, t) in triggers.iter().enumerate() {
-            let TriggerKind::State { entity_ids, .. } = &t.kind else {
-                continue;
-            };
-            for e in entity_ids {
-                let (tx, e2) = (tx.clone(), e.clone());
-                guards.push(shared.listeners.listen(
-                    e,
-                    shared.hass.states().seq(),
-                    Arc::new(move |ev| {
-                        if let Some((old, new)) = change(ev) {
-                            let _ = tx.send((
-                                i,
-                                e2.clone(),
-                                old.map(|s| s.state.to_string()),
-                                new.map(|s| s.state.to_string()),
-                            ));
-                        }
-                    }),
-                ));
-            }
+        out.emit();
+        for w in warnings {
+            tracing::warn!(logger = log, "{}: {w}", self.name);
         }
+        chosen
+    }
+
+    /// `wait_for_trigger`: its triggers attach now (a state already
+    /// matching doesn't count; templates render with the run's variables);
+    /// done when one fires.
+    async fn wait_for(
+        &self,
+        shared: &Arc<Shared>,
+        triggers: &[Trigger],
+        vars: &Vars,
+    ) -> Option<TriggerVars> {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TriggerVars>();
+        let sink: Sink = Arc::new(move |v, _| {
+            let _ = tx.send(v);
+        });
+        let since = shared.hass.states().seq();
+        let vars = Arc::new(vars.clone());
+        let mut attached = Vec::new();
+        for t in triggers {
+            attach_trigger(
+                shared,
+                &self.name,
+                t,
+                &vars,
+                self.templated(),
+                sink.clone(),
+                since,
+                &mut attached,
+            );
+        }
+        drop(sink);
         tracing::info!(
             logger = logger(&self.entity_id),
             "{}: Initialized trigger",
             self.name
         );
-        drop(tx);
-        // Pending `for`s, per trigger and entity: (trigger, entity, value,
-        // deadline).
-        let mut timers: Vec<(usize, String, String, Instant)> = Vec::new();
-        loop {
-            let next = timers.iter().map(|t| t.3).min();
-            let sleep = async {
-                match next {
-                    Some(at) => tokio::time::sleep_until(at).await,
-                    None => std::future::pending().await,
-                }
-            };
-            tokio::select! {
-                msg = rx.recv() => {
-                    let Some((i, entity, old, new)) = msg else { return };
-                    // Another value (or removal) cancels this entity's `for`.
-                    timers.retain(|(j, e, v, _)| !(*j == i && *e == entity && Some(v) != new.as_ref()));
-                    let Some(new) = new else { continue };
-                    let TriggerKind::State { to, for_, .. } = &triggers[i].kind else { continue };
-                    let to_ok = to.as_ref().is_none_or(|t| t.contains(&new));
-                    if to_ok && old.as_deref() != Some(new.as_str()) {
-                        match for_ {
-                            None => return,
-                            Some(d) => timers.push((i, entity, new, Instant::now() + *d)),
-                        }
-                    }
-                }
-                () = sleep => return,
-            }
-        }
+        let matched = rx.recv().await;
+        drop(attached);
+        matched
     }
 
     fn stop_runs(&self, live: &mut Live) {
@@ -955,49 +1328,100 @@ pub fn from_config_yaml(config: &ha_core::yaml::Yaml) -> Vec<ha_core::yaml::Yaml
     out
 }
 
+/// Whether a config has text that could be a template (compiling it, in
+/// [`config::parse`], needs a render thread).
+fn has_template_text(v: &Value) -> bool {
+    match v {
+        Value::String(s) => config::is_template_string(s),
+        Value::Array(a) => a.iter().any(has_template_text),
+        Value::Object(o) => o
+            .iter()
+            .any(|(k, v)| config::is_template_string(k) || has_template_text(v)),
+        _ => false,
+    }
+}
+
+/// [`config::parse_ordered`] for each item; on a render thread if any has
+/// a template to compile.
+async fn parse_all(items: &[Value], orders: Vec<config::Order>) -> Vec<Result<Config, String>> {
+    let parse = |items: &[Value], orders: &[config::Order]| -> Vec<Result<Config, String>> {
+        items
+            .iter()
+            .zip(orders)
+            .map(|(item, order)| config::parse_ordered(item, order))
+            .collect()
+    };
+    if !items.iter().any(has_template_text) {
+        return parse(items, &orders);
+    }
+    let owned = items.to_vec();
+    match ha_core::template::run::run(move || parse(&owned, &orders)).await {
+        Some(parsed) => parsed,
+        None => items
+            .iter()
+            .map(|_| Err("its templates could not be compiled".to_owned()))
+            .collect(),
+    }
+}
+
 impl Automations {
     /// Make the automations (the items of HA's `automation:` config) and
     /// write their states, restored as HA restores them. Triggers attach at
-    /// [`Automations::started`].
-    pub fn setup(hass: &Hass, registries: &Registries, items: &[Value]) -> Self {
+    /// [`Automations::started`]. Variables render in sorted order: use
+    /// [`Automations::setup_yaml`] for the order written.
+    pub async fn setup(hass: &Hass, registries: &Registries, items: &[Value]) -> Self {
         let raw: Vec<Option<String>> = items.iter().map(|v| Some(v.to_string())).collect();
-        Self::setup_raw(hass, registries, items, &raw)
+        let orders = vec![config::Order::default(); items.len()];
+        Self::setup_raw(hass, registries, items, &raw, orders).await
     }
 
     /// [`Automations::setup`] from YAML as loaded, keeping each item's raw
     /// config in its YAML key order for `automation/config`.
-    pub fn setup_yaml(hass: &Hass, registries: &Registries, items: &[ha_core::yaml::Yaml]) -> Self {
+    pub async fn setup_yaml(
+        hass: &Hass,
+        registries: &Registries,
+        items: &[ha_core::yaml::Yaml],
+    ) -> Self {
         let json: Vec<Value> = items.iter().map(|y| y.to_json()).collect();
         let raw: Vec<Option<String>> = items
             .iter()
             .map(|y| migrate_actions(y).to_json_text())
             .collect();
-        Self::setup_raw(hass, registries, &json, &raw)
+        let orders = items.iter().map(config::Order::of).collect();
+        Self::setup_raw(hass, registries, &json, &raw, orders).await
     }
 
-    fn setup_raw(
+    async fn setup_raw(
         hass: &Hass,
         registries: &Registries,
         items: &[Value],
         raw: &[Option<String>],
+        orders: Vec<config::Order>,
     ) -> Self {
+        let parsed = parse_all(items, orders).await;
         let shared = Arc::new(Shared {
             hass: hass.clone(),
             listeners: Arc::default(),
             automations: Mutex::default(),
+            home: RwLock::new(Home::new(hass.clone())),
+            attach_chain: Mutex::default(),
         });
-        // The state feed, to the listeners.
+        // The state feed, to the listeners, one change at a time.
         {
             let mut feed = hass.subscribe_state_changes();
             let listeners = Arc::downgrade(&shared.listeners);
             tokio::spawn(async move {
                 while let Some((seq, ev)) = feed.recv_seq().await {
                     let Some(l) = listeners.upgrade() else { return };
-                    // A run started here gets to its first step (HA starts
-                    // it as an eager task) before the next change is seen.
                     if l.dispatch(seq, &ev) {
                         drop(l);
+                        // A run started here gets to its first step (HA
+                        // starts it as an eager task) before the next
+                        // change is seen; work that renders, until it is
+                        // done.
                         tokio::task::yield_now().await;
+                        let Some(l) = listeners.upgrade() else { return };
+                        l.idle().await;
                     }
                 }
             });
@@ -1005,8 +1429,7 @@ impl Automations {
         let restore = hass.restore();
         let mut taken = HashSet::new();
         let mut seen_ids = HashSet::new();
-        for (n, item) in items.iter().enumerate() {
-            let config = config::parse(item);
+        for (n, (item, config)) in items.iter().zip(parsed).enumerate() {
             let alias = item.get("alias").and_then(Value::as_str).map(str::to_owned);
             let name = alias.unwrap_or_else(|| format!("automation {n}"));
             let unique_id = match item.get("id") {
@@ -1038,15 +1461,13 @@ impl Automations {
             }
             // Restore: on/off and `last_triggered`; `initial_state` wins.
             let mut live = Live::default();
-            if config.is_ok() {
+            if let Ok(c) = &config {
                 let last = restore.last_state(entity_id.as_str());
                 live.enabled = match &last {
                     Some(s) => s["state"] == "on",
                     None => true,
                 };
-                if let Some(Ok(c)) = Some(&config)
-                    && let Some(i) = c.initial_state
-                {
+                if let Some(i) = c.initial_state {
                     live.enabled = i;
                 }
                 if last.is_none() {
@@ -1067,8 +1488,9 @@ impl Automations {
                 name,
                 unique_id,
                 raw: raw[n].clone(),
-                config,
+                config: config.map(Arc::new),
                 live: Mutex::new(live),
+                gate: tokio::sync::Mutex::new(()),
             });
             {
                 let mut live = a.live.lock();
@@ -1079,6 +1501,12 @@ impl Automations {
         let me = Self { shared };
         me.register_services();
         me
+    }
+
+    /// The entity registry's sensor display precision, for templates'
+    /// `states(…, rounded=True)`.
+    pub fn set_display_precision(&self, precision: DisplayPrecision) {
+        self.shared.home.write().display_precision = Some(precision);
     }
 
     /// The automation with this entity id.
@@ -1157,11 +1585,19 @@ impl Automations {
                                         .get("skip_condition")
                                         .and_then(Value::as_bool)
                                         .unwrap_or(true);
+                                    // `{**variables, "trigger": {"platform": None}}`.
                                     let vars = TriggerVars {
                                         id: String::new(),
                                         idx: String::new(),
+                                        alias: None,
                                         platform: None,
                                         description: None,
+                                        var: None,
+                                        extra: call
+                                            .data
+                                            .get("variables")
+                                            .and_then(Value::as_object)
+                                            .cloned(),
                                     };
                                     runs.extend(a.fired(
                                         vars,
@@ -1200,6 +1636,7 @@ impl Automations {
             live.enabled = on;
             if !on {
                 live.attached.clear();
+                live.generation += 1;
                 if stop_actions {
                     a.stop_runs(&mut live);
                 }
@@ -1214,5 +1651,7 @@ impl Automations {
     }
 }
 
+#[cfg(test)]
+mod template_tests;
 #[cfg(test)]
 mod tests;

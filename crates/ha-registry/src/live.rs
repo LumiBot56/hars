@@ -114,6 +114,13 @@ pub type EntryLookup = Arc<dyn Fn(&str) -> Option<EntryInfo> + Send + Sync>;
 const LOW_PRIO_DOMAINS: [&str; 4] = ["homekit_controller", "matter", "mqtt", "upnp"];
 
 impl Registry {
+    /// What templates read through `states(…, rounded=True)`: a sensor's
+    /// display precision, as the registry has it when the template runs.
+    pub fn display_precision(self: &Arc<Self>) -> ha_core::template::DisplayPrecision {
+        let me = self.clone();
+        Arc::new(move |entity_id: &str| me.snapshot().sensor_display_precision(entity_id))
+    }
+
     /// Kept in memory only (tests, and checking a copy).
     pub fn in_memory(hass: &Hass, registries: Registries) -> Arc<Self> {
         Arc::new(Self {

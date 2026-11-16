@@ -1,13 +1,29 @@
 //! An automation's config, validated into what the engine runs. The
-//! subset the inventory uses (state, numeric_state and time triggers;
-//! numeric_state, state, time and trigger conditions; service calls,
-//! choose and wait_for_trigger; single and restart modes). Anything else,
-//! templates included, fails validation: the automation is then
-//! `unavailable`, as HA makes an invalid one.
+//! subset the inventory uses: state, numeric_state, time and template
+//! triggers; numeric_state, state, time, trigger and template conditions;
+//! service calls, choose and wait_for_trigger; single and restart modes;
+//! `variables` and `trigger_variables`.
+//!
+//! Templates are HA's: a string with `{{`, `{%` or `{#` where HA's schema
+//! takes a template (`cv.template`, `cv.dynamic_template`,
+//! `cv.template_complex`) is compiled here, once, and a template that
+//! doesn't compile makes the automation invalid, as HA's validation does.
+//! Elsewhere such a string is plain text, as in HA (a state trigger's
+//! `to`). Anything hars can't run yet fails validation, so the automation
+//! is `unavailable`, as HA makes an invalid one: templates in `for`, `at`
+//! and `enabled`, a trigger's own `variables`, and the actions other than
+//! those above (`delay`, `wait_template`, `if`, `repeat`, …).
+//!
+//! Compiling recurses as deep as the template nests, so [`parse`] runs on
+//! a render thread ([`ha_core::template::run`]) when an engine loads.
 
+use ha_core::template::{Mode as Env, Template};
 use serde_json::{Map, Value};
+use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
+/// The run mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Single,
@@ -23,20 +39,82 @@ impl Mode {
     }
 }
 
+/// A compiled template from the config.
+#[derive(Clone)]
+pub struct Tpl(pub Arc<Template>);
+
+impl fmt::Debug for Tpl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Template({:?})", self.0.source())
+    }
+}
+
+impl PartialEq for Tpl {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.source() == other.0.source()
+    }
+}
+
+impl std::ops::Deref for Tpl {
+    type Target = Template;
+    fn deref(&self) -> &Template {
+        &self.0
+    }
+}
+
+/// A value that may hold templates (`cv.template_complex`): rendered with
+/// `render_complex`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Complex {
+    /// No template anywhere in it.
+    Static(Value),
+    Template(Tpl),
+    List(Vec<Complex>),
+    /// Keys may be templates too.
+    Map(Vec<(Complex, Complex)>),
+}
+
+impl Complex {
+    pub fn is_static(&self) -> bool {
+        matches!(self, Complex::Static(_))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TriggerKind {
     State {
         entity_ids: Vec<String>,
         to: Option<Vec<String>>,
         for_: Option<Duration>,
+        /// No `to` key at all: any change fires, an attribute's too.
+        match_all: bool,
     },
     NumericState {
         entity_ids: Vec<String>,
         below: Option<f64>,
         above: Option<f64>,
+        value_template: Option<Tpl>,
     },
     /// One `at` each (HA attaches one tracker per time).
     Time { at: Vec<jiff::civil::Time> },
+    /// The `template` integration's trigger.
+    Template {
+        value_template: Tpl,
+        for_: Option<Duration>,
+        /// How often the template has rendered (HA's `Template._renders`,
+        /// which its error message shows).
+        renders: Renders,
+    },
+}
+
+/// A render count, shared by every attachment of a trigger.
+#[derive(Debug, Clone, Default)]
+pub struct Renders(pub Arc<std::sync::atomic::AtomicU64>);
+
+impl PartialEq for Renders {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,6 +122,7 @@ pub struct Trigger {
     /// `id`, or the index as a string.
     pub id: String,
     pub idx: usize,
+    pub alias: Option<String>,
     pub kind: TriggerKind,
 }
 
@@ -53,6 +132,7 @@ pub enum Condition {
         entity_ids: Vec<String>,
         below: Option<f64>,
         above: Option<f64>,
+        value_template: Option<Tpl>,
     },
     State {
         entity_ids: Vec<String>,
@@ -65,16 +145,40 @@ pub enum Condition {
     Trigger {
         ids: Vec<String>,
     },
+    /// `condition: template`, or a template string (the shorthand).
+    Template(Tpl),
+}
+
+impl Condition {
+    pub fn has_template(&self) -> bool {
+        matches!(
+            self,
+            Condition::Template(_)
+                | Condition::NumericState {
+                    value_template: Some(_),
+                    ..
+                }
+        )
+    }
+}
+
+/// What a service call action calls: `domain.service`, or a template
+/// rendering it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Service {
+    Static { domain: String, service: String },
+    Template(Tpl),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     Call {
-        domain: String,
-        service: String,
-        data: Map<String, Value>,
-        /// The target, `entity_id` as a list.
-        target: Map<String, Value>,
+        service: Service,
+        /// `data`, then `data_template`, each a dict (or one template).
+        data: Vec<Complex>,
+        /// The target (a static one has `entity_id` as a list), or one
+        /// template.
+        target: Option<Complex>,
     },
     Choose {
         options: Vec<(Vec<Condition>, Vec<Action>)>,
@@ -83,6 +187,24 @@ pub enum Action {
     WaitForTrigger {
         triggers: Vec<Trigger>,
     },
+}
+
+impl Action {
+    /// A call with nothing to render.
+    pub fn is_static_call(&self) -> bool {
+        matches!(self, Action::Call { service: Service::Static { .. }, data, target }
+            if data.iter().all(Complex::is_static) && target.as_ref().is_none_or(Complex::is_static))
+    }
+}
+
+/// A variable of `variables` or `trigger_variables`: its name, value, and
+/// whether it renders limited (`trigger_variables`' do, always: HA
+/// compiles them limited when the triggers attach).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Variable {
+    pub name: String,
+    pub value: Complex,
+    pub limited: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -94,6 +216,23 @@ pub struct Config {
     pub triggers: Vec<Trigger>,
     pub conditions: Vec<Condition>,
     pub actions: Vec<Action>,
+    /// `trigger_variables` (rendered when the triggers attach).
+    pub trigger_variables: Vec<Variable>,
+    /// `trigger_variables` then `variables` (a name in both: `variables`'
+    /// value, in `trigger_variables`' place), rendered for each run.
+    pub variables: Vec<Variable>,
+    /// Whether any template or variable is used: the runs then carry
+    /// HA's `this` and `trigger` variables.
+    pub templated: bool,
+}
+
+impl Config {
+    /// Whether a trigger needs a render before its run starts (variables or
+    /// conditions with templates).
+    pub fn renders_before_run(&self) -> bool {
+        self.variables.iter().any(|v| !v.value.is_static())
+            || self.conditions.iter().any(Condition::has_template)
+    }
 }
 
 type R<T> = Result<T, String>;
@@ -102,14 +241,81 @@ fn path(p: &str, k: &str) -> String {
     format!("{p}['{k}']")
 }
 
-fn reject_templates(v: &Value) -> R<()> {
-    match v {
-        Value::String(s) if s.contains("{{") || s.contains("{%") => {
-            Err(format!("templates are not supported by hars: {s}"))
+/// `is_template_string`.
+pub fn is_template_string(s: &str) -> bool {
+    s.contains('{') && (s.contains("{%") || s.contains("{{") || s.contains("{#"))
+}
+
+/// Parsing context: whether a template was seen.
+#[derive(Default)]
+struct Ctx {
+    templated: bool,
+}
+
+impl Ctx {
+    /// `cv.template`: a string (static or not), compiled now.
+    fn template(&mut self, v: &Value, mode: Env, at: &str) -> R<Tpl> {
+        let s = match v {
+            Value::Null => return Err(format!("template value is None @ data{at}")),
+            Value::Array(_) | Value::Object(_) => {
+                return Err(format!("template value should be a string @ data{at}"));
+            }
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let t = Template::new(&s);
+        t.compile_in(mode)
+            .map_err(|e| format!("invalid template ({e}) @ data{at}"))?;
+        self.templated = true;
+        Ok(Tpl(Arc::new(t)))
+    }
+
+    /// `cv.dynamic_template`.
+    fn dynamic_template(&mut self, v: &Value, mode: Env, at: &str) -> R<Tpl> {
+        if let Value::String(s) = v
+            && !is_template_string(s)
+        {
+            return Err(format!(
+                "template value does not contain a dynamic template @ data{at}"
+            ));
         }
-        Value::Array(a) => a.iter().try_for_each(reject_templates),
-        Value::Object(o) => o.values().try_for_each(reject_templates),
-        _ => Ok(()),
+        self.template(v, mode, at)
+    }
+
+    /// `cv.template_complex`.
+    fn complex(&mut self, v: &Value, mode: Env, at: &str) -> R<Complex> {
+        Ok(match v {
+            Value::String(s) if is_template_string(s) => {
+                Complex::Template(self.template(v, mode, at)?)
+            }
+            Value::Array(items) => {
+                let items = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, x)| self.complex(x, mode, &format!("{at}[{i}]")))
+                    .collect::<R<Vec<_>>>()?;
+                if items.iter().all(Complex::is_static) {
+                    Complex::Static(v.clone())
+                } else {
+                    Complex::List(items)
+                }
+            }
+            Value::Object(m) => {
+                let pairs = m
+                    .iter()
+                    .map(|(k, x)| {
+                        let key = self.complex(&Value::String(k.clone()), mode, at)?;
+                        Ok((key, self.complex(x, mode, &path(at, k))?))
+                    })
+                    .collect::<R<Vec<_>>>()?;
+                if pairs.iter().all(|(k, x)| k.is_static() && x.is_static()) {
+                    Complex::Static(v.clone())
+                } else {
+                    Complex::Map(pairs)
+                }
+            }
+            other => Complex::Static(other.clone()),
+        })
     }
 }
 
@@ -165,9 +371,27 @@ pub fn time(v: &Value) -> Option<jiff::civil::Time> {
     jiff::civil::Time::new(h, m, sec, 0).ok()
 }
 
+/// A template where hars doesn't render one yet.
+fn no_template_here(v: &Value, what: &str, at: &str) -> R<()> {
+    let templated = match v {
+        Value::String(s) => is_template_string(s),
+        Value::Object(o) => o
+            .iter()
+            .any(|(k, x)| is_template_string(k) || x.as_str().is_some_and(is_template_string)),
+        _ => false,
+    };
+    if templated {
+        return Err(format!(
+            "templates in '{what}' are not supported by hars yet @ data{at}"
+        ));
+    }
+    Ok(())
+}
+
 /// `cv.positive_time_period`: `{hours, minutes, seconds, milliseconds,
 /// days}`, `"HH:MM[:SS]"`, or seconds.
 fn duration(v: &Value, at: &str) -> R<Duration> {
+    no_template_here(v, "for", at)?;
     let bad = || format!("expected a time period @ data{at}");
     let secs = match v {
         Value::Number(n) => n.as_f64().ok_or_else(bad)?,
@@ -214,12 +438,15 @@ fn only_keys(o: &Map<String, Value>, allowed: &[&str], at: &str) -> R<()> {
     }
 }
 
-/// `enabled`: a bool, default true (templates aren't supported).
+/// `enabled`: a bool, default true (templates aren't supported yet).
 fn is_enabled(v: &Value, at: &str) -> R<bool> {
     match v.get("enabled") {
         None => Ok(true),
         Some(Value::Bool(b)) => Ok(*b),
-        Some(_) => Err(format!("expected boolean @ data{at}['enabled']")),
+        Some(e) => {
+            no_template_here(e, "enabled", &path(at, "enabled"))?;
+            Err(format!("expected boolean @ data{at}['enabled']"))
+        }
     }
 }
 
@@ -234,325 +461,546 @@ fn enabled_items(list: &[Value], at: &str) -> R<Vec<(usize, Value)>> {
     Ok(out)
 }
 
-fn triggers(v: Option<&Value>, at: &str) -> R<Vec<Trigger>> {
-    let list = match v {
-        Some(Value::Array(a)) => a.clone(),
-        Some(Value::Object(o)) => vec![Value::Object(o.clone())],
-        _ => return Err(format!("required key not provided @ data{at}")),
-    };
-    // A disabled trigger isn't attached; the others keep their index.
-    enabled_items(&list, at)?
-        .iter()
-        .map(|(idx, t)| trigger(t, *idx, &format!("{at}[{idx}]")))
-        .collect()
+fn alias(o: &Map<String, Value>) -> Option<String> {
+    match o.get("alias") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(v) => Some(v.to_string()),
+    }
 }
 
-fn trigger(v: &Value, idx: usize, at: &str) -> R<Trigger> {
-    let o = v
-        .as_object()
-        .ok_or_else(|| format!("expected a dictionary @ data{at}"))?;
-    let platform = o
-        .get("trigger")
-        .or_else(|| o.get("platform"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("required key not provided @ data{at}['trigger']"))?;
-    let id = match o.get("id") {
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Number(n)) => n.to_string(),
-        Some(_) => {
+impl Ctx {
+    fn triggers(&mut self, v: Option<&Value>, at: &str) -> R<Vec<Trigger>> {
+        let list = match v {
+            Some(Value::Array(a)) => a.clone(),
+            Some(Value::Object(o)) => vec![Value::Object(o.clone())],
+            _ => return Err(format!("required key not provided @ data{at}")),
+        };
+        // A disabled trigger isn't attached; the others keep their index.
+        enabled_items(&list, at)?
+            .iter()
+            .map(|(idx, t)| self.trigger(t, *idx, &format!("{at}[{idx}]")))
+            .collect()
+    }
+
+    fn trigger(&mut self, v: &Value, idx: usize, at: &str) -> R<Trigger> {
+        let o = v
+            .as_object()
+            .ok_or_else(|| format!("expected a dictionary @ data{at}"))?;
+        let platform = o
+            .get("trigger")
+            .or_else(|| o.get("platform"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("required key not provided @ data{at}['trigger']"))?;
+        let id = match o.get("id") {
+            Some(Value::String(s)) => s.clone(),
+            Some(Value::Number(n)) => n.to_string(),
+            Some(_) => {
+                return Err(format!(
+                    "expected str for dictionary value @ data{at}['id']"
+                ));
+            }
+            None => idx.to_string(),
+        };
+        if o.contains_key("variables") {
             return Err(format!(
-                "expected str for dictionary value @ data{at}['id']"
+                "a trigger's 'variables' are not supported by hars yet @ data{at}"
             ));
         }
-        None => idx.to_string(),
-    };
-    let common = ["trigger", "platform", "id", "enabled", "alias"];
-    let kind = match platform {
-        "state" => {
-            only_keys(o, &[&common[..], &["entity_id", "to", "for"]].concat(), at)?;
-            let to = match o.get("to") {
-                None | Some(Value::Null) => None,
-                Some(Value::String(s)) => Some(vec![s.clone()]),
-                Some(Value::Array(a)) => Some(
-                    a.iter()
+        let common = ["trigger", "platform", "id", "enabled", "alias"];
+        let kind = match platform {
+            "state" => {
+                only_keys(o, &[&common[..], &["entity_id", "to", "for"]].concat(), at)?;
+                let to = match o.get("to") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(s)) => Some(vec![s.clone()]),
+                    Some(Value::Array(a)) => Some(
+                        a.iter()
+                            .map(|s| s.as_str().map(str::to_owned))
+                            .collect::<Option<_>>()
+                            .ok_or_else(|| {
+                                format!("expected str for dictionary value @ data{at}['to']")
+                            })?,
+                    ),
+                    Some(_) => {
+                        return Err(format!(
+                            "expected str for dictionary value @ data{at}['to']"
+                        ));
+                    }
+                };
+                TriggerKind::State {
+                    entity_ids: entity_ids(o.get("entity_id"), &path(at, "entity_id"))?,
+                    match_all: !o.contains_key("to"),
+                    to,
+                    for_: o
+                        .get("for")
+                        .map(|f| duration(f, &path(at, "for")))
+                        .transpose()?,
+                }
+            }
+            "numeric_state" => {
+                only_keys(
+                    o,
+                    &[
+                        &common[..],
+                        &["entity_id", "below", "above", "value_template"],
+                    ]
+                    .concat(),
+                    at,
+                )?;
+                let below = float(o.get("below"), &path(at, "below"))?;
+                let above = float(o.get("above"), &path(at, "above"))?;
+                if below.is_none() && above.is_none() {
+                    return Err(format!(
+                        "must contain at least one of below, above. @ data{at}"
+                    ));
+                }
+                TriggerKind::NumericState {
+                    entity_ids: entity_ids(o.get("entity_id"), &path(at, "entity_id"))?,
+                    below,
+                    above,
+                    value_template: o
+                        .get("value_template")
+                        .map(|t| self.template(t, Env::Lenient, &path(at, "value_template")))
+                        .transpose()?,
+                }
+            }
+            "time" => {
+                only_keys(o, &[&common[..], &["at"]].concat(), at)?;
+                let list = match o.get("at") {
+                    Some(Value::Array(a)) => a.clone(),
+                    Some(v) => vec![v.clone()],
+                    None => return Err(format!("required key not provided @ data{at}['at']")),
+                };
+                let at_times = list
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| {
+                        let here = format!("{at}['at'][{i}]");
+                        no_template_here(v, "at", &here)?;
+                        time(v).ok_or_else(|| {
+                            format!("Expected HH:MM, HH:MM:SS, an Entity ID with domain 'input_datetime' or 'sensor', a combination of a timestamp sensor entity and an offset, or Limited Template @ data{here}")
+                        })
+                    })
+                    .collect::<R<_>>()?;
+                TriggerKind::Time { at: at_times }
+            }
+            "template" => {
+                only_keys(o, &[&common[..], &["value_template", "for"]].concat(), at)?;
+                let value_template = match o.get("value_template") {
+                    Some(t) => self.template(t, Env::Lenient, &path(at, "value_template"))?,
+                    None => {
+                        return Err(format!(
+                            "required key not provided @ data{at}['value_template']"
+                        ));
+                    }
+                };
+                TriggerKind::Template {
+                    value_template,
+                    renders: Renders::default(),
+                    for_: o
+                        .get("for")
+                        .map(|f| duration(f, &path(at, "for")))
+                        .transpose()?,
+                }
+            }
+            other => return Err(format!("Invalid trigger '{other}' specified")),
+        };
+        Ok(Trigger {
+            id,
+            idx,
+            alias: alias(o),
+            kind,
+        })
+    }
+
+    fn conditions(&mut self, v: Option<&Value>, at: &str) -> R<Vec<Condition>> {
+        let list = match v {
+            None | Some(Value::Null) => return Ok(vec![]),
+            Some(Value::Array(a)) => a.clone(),
+            Some(c @ (Value::Object(_) | Value::String(_))) => vec![c.clone()],
+            Some(_) => return Err(format!("expected a list @ data{at}")),
+        };
+        // A disabled condition passes: it's left out.
+        enabled_items(&list, at)?
+            .iter()
+            .map(|(i, c)| self.condition(c, &format!("{at}[{i}]")))
+            .collect()
+    }
+
+    fn condition(&mut self, v: &Value, at: &str) -> R<Condition> {
+        // The shorthand: a template string is a template condition.
+        if let Value::String(s) = v {
+            if !is_template_string(s) {
+                return Err(format!("Expected a dictionary @ data{at}. Got '{s}'"));
+            }
+            return Ok(Condition::Template(self.dynamic_template(
+                v,
+                Env::Lenient,
+                at,
+            )?));
+        }
+        let o = v
+            .as_object()
+            .ok_or_else(|| format!("Unexpected value for condition: '{v}' @ data{at}"))?;
+        let kind = o
+            .get("condition")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("required key not provided @ data{at}['condition']"))?;
+        let common = ["condition", "alias", "enabled"];
+        Ok(match kind {
+            "numeric_state" => {
+                only_keys(
+                    o,
+                    &[
+                        &common[..],
+                        &["entity_id", "below", "above", "value_template"],
+                    ]
+                    .concat(),
+                    at,
+                )?;
+                let below = float(o.get("below"), &path(at, "below"))?;
+                let above = float(o.get("above"), &path(at, "above"))?;
+                if below.is_none() && above.is_none() {
+                    return Err(format!(
+                        "must contain at least one of below, above. @ data{at}"
+                    ));
+                }
+                Condition::NumericState {
+                    entity_ids: entity_ids(o.get("entity_id"), &path(at, "entity_id"))?,
+                    below,
+                    above,
+                    value_template: o
+                        .get("value_template")
+                        .map(|t| self.template(t, Env::Lenient, &path(at, "value_template")))
+                        .transpose()?,
+                }
+            }
+            "state" => {
+                only_keys(o, &[&common[..], &["entity_id", "state"]].concat(), at)?;
+                let states = match o.get("state") {
+                    Some(Value::String(s)) => vec![s.clone()],
+                    Some(Value::Array(a)) => a
+                        .iter()
                         .map(|s| s.as_str().map(str::to_owned))
                         .collect::<Option<_>>()
-                        .ok_or_else(|| {
-                            format!("expected str for dictionary value @ data{at}['to']")
-                        })?,
-                ),
-                Some(_) => {
+                        .ok_or_else(|| format!("expected str @ data{at}['state']"))?,
+                    _ => {
+                        return Err(format!(
+                            "expected str for dictionary value @ data{at}['state']"
+                        ));
+                    }
+                };
+                Condition::State {
+                    entity_ids: entity_ids(o.get("entity_id"), &path(at, "entity_id"))?,
+                    states,
+                }
+            }
+            "time" => {
+                only_keys(o, &[&common[..], &["after", "before"]].concat(), at)?;
+                let t = |k: &str| -> R<Option<jiff::civil::Time>> {
+                    o.get(k)
+                        .map(|v| {
+                            time(v).ok_or_else(|| {
+                                format!("Invalid time specified: {v} @ data{at}['{k}']")
+                            })
+                        })
+                        .transpose()
+                };
+                let (after, before) = (t("after")?, t("before")?);
+                if after.is_none() && before.is_none() {
                     return Err(format!(
-                        "expected str for dictionary value @ data{at}['to']"
+                        "must contain at least one of before, after, weekday. @ data{at}"
                     ));
                 }
-            };
-            TriggerKind::State {
-                entity_ids: entity_ids(o.get("entity_id"), &path(at, "entity_id"))?,
-                to,
-                for_: o
-                    .get("for")
-                    .map(|f| duration(f, &path(at, "for")))
-                    .transpose()?,
+                Condition::Time { after, before }
             }
-        }
-        "numeric_state" => {
-            only_keys(
-                o,
-                &[&common[..], &["entity_id", "below", "above"]].concat(),
-                at,
-            )?;
-            let below = float(o.get("below"), &path(at, "below"))?;
-            let above = float(o.get("above"), &path(at, "above"))?;
-            if below.is_none() && above.is_none() {
+            "trigger" => {
+                only_keys(o, &[&common[..], &["id"]].concat(), at)?;
+                let ids = match o.get("id") {
+                    Some(Value::String(s)) => vec![s.clone()],
+                    Some(Value::Number(n)) => vec![n.to_string()],
+                    Some(Value::Array(a)) => a
+                        .iter()
+                        .map(|v| match v {
+                            Value::String(s) => Some(s.clone()),
+                            Value::Number(n) => Some(n.to_string()),
+                            _ => None,
+                        })
+                        .collect::<Option<_>>()
+                        .ok_or_else(|| format!("expected str @ data{at}['id']"))?,
+                    _ => return Err(format!("required key not provided @ data{at}['id']")),
+                };
+                Condition::Trigger { ids }
+            }
+            "template" => {
+                only_keys(o, &[&common[..], &["value_template"]].concat(), at)?;
+                match o.get("value_template") {
+                    Some(t) => Condition::Template(self.template(
+                        t,
+                        Env::Lenient,
+                        &path(at, "value_template"),
+                    )?),
+                    None => {
+                        return Err(format!(
+                            "required key not provided @ data{at}['value_template']"
+                        ));
+                    }
+                }
+            }
+            other => {
                 return Err(format!(
-                    "must contain at least one of below, above. @ data{at}"
+                    "Invalid condition \"{other}\" specified @ data{at}"
                 ));
             }
-            TriggerKind::NumericState {
-                entity_ids: entity_ids(o.get("entity_id"), &path(at, "entity_id"))?,
-                below,
-                above,
-            }
+        })
+    }
+
+    fn actions(&mut self, v: Option<&Value>, at: &str) -> R<Vec<Action>> {
+        let list = match v {
+            Some(Value::Array(a)) => a.clone(),
+            Some(o @ Value::Object(_)) => vec![o.clone()],
+            _ => return Err(format!("required key not provided @ data{at}")),
+        };
+        // A disabled action is skipped.
+        enabled_items(&list, at)?
+            .iter()
+            .map(|(i, a)| self.action(a, &format!("{at}[{i}]")))
+            .collect()
+    }
+
+    fn action(&mut self, v: &Value, at: &str) -> R<Action> {
+        let o = v
+            .as_object()
+            .ok_or_else(|| format!("expected a dictionary @ data{at}"))?;
+        if o.contains_key("action") && o.contains_key("service") {
+            return Err(format!(
+                "Cannot specify both 'service' and 'action'. Please use 'action' only. @ data{at}"
+            ));
         }
-        "time" => {
-            only_keys(o, &[&common[..], &["at"]].concat(), at)?;
-            let list = match o.get("at") {
-                Some(Value::Array(a)) => a.clone(),
-                Some(v) => vec![v.clone()],
-                None => return Err(format!("required key not provided @ data{at}['at']")),
+        if let Some(name) = o.get("action").or_else(|| o.get("service")) {
+            only_keys(
+                o,
+                &[
+                    "action",
+                    "service",
+                    "target",
+                    "data",
+                    "data_template",
+                    "alias",
+                    "enabled",
+                ],
+                at,
+            )?;
+            let service = match name.as_str() {
+                Some(s) if is_template_string(s) => Service::Template(self.dynamic_template(
+                    name,
+                    Env::Lenient,
+                    &path(at, "action"),
+                )?),
+                _ => {
+                    let name = name.as_str().unwrap_or_default();
+                    let (domain, service) = name
+                        .split_once('.')
+                        .filter(|(d, s)| !d.is_empty() && !s.is_empty())
+                        .ok_or_else(|| {
+                            format!("Service {name} does not match format <domain>.<name> @ data{at}['action']")
+                        })?;
+                    Service::Static {
+                        domain: domain.to_lowercase(),
+                        service: service.to_lowercase(),
+                    }
+                }
             };
-            let at_times = list
+            let mut data = Vec::new();
+            for key in ["data", "data_template"] {
+                match o.get(key) {
+                    None | Some(Value::Null) => {}
+                    // `vol.Any(template, vol.All(dict, template_complex))`.
+                    Some(d @ Value::Object(_)) => {
+                        data.push(self.complex(d, Env::Lenient, &path(at, key))?);
+                    }
+                    Some(d @ Value::String(_)) => {
+                        data.push(Complex::Template(self.template(
+                            d,
+                            Env::Lenient,
+                            &path(at, key),
+                        )?));
+                    }
+                    Some(_) => return Err(format!("expected a dictionary @ data{at}['{key}']")),
+                }
+            }
+            let target = match o.get("target") {
+                None | Some(Value::Null) => None,
+                Some(t @ Value::String(_)) => Some(Complex::Template(self.dynamic_template(
+                    t,
+                    Env::Lenient,
+                    &path(at, "target"),
+                )?)),
+                Some(Value::Object(t)) => {
+                    let mut out = Map::new();
+                    let mut templated = false;
+                    for (k, v) in t {
+                        let c = self.complex(v, Env::Lenient, &path(&path(at, "target"), k))?;
+                        templated |= !c.is_static();
+                        // `cv.comp_entity_ids`: always a list.
+                        let list = match v {
+                            Value::String(s) if c.is_static() => Value::Array(
+                                s.split(',')
+                                    .map(|x| Value::String(x.trim().to_owned()))
+                                    .collect(),
+                            ),
+                            other => other.clone(),
+                        };
+                        out.insert(k.clone(), list);
+                    }
+                    Some(if templated {
+                        self.complex(&Value::Object(t.clone()), Env::Lenient, &path(at, "target"))?
+                    } else {
+                        Complex::Static(Value::Object(out))
+                    })
+                }
+                Some(_) => return Err(format!("expected a dictionary @ data{at}['target']")),
+            };
+            return Ok(Action::Call {
+                service,
+                data,
+                target,
+            });
+        }
+        if let Some(options) = o.get("choose") {
+            only_keys(o, &["choose", "default", "alias", "enabled"], at)?;
+            let list = match options {
+                Value::Array(a) => a.clone(),
+                o @ Value::Object(_) => vec![o.clone()],
+                _ => return Err(format!("expected a list @ data{at}['choose']")),
+            };
+            let options = list
                 .iter()
                 .enumerate()
-                .map(|(i, v)| {
-                    time(v).ok_or_else(|| {
-                        format!("Expected HH:MM, HH:MM:SS, an Entity ID with domain 'input_datetime' or 'sensor', a combination of a timestamp sensor entity and an offset, or Limited Template @ data{at}['at'][{i}]")
-                    })
+                .map(|(i, c)| {
+                    let p = format!("{at}['choose'][{i}]");
+                    let c = c
+                        .as_object()
+                        .ok_or_else(|| format!("expected a dictionary @ data{p}"))?;
+                    only_keys(c, &["conditions", "sequence", "alias"], &p)?;
+                    Ok((
+                        self.conditions(c.get("conditions"), &path(&p, "conditions"))?,
+                        self.actions(c.get("sequence"), &path(&p, "sequence"))?,
+                    ))
                 })
                 .collect::<R<_>>()?;
-            TriggerKind::Time { at: at_times }
+            let default = match o.get("default") {
+                None | Some(Value::Null) => vec![],
+                d => self.actions(d, &path(at, "default"))?,
+            };
+            return Ok(Action::Choose { options, default });
         }
-        other => return Err(format!("Invalid trigger '{other}' specified")),
-    };
-    Ok(Trigger { id, idx, kind })
-}
-
-fn conditions(v: Option<&Value>, at: &str) -> R<Vec<Condition>> {
-    let list = match v {
-        None | Some(Value::Null) => return Ok(vec![]),
-        Some(Value::Array(a)) => a.clone(),
-        Some(o @ Value::Object(_)) => vec![o.clone()],
-        Some(_) => return Err(format!("expected a list @ data{at}")),
-    };
-    // A disabled condition passes: it's left out.
-    enabled_items(&list, at)?
-        .iter()
-        .map(|(i, c)| condition(c, &format!("{at}[{i}]")))
-        .collect()
-}
-
-fn condition(v: &Value, at: &str) -> R<Condition> {
-    let o = v
-        .as_object()
-        .ok_or_else(|| format!("Unexpected value for condition: '{v}' @ data{at}"))?;
-    let kind = o
-        .get("condition")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("required key not provided @ data{at}['condition']"))?;
-    let common = ["condition", "alias", "enabled"];
-    Ok(match kind {
-        "numeric_state" => {
-            only_keys(
-                o,
-                &[&common[..], &["entity_id", "below", "above"]].concat(),
-                at,
-            )?;
-            let below = float(o.get("below"), &path(at, "below"))?;
-            let above = float(o.get("above"), &path(at, "above"))?;
-            if below.is_none() && above.is_none() {
+        if let Some(t) = o.get("wait_for_trigger") {
+            only_keys(o, &["wait_for_trigger", "alias", "enabled"], at)?;
+            let triggers = self.triggers(Some(t), &path(at, "wait_for_trigger"))?;
+            if triggers.iter().any(|t| {
+                !matches!(
+                    t.kind,
+                    TriggerKind::State { .. } | TriggerKind::Template { .. }
+                )
+            }) {
                 return Err(format!(
-                    "must contain at least one of below, above. @ data{at}"
+                    "wait_for_trigger supports state and template triggers only in hars @ data{at}"
                 ));
             }
-            Condition::NumericState {
-                entity_ids: entity_ids(o.get("entity_id"), &path(at, "entity_id"))?,
-                below,
-                above,
-            }
+            return Ok(Action::WaitForTrigger { triggers });
         }
-        "state" => {
-            only_keys(o, &[&common[..], &["entity_id", "state"]].concat(), at)?;
-            let states = match o.get("state") {
-                Some(Value::String(s)) => vec![s.clone()],
-                Some(Value::Array(a)) => a
-                    .iter()
-                    .map(|s| s.as_str().map(str::to_owned))
-                    .collect::<Option<_>>()
-                    .ok_or_else(|| format!("expected str @ data{at}['state']"))?,
-                _ => {
-                    return Err(format!(
-                        "expected str for dictionary value @ data{at}['state']"
-                    ));
-                }
-            };
-            Condition::State {
-                entity_ids: entity_ids(o.get("entity_id"), &path(at, "entity_id"))?,
-                states,
-            }
-        }
-        "time" => {
-            only_keys(o, &[&common[..], &["after", "before"]].concat(), at)?;
-            let t = |k: &str| -> R<Option<jiff::civil::Time>> {
-                o.get(k)
-                    .map(|v| {
-                        time(v)
-                            .ok_or_else(|| format!("Invalid time specified: {v} @ data{at}['{k}']"))
-                    })
-                    .transpose()
-            };
-            let (after, before) = (t("after")?, t("before")?);
-            if after.is_none() && before.is_none() {
+        // HA's other actions (`cv.determine_script_action`).
+        for (key, name) in [
+            ("delay", "delay"),
+            ("wait_template", "wait_template"),
+            ("event", "event"),
+            ("condition", "condition"),
+            ("if", "if"),
+            ("repeat", "repeat"),
+            ("parallel", "parallel"),
+            ("sequence", "sequence"),
+            ("variables", "variables"),
+            ("stop", "stop"),
+            ("scene", "scene"),
+            ("device_id", "device"),
+            ("set_conversation_response", "set_conversation_response"),
+        ] {
+            if o.contains_key(key) {
                 return Err(format!(
-                    "must contain at least one of before, after, weekday. @ data{at}"
+                    "the '{name}' action is not supported by hars yet @ data{at}"
                 ));
             }
-            Condition::Time { after, before }
         }
-        "trigger" => {
-            only_keys(o, &[&common[..], &["id"]].concat(), at)?;
-            let ids = match o.get("id") {
-                Some(Value::String(s)) => vec![s.clone()],
-                Some(Value::Number(n)) => vec![n.to_string()],
-                Some(Value::Array(a)) => a
-                    .iter()
-                    .map(|v| match v {
-                        Value::String(s) => Some(s.clone()),
-                        Value::Number(n) => Some(n.to_string()),
-                        _ => None,
-                    })
-                    .collect::<Option<_>>()
-                    .ok_or_else(|| format!("expected str @ data{at}['id']"))?,
-                _ => return Err(format!("required key not provided @ data{at}['id']")),
-            };
-            Condition::Trigger { ids }
-        }
-        other => {
-            return Err(format!(
-                "Invalid condition \"{other}\" specified @ data{at}"
-            ));
-        }
-    })
-}
-
-fn actions(v: Option<&Value>, at: &str) -> R<Vec<Action>> {
-    let list = match v {
-        Some(Value::Array(a)) => a.clone(),
-        Some(o @ Value::Object(_)) => vec![o.clone()],
-        _ => return Err(format!("required key not provided @ data{at}")),
-    };
-    // A disabled action is skipped.
-    enabled_items(&list, at)?
-        .iter()
-        .map(|(i, a)| action(a, &format!("{at}[{i}]")))
-        .collect()
-}
-
-fn action(v: &Value, at: &str) -> R<Action> {
-    let o = v
-        .as_object()
-        .ok_or_else(|| format!("expected a dictionary @ data{at}"))?;
-    if let Some(name) = o.get("action").or_else(|| o.get("service")) {
-        only_keys(
-            o,
-            &["action", "service", "target", "data", "alias", "enabled"],
-            at,
-        )?;
-        let name = name.as_str().unwrap_or_default();
-        let (domain, service) = name
-            .split_once('.')
-            .filter(|(d, s)| !d.is_empty() && !s.is_empty())
-            .ok_or_else(|| {
-                format!("Service {name} does not match format <domain>.<name> @ data{at}['action']")
-            })?;
-        let data = match o.get("data") {
-            None | Some(Value::Null) => Map::new(),
-            Some(Value::Object(d)) => d.clone(),
-            Some(_) => return Err(format!("expected a dictionary @ data{at}['data']")),
-        };
-        let mut target = Map::new();
-        match o.get("target") {
-            None | Some(Value::Null) => {}
-            Some(Value::Object(t)) => {
-                for (k, v) in t {
-                    // `cv.comp_entity_ids`: always a list.
-                    let list = match v {
-                        Value::String(s) => Value::Array(
-                            s.split(',')
-                                .map(|x| Value::String(x.trim().to_owned()))
-                                .collect(),
-                        ),
-                        other => other.clone(),
-                    };
-                    target.insert(k.clone(), list);
-                }
-            }
-            Some(_) => return Err(format!("expected a dictionary @ data{at}['target']")),
-        }
-        return Ok(Action::Call {
-            domain: domain.to_lowercase(),
-            service: service.to_lowercase(),
-            data,
-            target,
-        });
+        Err(format!("Unable to determine action @ data{at}"))
     }
-    if let Some(options) = o.get("choose") {
-        only_keys(o, &["choose", "default", "alias", "enabled"], at)?;
-        let list = match options {
-            Value::Array(a) => a.clone(),
-            o @ Value::Object(_) => vec![o.clone()],
-            _ => return Err(format!("expected a list @ data{at}['choose']")),
+
+    /// `variables` or `trigger_variables`: a dict (`cv.SCRIPT_VARIABLES_SCHEMA`),
+    /// in the order written (`order`), any other names after, sorted.
+    fn variables(
+        &mut self,
+        v: &Value,
+        limited: bool,
+        key: &str,
+        order: &[String],
+    ) -> R<Vec<Variable>> {
+        let Value::Object(m) = v else {
+            return Err(format!("expected a dictionary @ data['{key}']"));
         };
-        let options = list
+        let mode = if limited { Env::Limited } else { Env::Lenient };
+        let names = order
             .iter()
-            .enumerate()
-            .map(|(i, c)| {
-                let p = format!("{at}['choose'][{i}]");
-                let c = c
-                    .as_object()
-                    .ok_or_else(|| format!("expected a dictionary @ data{p}"))?;
-                only_keys(c, &["conditions", "sequence", "alias"], &p)?;
-                Ok((
-                    conditions(c.get("conditions"), &path(&p, "conditions"))?,
-                    actions(c.get("sequence"), &path(&p, "sequence"))?,
-                ))
+            .filter(|n| m.contains_key(n.as_str()))
+            .chain(m.keys().filter(|k| !order.contains(k)));
+        let out = names
+            .map(|name| {
+                Ok(Variable {
+                    name: name.clone(),
+                    value: self.complex(&m[name], mode, &path(&format!("['{key}']"), name))?,
+                    limited,
+                })
             })
-            .collect::<R<_>>()?;
-        let default = match o.get("default") {
-            None | Some(Value::Null) => vec![],
-            d => actions(d, &path(at, "default"))?,
-        };
-        return Ok(Action::Choose { options, default });
+            .collect::<R<Vec<_>>>()?;
+        self.templated = true;
+        Ok(out)
     }
-    if let Some(t) = o.get("wait_for_trigger") {
-        only_keys(o, &["wait_for_trigger", "alias", "enabled"], at)?;
-        let triggers = triggers(Some(t), &path(at, "wait_for_trigger"))?;
-        if triggers
-            .iter()
-            .any(|t| !matches!(t.kind, TriggerKind::State { .. }))
-        {
-            return Err(format!(
-                "wait_for_trigger supports state triggers only in hars @ data{at}"
-            ));
-        }
-        return Ok(Action::WaitForTrigger { triggers });
-    }
-    Err(format!("Unable to determine action @ data{at}"))
 }
 
-/// Validate one automation's config (an item of `automations.yaml`).
+/// The names of `trigger_variables` and `variables` in the order written:
+/// HA renders them in that order, each seeing the ones before it, and a
+/// JSON map here keeps its keys sorted.
+#[derive(Debug, Clone, Default)]
+pub struct Order {
+    pub trigger_variables: Vec<String>,
+    pub variables: Vec<String>,
+}
+
+impl Order {
+    /// The order in an item as loaded.
+    pub fn of(item: &ha_core::yaml::Yaml) -> Order {
+        let names = |key: &str| match item.get(key) {
+            Some(ha_core::yaml::Yaml::Map(pairs)) => pairs
+                .iter()
+                .filter_map(|(k, _)| k.as_str().map(str::to_owned))
+                .collect(),
+            _ => Vec::new(),
+        };
+        Order {
+            trigger_variables: names("trigger_variables"),
+            variables: names("variables"),
+        }
+    }
+}
+
+/// Validate one automation's config (an item of `automations.yaml`), its
+/// variables in sorted order.
 pub fn parse(v: &Value) -> Result<Config, String> {
-    reject_templates(v)?;
+    parse_ordered(v, &Order::default())
+}
+
+/// [`parse`], with the variables in the order written.
+pub fn parse_ordered(v: &Value, order: &Order) -> Result<Config, String> {
     let o = v.as_object().ok_or("expected a dictionary")?;
     only_keys(
         o,
@@ -566,6 +1014,7 @@ pub fn parse(v: &Value) -> Result<Config, String> {
             "initial_state",
             "trace",
             "variables",
+            "trigger_variables",
             "triggers",
             "trigger",
             "conditions",
@@ -575,20 +1024,14 @@ pub fn parse(v: &Value) -> Result<Config, String> {
         ],
         "",
     )?;
-    if o.contains_key("variables") {
-        return Err("variables are not supported by hars yet".into());
-    }
+    let mut ctx = Ctx::default();
     let id = match o.get("id") {
         None | Some(Value::Null) => None,
         Some(Value::String(s)) => Some(s.clone()),
         Some(Value::Number(n)) => Some(n.to_string()),
         Some(_) => return Err("expected str for dictionary value @ data['id']".into()),
     };
-    let alias = match o.get("alias") {
-        None | Some(Value::Null) => None,
-        Some(Value::String(s)) => Some(s.clone()),
-        Some(v) => Some(v.to_string()),
-    };
+    let alias = alias(o);
     let mode = match o.get("mode").and_then(Value::as_str) {
         None | Some("single") => Mode::Single,
         Some("restart") => Mode::Restart,
@@ -599,6 +1042,22 @@ pub fn parse(v: &Value) -> Result<Config, String> {
         Some(Value::Bool(b)) => Some(*b),
         Some(_) => return Err("expected boolean @ data['initial_state']".into()),
     };
+    let trigger_variables = match o.get("trigger_variables") {
+        None => vec![],
+        Some(v) => ctx.variables(v, true, "trigger_variables", &order.trigger_variables)?,
+    };
+    let own = match o.get("variables") {
+        None => vec![],
+        Some(v) => ctx.variables(v, false, "variables", &order.variables)?,
+    };
+    // `ScriptVariables(trigger_variables)` updated with `variables`.
+    let mut variables = trigger_variables.clone();
+    for v in own {
+        match variables.iter_mut().find(|x| x.name == v.name) {
+            Some(slot) => *slot = v,
+            None => variables.push(v),
+        }
+    }
     let tkey = if o.contains_key("triggers") {
         "triggers"
     } else {
@@ -614,13 +1073,19 @@ pub fn parse(v: &Value) -> Result<Config, String> {
     } else {
         "action"
     };
+    let triggers = ctx.triggers(o.get(tkey), &format!("['{tkey}']"))?;
+    let conditions = ctx.conditions(o.get(ckey), &format!("['{ckey}']"))?;
+    let actions = ctx.actions(o.get(akey), &format!("['{akey}']"))?;
     Ok(Config {
         id,
         alias,
         mode,
         initial_state,
-        triggers: triggers(o.get(tkey), &format!("['{tkey}']"))?,
-        conditions: conditions(o.get(ckey), &format!("['{ckey}']"))?,
-        actions: actions(o.get(akey), &format!("['{akey}']"))?,
+        triggers,
+        conditions,
+        actions,
+        trigger_variables,
+        variables,
+        templated: ctx.templated,
     })
 }

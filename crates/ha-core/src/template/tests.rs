@@ -1161,3 +1161,135 @@ fn function_edges_never_panic() {
         );
     }
 }
+
+/// What a script hands its templates: HA's `State` (printed as `State`
+/// prints, never collected), a `timedelta`, a tuple that stays one, and
+/// back to JSON for a service call.
+#[test]
+fn script_variables_keep_their_python_types() {
+    let hass = crate::Hass::new();
+    let id = crate::EntityId::parse("sensor.lounge_temperature").unwrap();
+    hass.set_state(id.clone(), "28", serde_json::Map::new());
+    let state = hass.states().get(&id).unwrap();
+    let home = Home::new(hass);
+    let mut vars = Vars::new();
+    vars.insert(
+        "trigger".into(),
+        Var::dict([
+            ("to_state".to_owned(), Var::state(state)),
+            (
+                "for".to_owned(),
+                Var::timedelta(std::time::Duration::from_secs(5)),
+            ),
+        ]),
+    );
+    let render = |vars: &Vars, source: &str| {
+        let r = Template::new(source).render_vars(Some(&home), vars, Mode::Lenient, true);
+        (r.result.map(|x| x.to_json().unwrap()), r.info)
+    };
+    let (out, info) = render(
+        &vars,
+        "{{ trigger.to_state.state }} {{ trigger.to_state.name }}",
+    );
+    assert_eq!(out.unwrap(), json!("28 lounge temperature"));
+    assert!(info.entities.is_empty(), "a script's State isn't collected");
+    let (out, _) = render(&vars, "{{ trigger.to_state }}");
+    assert!(
+        out.unwrap()
+            .as_str()
+            .unwrap()
+            .starts_with("<state sensor.lounge_temperature=28 @ "),
+    );
+    assert_eq!(
+        render(&vars, "{{ trigger.for }}").0.unwrap(),
+        json!("0:00:05")
+    );
+    let (missing, _) = render(&vars, "{{ trigger.to_state.state_with_unit }}");
+    assert_eq!(missing.unwrap(), json!(""), "State has no state_with_unit");
+    // A rendered tuple stays a tuple for later templates; JSON lists it.
+    let tuple = Template::new("{{ (1, 'a') }}")
+        .render_vars(None, &Vars::new(), Mode::Lenient, true)
+        .result
+        .unwrap();
+    let var = Var::rendered(&tuple);
+    assert_eq!(var.to_json(), json!([1, "a"]));
+    vars.insert("t".into(), var);
+    assert_eq!(
+        Template::new("{{ t | string }}")
+            .render_vars(None, &vars, Mode::Lenient, false)
+            .result
+            .unwrap()
+            .as_text(),
+        Some("(1, 'a')")
+    );
+}
+
+/// An undefined value used by an operator raises without a log line, in
+/// lenient mode too (HA: `vectors/templates.json` in ha-automation, where
+/// `{{ missing + 1 }}` logs nothing); printed, it warns.
+#[test]
+fn undefined_in_an_operator_is_not_logged() {
+    let r = Template::new("{{ missing + 1 }}").render(None, false);
+    assert_eq!(
+        r.result.unwrap_err().0,
+        "UndefinedError: 'missing' is undefined"
+    );
+    assert!(r.log.is_empty(), "{:?}", r.log);
+    let r = Template::new("{{ missing }}").render(None, false);
+    assert_eq!(r.log.len(), 1);
+}
+
+/// `_ENVIRONMENT_LIMITED`: what reads the instance or the clock raises
+/// HA's message; the rest works.
+#[test]
+fn limited_templates_refuse_states_and_the_clock() {
+    let home = Home::new(crate::Hass::new());
+    for (source, name) in [
+        ("{{ states('sensor.x') }}", "states"),
+        ("{{ 'sensor.x' | states }}", "states"),
+        ("{{ is_state('sensor.x', 'on') }}", "is_state"),
+        ("{{ now() }}", "now"),
+        ("{{ 'x' is has_value }}", "has_value"),
+    ] {
+        let err = Template::new(source)
+            .render_vars(Some(&home), &Vars::new(), Mode::Limited, true)
+            .result
+            .unwrap_err();
+        assert_eq!(
+            err.0,
+            format!("TemplateError: Use of '{name}' is not supported in limited templates"),
+            "{source}"
+        );
+    }
+    let ok = Template::new("{{ 'Lounge' ~ ' room' }}")
+        .render_vars(Some(&home), &Vars::new(), Mode::Limited, true)
+        .result
+        .unwrap();
+    assert_eq!(ok.as_text(), Some("Lounge room"));
+}
+
+/// Counting states is their lifecycle (an entity added or removed);
+/// iterating them is every change. `listeners` reports both, as HA does.
+#[test]
+fn counting_is_the_lifecycle() {
+    let hass = crate::Hass::new();
+    hass.set_state(
+        crate::EntityId::parse("light.a").unwrap(),
+        "on",
+        serde_json::Map::new(),
+    );
+    let home = Home::new(hass);
+    let info = |source: &str| {
+        Template::new(source)
+            .render_in(Some(&home), None, false)
+            .info
+    };
+    let counted = info("{{ states.light | count }}");
+    assert!(counted.domains.is_empty() && counted.domains_lifecycle.contains("light"));
+    assert_eq!(counted.listeners()["domains"], json!(["light"]));
+    let all = info("{{ states | count }}");
+    assert!(!all.all_states && all.all_states_lifecycle && all.needs_all());
+    assert_eq!(all.listeners()["all"], json!(true));
+    let iterated = info("{{ states.light | list | count }}");
+    assert!(iterated.domains.contains("light"));
+}

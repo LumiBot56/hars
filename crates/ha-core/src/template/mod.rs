@@ -27,6 +27,14 @@
 //! - **Compiling once.** A [`Template`] compiles on first use with the
 //!   strictness asked for then, and keeps it, as HA's `_ensure_compiled`
 //!   does; compile errors are not kept, so the next use tries again.
+//! - **Scripts' templates** ([`Template::render_vars`]): HA's `async_render`
+//!   with Python values as variables ([`Var`]: HA's `State`, `datetime`,
+//!   `timedelta`, a parsed result), a static template parsed too, and
+//!   HA's limited environment ([`Mode::Limited`], for `trigger_variables`),
+//!   where the functions that read the instance or the clock raise `Use of
+//!   '…' is not supported in limited templates`.
+//! - **Where renders run** ([`run`]): on threads of their own, a few at a
+//!   time, for the WebSocket and automations alike.
 //! - **A budget.** Any logged-in user can send a template, so every render
 //!   has [`FUEL`]: instructions, and the data it makes (strings, lists,
 //!   output, measured deeply by the patched minijinja in `vendor/`), are
@@ -85,12 +93,15 @@ mod literal;
 mod names;
 mod num;
 mod pytime;
+pub mod run;
 mod syntax;
 #[cfg(test)]
 mod tests;
+mod vars;
 
 pub use home::{DisplayPrecision, Home, RenderInfo};
 pub use literal::{Rendered, Unserializable, parse_result};
+pub use vars::{Var, Vars};
 
 use crate::py;
 use minijinja::value::{Enumerator, Object, ObjectExt, ObjectRepr, Tuple, ValueKind};
@@ -156,6 +167,23 @@ pub struct Render {
     pub info: RenderInfo,
 }
 
+/// The environment a template compiles in: HA's (`_ENVIRONMENT`), the
+/// strict one (`_ENVIRONMENT_STRICT`), or the limited one
+/// (`_ENVIRONMENT_LIMITED`), where the functions that read the instance or
+/// the clock raise `Use of '…' is not supported in limited templates`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Lenient,
+    Strict,
+    Limited,
+}
+
+impl Mode {
+    fn strict(strict: bool) -> Mode {
+        if strict { Mode::Strict } else { Mode::Lenient }
+    }
+}
+
 /// HA's `Template`: one template string, compiled on first render.
 pub struct Template {
     source: Arc<str>,
@@ -167,7 +195,7 @@ pub struct Template {
 /// template lives in its own copy of the environment, whose filter, test
 /// and global tables are shared (`Arc`) with every other copy.
 struct Bound {
-    strict: bool,
+    mode: Mode,
     env: Environment<'static>,
     /// HA functions it names that hars doesn't have.
     unsupported: Box<[&'static str]>,
@@ -201,14 +229,25 @@ impl Template {
     /// `ensure_valid` + `_ensure_compiled(strict)`: compile with `strict`
     /// unless already compiled (the first strictness stays).
     pub fn compile(&self, strict: bool) -> Result<(), TemplateError> {
-        self.bound(strict).map(|_| ())
+        self.bound(Mode::strict(strict)).map(|_| ())
     }
 
-    fn bound(&self, strict: bool) -> Result<&Bound, TemplateError> {
+    /// [`Template::compile`] in an environment of its own choosing (HA's
+    /// `ensure_valid` with the first render's `limited` or `strict`).
+    pub fn compile_in(&self, mode: Mode) -> Result<(), TemplateError> {
+        self.bound(mode).map(|_| ())
+    }
+
+    fn bound(&self, mode: Mode) -> Result<&Bound, TemplateError> {
         if let Some(bound) = self.compiled.get() {
             return Ok(bound);
         }
-        let mut env = if strict { &ENVS.strict } else { &ENVS.lenient }.clone();
+        let mut env = match mode {
+            Mode::Lenient => &ENVS.lenient,
+            Mode::Strict => &ENVS.strict,
+            Mode::Limited => &ENVS.limited,
+        }
+        .clone();
         env.add_template_owned(NAME, self.source.to_string())
             .map_err(|e| {
                 let detail = e.detail().unwrap_or_default();
@@ -230,7 +269,7 @@ impl Template {
             .filter(|n| !SERVED_GLOBALS.contains(n) && used.contains(*n))
             .collect();
         let _ = self.compiled.set(Bound {
-            strict,
+            mode,
             env,
             unsupported,
         });
@@ -265,16 +304,44 @@ impl Template {
             };
         }
         let mut info = RenderInfo::default();
+        let root = variables.map(convert_map).unwrap_or_default();
         let result = self
-            .bound(strict)
-            .and_then(|bound| self.render_bound(bound, home, variables, &mut log, &mut info))
-            .map(|out| {
-                let stripped = py::strip(&out);
-                parse_result(if stripped.len() == out.len() {
-                    out
+            .bound(Mode::strict(strict))
+            .and_then(|bound| self.render_bound(bound, home, root, &mut log, &mut info))
+            .map(|out| parse_result(strip_owned(out)));
+        Render { result, log, info }
+    }
+
+    /// `async_render(variables, parse_result=parse)`, as HA's scripts use
+    /// it (`render_complex`, conditions, triggers): a static template is
+    /// its source, parsed unless `parse` is false; `mode` is used if this
+    /// is the first render (HA's `_ensure_compiled`).
+    pub fn render_vars(&self, home: Option<&Home>, vars: &Vars, mode: Mode, parse: bool) -> Render {
+        let mut log = Log::new();
+        let mut info = RenderInfo::default();
+        if self.is_static {
+            let text = self.source.to_string();
+            return Render {
+                result: Ok(if parse {
+                    parse_result(text)
                 } else {
-                    stripped.to_owned()
-                })
+                    Rendered::text(text)
+                }),
+                log,
+                info,
+            };
+        }
+        let root = vars.iter().map(|(k, v)| (k.clone(), v.0.clone())).collect();
+        let result = self
+            .bound(mode)
+            .and_then(|bound| self.render_bound(bound, home, root, &mut log, &mut info))
+            .map(|out| {
+                let out = strip_owned(out);
+                if parse {
+                    parse_result(out)
+                } else {
+                    Rendered::text(out)
+                }
             });
         Render { result, log, info }
     }
@@ -290,8 +357,9 @@ impl Template {
     ) -> Render {
         let mut log = Log::new();
         let mut info = RenderInfo::default();
-        let result = self.bound(strict).and_then(|bound| {
-            self.render_bound(bound, home, variables, &mut log, &mut info)
+        let root = variables.map(convert_map).unwrap_or_default();
+        let result = self.bound(Mode::strict(strict)).and_then(|bound| {
+            self.render_bound(bound, home, root, &mut log, &mut info)
                 .map(|_| Rendered::text(String::new()))
         });
         Render { result, log, info }
@@ -301,19 +369,19 @@ impl Template {
         &self,
         bound: &Bound,
         home: Option<&Home>,
-        variables: Option<&Map<String, serde_json::Value>>,
+        variables: BTreeMap<String, Value>,
         log: &mut Log,
         info: &mut RenderInfo,
     ) -> Result<String, TemplateError> {
         if let Some(name) = bound
             .unsupported
             .iter()
-            .find(|n| variables.is_none_or(|v| !v.contains_key(**n)))
+            .find(|n| !variables.contains_key(**n))
         {
             return Err(unsupported("function", name));
         }
         let root = Value::from_object(Dict {
-            entries: variables.map(convert_map).unwrap_or_default(),
+            entries: variables,
             root: true,
             type_name: "dict object",
         });
@@ -341,8 +409,19 @@ impl Template {
         log.extend(logged);
         match rendered {
             Ok(_) => Ok(String::from_utf8(out.buf).expect("minijinja writes UTF-8")),
-            Err(e) => Err(runtime_error(&e, bound.strict, miss, log)),
+            Err(e) => Err(runtime_error(&e, bound.mode == Mode::Strict, miss, log)),
         }
+    }
+}
+
+/// A rendered string, stripped (`str.strip`), without a copy when there
+/// is nothing to strip.
+fn strip_owned(out: String) -> String {
+    let stripped = py::strip(&out);
+    if stripped.len() == out.len() {
+        out
+    } else {
+        stripped.to_owned()
     }
 }
 
@@ -410,9 +489,12 @@ fn runtime_error(
             "OverflowError: Range too big. The sandbox blocks ranges larger than MAX_RANGE (100000)."
                 .into(),
         ),
-        // Arithmetic or a comparison on an undefined value.
+        // Arithmetic or a comparison on an undefined value: Jinja's
+        // operator methods are the base class's `_fail_with_undefined_error`,
+        // so `LoggingUndefined` raises without logging (HA logs nothing for
+        // `{{ missing + 1 }}`: `vectors/templates.json` in ha-automation).
         ErrorKind::InvalidOperation if detail.contains("undefined") && miss.is_some() => {
-            undefined(miss.unwrap_or_default())
+            TemplateError(format!("UndefinedError: {}", miss.unwrap_or_default()))
         }
         _ => TemplateError(format!("TemplateError: {detail}")),
     }
@@ -538,20 +620,68 @@ static OUT_OF_BUDGET: LazyLock<String> = LazyLock::new(|| {
 /// Deepest nesting `str()` prints (Python stops with `RecursionError`).
 const MAX_REPR_DEPTH: usize = 100;
 
-/// The two environments (`_ENVIRONMENT`, `_ENVIRONMENT_STRICT`), built on
-/// first use and shared by every template.
+/// The environments (`_ENVIRONMENT`, `_ENVIRONMENT_STRICT`,
+/// `_ENVIRONMENT_LIMITED`), built on first use and shared by every
+/// template.
 struct Envs {
     lenient: Environment<'static>,
     strict: Environment<'static>,
+    limited: Environment<'static>,
 }
 
 static ENVS: LazyLock<Envs> = LazyLock::new(|| {
     minijinja::value::set_missing_hook(missing_attribute);
+    let lenient = environment(UndefinedBehavior::Lenient);
+    let mut limited = lenient.clone();
+    limit(&mut limited);
     Envs {
-        lenient: environment(UndefinedBehavior::Lenient),
+        lenient,
         strict: environment(UndefinedBehavior::Strict),
+        limited,
     }
 });
+
+/// The functions HA's limited environment replaces (`limited_ok=False`)
+/// that hars serves, and where they are registered (global, filter, test).
+const NOT_LIMITED: &[(&str, bool, bool, bool)] = &[
+    ("states", true, true, false),
+    ("has_value", true, true, true),
+    ("is_state", true, false, true),
+    ("is_state_attr", true, false, true),
+    ("state_attr", true, true, false),
+    ("now", true, false, false),
+    ("utcnow", true, false, false),
+    ("relative_time", true, true, false),
+    ("time_since", true, true, false),
+    ("time_until", true, true, false),
+    ("today_at", true, true, false),
+];
+
+/// `BaseTemplateExtension._create_unsupported_function` for each of
+/// [`NOT_LIMITED`].
+fn limit(env: &mut Environment<'static>) {
+    use minijinja::value::Rest;
+    for (name, global, filter, test) in NOT_LIMITED.iter().copied() {
+        let raise = move |_: Rest<Value>| -> Result<Value, Error> {
+            Err(jinja::py_error(format!(
+                "TemplateError: Use of '{name}' is not supported in limited templates"
+            )))
+        };
+        if global {
+            env.add_function(name, raise);
+        }
+        if filter {
+            env.add_filter(name, raise);
+        }
+        if test {
+            env.add_test(name, move |_: Rest<Value>| -> Result<bool, Error> {
+                Err(jinja::py_error(format!(
+                    "TemplateError: Use of '{name}' is not supported in limited templates"
+                )))
+            });
+        }
+    }
+}
 
 fn environment(undefined: UndefinedBehavior) -> Environment<'static> {
     let mut env = Environment::new();

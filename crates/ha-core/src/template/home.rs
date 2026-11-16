@@ -52,34 +52,55 @@ impl Home {
     }
 }
 
-/// HA's `RenderInfo`, as far as `render_template` reports it.
+/// HA's `RenderInfo`: what a render read.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RenderInfo {
-    /// Every state was iterated (`all_states`) or counted
-    /// (`all_states_lifecycle`).
+    /// Every state was iterated (`all_states`).
     pub all_states: bool,
+    /// Every state was counted (`all_states_lifecycle`): only an entity
+    /// added or removed changes that.
+    pub all_states_lifecycle: bool,
     /// Entities read, as asked for (`states('LIGHT.X')` collects
     /// `light.x` if it exists, else `LIGHT.X`).
     pub entities: BTreeSet<SmolStr>,
-    /// Domains iterated or counted.
+    /// Domains iterated.
     pub domains: BTreeSet<SmolStr>,
+    /// Domains counted (`domains_lifecycle`).
+    pub domains_lifecycle: BTreeSet<SmolStr>,
     /// `now()`, `utcnow()`, `today_at()` or a relative time was used.
     pub has_time: bool,
 }
 
 impl RenderInfo {
+    /// `_render_infos_needs_all_listener`.
+    pub fn needs_all(&self) -> bool {
+        self.all_states || self.all_states_lifecycle
+    }
+
+    /// `_entities_domains_from_render_infos`'s domains: iterated or
+    /// counted.
+    pub fn tracked_domains(&self) -> impl Iterator<Item = &SmolStr> {
+        self.domains.iter().chain(
+            self.domains_lifecycle
+                .iter()
+                .filter(|d| !self.domains.contains(*d)),
+        )
+    }
+
     /// `_render_infos_to_track_states` with `has_time`: the `listeners` of
     /// a `render_template` event.
     pub fn listeners(&self) -> serde_json::Value {
-        if self.all_states {
+        if self.needs_all() {
             return serde_json::json!({
                 "all": true, "entities": [], "domains": [], "time": self.has_time,
             });
         }
+        let mut domains: Vec<&str> = self.tracked_domains().map(SmolStr::as_str).collect();
+        domains.sort_unstable();
         serde_json::json!({
             "all": false,
             "entities": self.entities.iter().map(SmolStr::as_str).collect::<Vec<_>>(),
-            "domains": self.domains.iter().map(SmolStr::as_str).collect::<Vec<_>>(),
+            "domains": domains,
             "time": self.has_time,
         })
     }
@@ -182,6 +203,18 @@ fn collect_domain(domain: &str) {
 
 fn collect_all() {
     CTX.with_borrow_mut(|c| c.info.all_states = true);
+}
+
+fn collect_all_lifecycle() {
+    CTX.with_borrow_mut(|c| c.info.all_states_lifecycle = true);
+}
+
+fn collect_domain_lifecycle(domain: &str) {
+    CTX.with_borrow_mut(|c| {
+        if !c.info.domains_lifecycle.contains(domain) {
+            c.info.domains_lifecycle.insert(SmolStr::new(domain));
+        }
+    });
 }
 
 /// Every state, sorted by entity id, taken once per render.
@@ -480,7 +513,7 @@ impl Object for AllStates {
     }
 
     fn enumerator_len(self: &Arc<Self>) -> Option<usize> {
-        collect_all();
+        collect_all_lifecycle();
         Some(snapshot().len())
     }
 
@@ -539,7 +572,7 @@ impl Object for DomainStates {
     }
 
     fn enumerator_len(self: &Arc<Self>) -> Option<usize> {
-        collect_domain(&self.0);
+        collect_domain_lifecycle(&self.0);
         Some(domain_states(&self.0).1.len())
     }
 
@@ -549,10 +582,13 @@ impl Object for DomainStates {
 }
 
 /// `TemplateState`: one state. Reading it collects its entity, unless it
-/// came from iterating (`collect=False`).
+/// came from iterating (`collect=False`). With `raw`, HA's `State` itself
+/// (what a script's `trigger.to_state` is): never collected, printed as
+/// `State` prints, and without `TemplateState`'s `state_with_unit`.
 pub(super) struct TemplateState {
     state: Arc<HaState>,
     collect: bool,
+    raw: bool,
 }
 
 /// `State` names that aren't served.
@@ -568,7 +604,20 @@ const STATE_METHODS: &[&str] = &[
 
 impl TemplateState {
     fn value(state: Arc<HaState>, collect: bool) -> Value {
-        Value::from_object(TemplateState { state, collect })
+        Value::from_object(TemplateState {
+            state,
+            collect,
+            raw: false,
+        })
+    }
+
+    /// HA's `State` object.
+    pub(super) fn raw(state: Arc<HaState>) -> Value {
+        Value::from_object(TemplateState {
+            state,
+            collect: false,
+            raw: true,
+        })
     }
 
     fn collect(&self) {
@@ -666,7 +715,7 @@ impl Object for TemplateState {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let s = &self.state;
         let Some(name) = key.as_str() else {
-            return state_no_attribute(key);
+            return state_no_attribute(key, self.raw);
         };
         let v = match name {
             "entity_id" => return paid_str(s.entity_id.as_str()),
@@ -682,9 +731,10 @@ impl Object for TemplateState {
             "object_id" => paid_str(s.entity_id.object_id())?,
             "name" => match s.attributes.get("friendly_name") {
                 Some(n) if py_truthy(n) => pay(json_cost(n)).then(|| Value::from(self.name()))?,
-                _ => paid_str(s.entity_id.object_id())?,
+                // `object_id.replace("_", " ")`.
+                _ => paid_str(&s.entity_id.object_id().replace('_', " "))?,
             },
-            "state_with_unit" => {
+            "state_with_unit" if !self.raw => {
                 pay(format_cost(s)).then(|| Value::from(format_state(s, true, true)))?
             }
             _ if STATE_METHODS.contains(&name) => {
@@ -698,11 +748,12 @@ impl Object for TemplateState {
                     return None;
                 }
                 super::note_miss(format!(
-                    "access to attribute '{name}' of 'TemplateState' object is unsafe."
+                    "access to attribute '{name}' of '{}' object is unsafe.",
+                    if self.raw { "State" } else { "TemplateState" }
                 ));
                 return None;
             }
-            _ => return state_no_attribute(key),
+            _ => return state_no_attribute(key, self.raw),
         };
         self.collect();
         Some(v)
@@ -722,8 +773,9 @@ impl Object for TemplateState {
             return None;
         }
         let other_state = other.downcast_object_ref::<TemplateState>();
-        let same = other_state
-            .is_some_and(|o| Arc::ptr_eq(&o.state, &self.state) && o.collect == self.collect);
+        let same = other_state.is_some_and(|o| {
+            Arc::ptr_eq(&o.state, &self.state) && o.collect == self.collect && o.raw == self.raw
+        });
         // In a container or `in`, Python finds the same object without
         // asking it (and so without reading the state).
         if op == BinOp::EqItem && same {
@@ -755,18 +807,20 @@ impl Object for TemplateState {
             return Ok(());
         }
         let mut s = String::new();
-        state_repr(&mut s, &self.state);
+        state_repr(&mut s, &self.state, self.raw);
         f.write_str(&s)
     }
 }
 
-fn state_no_attribute(key: &Value) -> Option<Value> {
+fn state_no_attribute(key: &Value, raw: bool) -> Option<Value> {
     if !super::pay_for_key(key) {
         return None;
     }
-    let mut message = String::from(
-        "'homeassistant.helpers.template.states.TemplateState object' has no attribute ",
-    );
+    let mut message = String::from(if raw {
+        "'homeassistant.core.State object' has no attribute "
+    } else {
+        "'homeassistant.helpers.template.states.TemplateState object' has no attribute "
+    });
     match key.as_str() {
         Some(k) => crate::py::repr_str(&mut message, k),
         None => message.push_str(&key.to_string()),
@@ -779,9 +833,13 @@ fn micros_to_secs(t: jiff::Timestamp) -> f64 {
     super::pytime::int_true_div(i128::from(t.as_microsecond()), 1_000_000)
 }
 
-/// `TemplateState.__repr__` with `State.__repr__` inside it.
-fn state_repr(out: &mut String, s: &HaState) {
-    out.push_str("<template TemplateState(<state ");
+/// `TemplateState.__repr__` with `State.__repr__` inside it, or `raw`,
+/// `State.__repr__` alone.
+fn state_repr(out: &mut String, s: &HaState, raw: bool) {
+    if !raw {
+        out.push_str("<template TemplateState(");
+    }
+    out.push_str("<state ");
     out.push_str(s.entity_id.as_str());
     out.push('=');
     out.push_str(&s.state);
@@ -794,7 +852,10 @@ fn state_repr(out: &mut String, s: &HaState) {
     if let Ok(dt) = local {
         dt.iso(out, 'T');
     }
-    out.push_str(">)>");
+    out.push('>');
+    if !raw {
+        out.push_str(")>");
+    }
 }
 
 /// `util.repr_helper` of a mapping.
@@ -823,6 +884,9 @@ impl fmt::Debug for Context {
 
 impl fmt::Debug for TemplateState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.raw {
+            return write!(f, "<state {}>", self.state.entity_id.as_str());
+        }
         write!(
             f,
             "<template TemplateState({})>",
@@ -871,7 +935,7 @@ pub(super) fn py_repr<W: fmt::Write>(
             return Some(Err(e));
         }
         let mut s = String::new();
-        state_repr(&mut s, &t.state);
+        state_repr(&mut s, &t.state, t.raw);
         return Some(out.put(&s));
     }
     if o.downcast_ref::<Context>().is_some() {

@@ -11,8 +11,9 @@
 //!
 //! Template input is hostile: any logged-in user can send it. Compiling
 //! and rendering run on threads of their own, with a fixed stack
-//! ([`ha_core::template::STACK`]), never on the async runtime, at
-//! most [`RENDERS_AT_ONCE`] at a time across every connection, each render
+//! ([`ha_core::template::STACK`]), never on the async runtime, at most
+//! `ha_core::template::run::RENDERS_AT_ONCE` at a time across every
+//! connection and automation (`ha_core::template::run`), each render
 //! within its fuel budget ([`ha_core::template::FUEL`]). A connection
 //! handles its messages in order, so what follows a `render_template` waits
 //! for its replies (in a bounded queue; the connection keeps reading, so a
@@ -31,13 +32,12 @@
 
 use super::commands::{Bad, cv_entity_ids};
 use super::{Conn, Invalid, Outbox};
-use ha_core::template::{DisplayPrecision, Home, Level, Log, Render, Template, TemplateError};
+use ha_core::template::{Home, Level, Log, Render, Template, TemplateError};
 use parking_lot::Mutex;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 use tokio::task::JoinHandle;
 
 /// `functools.lru_cache`'s default `maxsize`.
@@ -249,83 +249,29 @@ fn render_template(conn: &mut Conn, id: u64, msg: &Map<String, Value>) -> Result
 /// What templates read: the instance, and the entity registry's sensor
 /// display precision (`sensor.async_rounded_state`'s `_display_precision`).
 fn home(shared: &crate::Shared) -> Home {
-    let registry = shared.config.registry.clone();
     Home {
         hass: shared.hass.clone(),
-        display_precision: registry.map(|r| {
-            Arc::new(move |entity_id: &str| display_precision(&r.snapshot(), entity_id))
-                as DisplayPrecision
-        }),
-    }
-}
-
-/// `display_precision`, else `suggested_display_precision`, of a sensor's
-/// registry entry.
-fn display_precision(r: &ha_registry::Registries, entity_id: &str) -> Option<i64> {
-    let entry = r.entities.iter().find(|e| e.entity_id == entity_id)?;
-    let options = entry.options.object();
-    let sensor = options.get("sensor")?.as_object()?;
-    match sensor.get("display_precision") {
-        Some(p) if !p.is_null() => p.as_i64(),
-        _ => sensor.get("suggested_display_precision")?.as_i64(),
+        display_precision: shared
+            .config
+            .registry
+            .as_ref()
+            .map(|r| r.display_precision()),
     }
 }
 
 /// Templates longer than this aren't kept: 128 of them stay under 1 MiB.
 const CACHE_MAX_SOURCE: usize = 8 * 1024;
 
-/// Renders running at once, across every connection. A permit is taken
-/// before a render starts and given back when its thread is done with it,
-/// even if nobody waits for the answer any more (a timed-out render runs
-/// on to its fuel budget). When they are all taken, the next render waits
-/// for one, and its connection reads nothing more until then: at most one
-/// waiting render per connection.
-pub(crate) const RENDERS_AT_ONCE: usize = 2;
-
-static RENDERS: LazyLock<Arc<Semaphore>> =
-    LazyLock::new(|| Arc::new(Semaphore::new(RENDERS_AT_ONCE)));
-
-/// Run template work on a render thread, holding a render permit until
-/// it returns. `None` if it panicked.
+/// Run template work on a render thread (`ha_core::template::run`, shared
+/// with automations), holding a render permit until it returns. When they
+/// are all taken, the next render waits for one, and its connection reads
+/// nothing more until then: at most one waiting render per connection.
 async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
-    let permit = RENDERS.clone().acquire_owned().await.ok()?;
-    on_render_thread(permit, work)?.await.ok()
+    ha_core::template::run::run(work).await
 }
 
-/// Start `work` on its own thread with [`ha_core::template::STACK`] (not
-/// the blocking pool's default), holding `permit` until it returns. The
-/// answer comes back on the receiver; `None` if no thread could start.
-fn on_render_thread<T: Send + 'static>(
-    permit: OwnedSemaphorePermit,
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Option<oneshot::Receiver<T>> {
-    let (tx, rx) = oneshot::channel();
-    std::thread::Builder::new()
-        .name("hars-template".into())
-        .stack_size(ha_core::template::STACK)
-        .spawn(move || {
-            let _permit = permit;
-            let _ = tx.send(work());
-        })
-        .ok()?;
-    Some(rx)
-}
-
-/// Render permits free now.
 #[cfg(test)]
-pub(crate) fn renders_free() -> usize {
-    RENDERS.available_permits()
-}
-
-/// Take every render permit (until dropped).
-#[cfg(test)]
-pub(crate) async fn take_all_renders() -> tokio::sync::OwnedSemaphorePermit {
-    RENDERS
-        .clone()
-        .acquire_many_owned(RENDERS_AT_ONCE as u32)
-        .await
-        .expect("open")
-}
+pub(crate) use ha_core::template::run::{RENDERS_AT_ONCE, renders_free, take_all_renders};
 
 enum Timed {
     Over,
@@ -342,11 +288,11 @@ async fn timed(
     strict: bool,
     timeout: f64,
 ) -> Timed {
-    let Ok(permit) = RENDERS.clone().acquire_owned().await else {
+    let Some(permit) = ha_core::template::run::permit().await else {
         return Timed::NotCompiled;
     };
     let (t, h, v) = (template.clone(), home.clone(), variables.clone());
-    let Some(job) = on_render_thread(permit, move || {
+    let Some(job) = ha_core::template::run::on_render_thread(permit, move || {
         t.compile(strict)
             .ok()
             .map(|()| t.render_discarding(Some(&h), v.as_deref(), strict).log)
