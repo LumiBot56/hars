@@ -116,7 +116,7 @@ fn ha_config(dir: &Path) -> String {
     std::fs::write(
         dir.join("automations.yaml"),
         "- id: ok\n  alias: Fine\n  triggers: [{trigger: time, at: '23:30:00'}]\n  actions: [{action: light.turn_off}]\n\
-         - id: tpl\n  alias: Templated\n  triggers: [{trigger: time, at: '23:30:00'}]\n  actions: [{action: light.turn_on, data: {brightness: '{{ 1 }}'}}]\n",
+         - id: wait\n  alias: Waiting\n  triggers: [{trigger: time, at: '23:30:00'}]\n  actions: [{delay: '{{ 5 }}'}]\n",
     )
     .unwrap();
     // Not used by any file: never copied.
@@ -250,7 +250,9 @@ fn imports_an_ha_install_and_keeps_its_sessions() {
     );
     assert_eq!(report["automations"][1]["status"], "unavailable");
     assert!(
-        stdout.contains("automation Templated will be unavailable: templates are not supported"),
+        stdout.contains(
+            "automation Waiting will be unavailable: the 'delay' action is not supported"
+        ),
         "{stdout}"
     );
     assert!(stdout.contains("automations: 1 of 2 supported"), "{stdout}");

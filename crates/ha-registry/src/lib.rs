@@ -919,6 +919,18 @@ impl Registries {
         out.into_iter().map(str::to_owned).collect()
     }
 
+    /// `display_precision`, else `suggested_display_precision`, of a
+    /// sensor's entry (`sensor.async_rounded_state`'s `_display_precision`).
+    pub fn sensor_display_precision(&self, entity_id: &str) -> Option<i64> {
+        let entry = self.entities.iter().find(|e| e.entity_id == entity_id)?;
+        let options = entry.options.object();
+        let sensor = options.get("sensor")?.as_object()?;
+        match sensor.get("display_precision") {
+            Some(p) if !p.is_null() => p.as_i64(),
+            _ => sensor.get("suggested_display_precision")?.as_i64(),
+        }
+    }
+
     /// HA's `_write_unavailable_states` at start: every enabled entity with
     /// no state yet gets `unavailable`, marked `restored`, with what the
     /// registry knows of it (`RegistryEntry.write_unavailable_state`).

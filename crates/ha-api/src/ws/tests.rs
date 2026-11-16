@@ -1495,7 +1495,7 @@ async fn automation_config_is_the_raw_entry() {
     let ha_core::yaml::Yaml::Seq(items) = items else {
         panic!()
     };
-    let autos = ha_automation::Automations::setup_yaml(&hass, &Default::default(), &items);
+    let autos = ha_automation::Automations::setup_yaml(&hass, &Default::default(), &items).await;
     let s = server_with(crate::ApiConfig {
         automations: Some(autos),
         ..Default::default()
@@ -1535,7 +1535,7 @@ async fn automation_config_quirks() {
     let ha_core::yaml::Yaml::Seq(items) = items else {
         panic!()
     };
-    let autos = ha_automation::Automations::setup_yaml(&hass, &Default::default(), &items);
+    let autos = ha_automation::Automations::setup_yaml(&hass, &Default::default(), &items).await;
     let s = server_with(crate::ApiConfig {
         automations: Some(autos),
         ..Default::default()

@@ -57,16 +57,23 @@ as they are, and the importer carries them over.
 - **More-info** for every inventory entity: light brightness/colour/temperature
   controls, climate modes/setpoint, sensor history graph, weather forecast
 
-### Automations (YAML, no templates)
+### Automations (YAML, with templates)
 
-- Triggers: `state` (`to`, `for`), `numeric_state` (`below`), `time` (`at`),
+- Triggers: `state` (`to`, `for`), `numeric_state` (`below`, `above`,
+  `value_template`), `time` (`at`), `template` (`value_template`, `for`),
   `sun.sun` state, trigger `id`
-- Conditions: `state`, `numeric_state`, `time` (`after` inclusive / `before`
-  exclusive, windows crossing midnight), `trigger`
-- Actions: service call (`target.entity_id` single/list, `data`),
-  `choose`/`default`, `wait_for_trigger` (with `for`)
+- Conditions: `state`, `numeric_state` (`value_template`), `time` (`after`
+  inclusive / `before` exclusive, windows crossing midnight), `trigger`,
+  `template` and its `"{{ … }}"` shorthand
+- Actions: service call (`target.entity_id` single/list, `data`,
+  `data_template`, templates in the action name, target and data),
+  `choose`/`default`, `wait_for_trigger` (state and template triggers, with
+  `for`; `wait` afterwards)
+- Variables: `trigger`, `this`, `variables`, `trigger_variables`
+  (limited), and `automation.trigger`'s `variables`
 - Modes: `single`, `restart`
-- Light data: `brightness_pct`, `color_temp_kelvin`, `transition`
+- Light data: `brightness_pct`, `color_temp_kelvin`, `transition`; notify
+  data rendered from the trigger and states (alerts to the phone)
 
 ### Explicitly out of MVP
 
@@ -74,8 +81,8 @@ as they are, and the importer carries them over.
 - SwitchBot webhooks: these need an external URL
 - Onboarding defaults that are installed but unused: `shopping_list`/`todo`,
   `google_translate` TTS, `radio_browser`, `go2rtc`, `backup`, `analytics`, Assist
-- Blueprints, scripts/scenes YAML, Jinja templates beyond `render_template`'s
-  first slice
+- Blueprints, scripts/scenes YAML, Jinja templates beyond the first slices
+  (`render_template`'s and automations')
 - Config flows for *adding* integrations, the UI automation editor, dashboard
   editing beyond `lovelace/config/save`, long-term statistics, the add-on store, HACS
 - Importing HA's history database: `hars` history starts fresh at cutover
@@ -346,6 +353,26 @@ Fixtures are sanitised (no tokens, coordinates rounded) before they are committe
       over 10 days of recorded data (1,345 triggers, 1,627 light calls; the
       vector is the reference install's motion timeline, which is personal
       data, so it's kept out of the repo: `HARS_AUTOMATION_REPLAY` runs it)
+- [x] Templates in YAML automations: the `trigger` variable of every
+      supported trigger (HA's `State` objects, `for` as a `timedelta`,
+      `now` as a local `datetime`), `this`, `variables` and
+      `trigger_variables` (rendered limited); service calls render the
+      action name, target and data with `render_complex` and
+      `_parse_result` (native numbers, lists, dicts) and HA's errors, a
+      target's entity registry ids resolved to entity ids;
+      `template` conditions and the shorthand, `numeric_state`'s
+      `value_template` (condition and trigger); the `template` trigger with
+      `for`, re-rendered as `async_track_template_result` does (only on what
+      the last render read, every minute while it reads the clock, domain
+      and all-states rate limits); `choose` and `wait_for_trigger` with
+      templates. Templates compile once when the config loads and render on
+      the render threads `render_template` uses, never on the async
+      runtime. Matched against HA's own engine on 19 scenarios
+      (`scripts/vectors/automation_templates.py`), including the phone
+      alert. Not yet, and refused when loading (the automation is
+      `unavailable`, saying why): templates in `for`, `at` and `enabled`,
+      a trigger's own `variables`, and the `delay`, `wait_template`,
+      `variables`, `if`, `repeat` and other actions
 
 ### M4: Integrations (binary and RSS cost recorded in `docs/perf/RESULTS.md` as each lands)
 - [x] `sun` (solar elevation/azimuth + `sensor.sun_next_*`, HA-matched maths:
@@ -544,8 +571,11 @@ Fixtures are sanitised (no tokens, coordinates rounded) before they are committe
   `closest`, `distance`, translations, regex, JSON, crypto, base64,
   collections, strings, issues, config entries, functional, `version`),
   re-rendering `render_template` subscriptions on state and time changes
-  (listening to what `listeners` reports, rate limits), templates in
-  automations, `custom_templates` imports; scripts, scenes YAML, blueprints
+  (the template trigger's tracker does this for automations), templates
+  in automations beyond the first slice (`delay`, `wait_template`, `for`,
+  `at`, `enabled`, a trigger's `variables`, the `variables`, `if` and
+  `repeat` actions), `custom_templates` imports; scripts, scenes YAML,
+  blueprints
 - Config flows for adding integrations; UI automation/script editor
 - Long-term statistics
 - MQTT, ESPHome native API, zigbee2mqtt; `input_*` / `template` helpers, `todo`, TTS

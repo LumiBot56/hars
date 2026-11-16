@@ -8,7 +8,7 @@
 
 use super::*;
 use parking_lot::Mutex as PMutex;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 const VECTORS: &[(&str, &str)] = &[
@@ -461,7 +461,7 @@ async fn run(name: &str, text: &str) -> Vec<String> {
                     .iter()
                     .map(|id| configs[id.as_str().unwrap()].clone())
                     .collect();
-                autos = Some(Automations::setup(&hass, &registries, &items));
+                autos = Some(Automations::setup(&hass, &registries, &items).await);
                 settle().await;
             }
             "start" => {
@@ -734,7 +734,7 @@ async fn replay_matches_ha() {
             match v["lifecycle"][i]["op"].as_str().unwrap() {
                 "setup" => {
                     hass.set_restore(ha_core::restore::RestoreState::load(&dir));
-                    autos = Some(Automations::setup(&hass, &registries, &all));
+                    autos = Some(Automations::setup(&hass, &registries, &all).await);
                 }
                 "start" => {
                     if let Some(a) = &autos {
@@ -857,7 +857,7 @@ async fn engine(yaml: &str) -> (Hass, Automations, Arc<PMutex<Vec<String>>>) {
         Value::Array(a) => a,
         v => vec![v],
     };
-    let autos = Automations::setup(&hass, &Registries::default(), &items);
+    let autos = Automations::setup(&hass, &Registries::default(), &items).await;
     (hass, autos, calls)
 }
 

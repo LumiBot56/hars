@@ -48,6 +48,21 @@ pub fn next_local(hass: &Hass, from: Timestamp, at: Time, micro: i32) -> Option<
     None
 }
 
+/// `async_track_utc_time_change(second=0)`'s next time: the first whole
+/// minute not before `from`'s second, plus `micro` microseconds.
+pub fn next_minute(from: Timestamp, micro: i64) -> Timestamp {
+    let s = from.as_second();
+    let minute = if s.rem_euclid(60) == 0 {
+        s
+    } else {
+        s - s.rem_euclid(60) + 60
+    };
+    Timestamp::from_second(minute)
+        .unwrap_or(from)
+        .checked_add(jiff::SignedDuration::from_micros(micro))
+        .unwrap_or(from)
+}
+
 /// Sleep until the wall clock reads `at`: on the monotonic clock, checking
 /// the wall again on each wake (a clock stepped back sleeps on; one stepped
 /// forward wakes at the old deadline, late, as HA's timers do).

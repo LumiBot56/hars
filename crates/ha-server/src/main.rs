@@ -197,10 +197,16 @@ async fn run(thp_disabled: std::io::Result<bool>) -> anyhow::Result<()> {
     api_config.mobile_app = Some(std::sync::Arc::new(mobile_app));
     // `configuration.yaml`'s automations (written now; triggers attach at
     // `homeassistant_started`).
-    let automations = config_yaml.as_ref().map(|config| {
-        let items = ha_automation::from_config_yaml(config);
-        ha_automation::Automations::setup_yaml(&hass, &registries, &items)
-    });
+    let automations = match config_yaml.as_ref() {
+        Some(config) => {
+            let items = ha_automation::from_config_yaml(config);
+            let automations =
+                ha_automation::Automations::setup_yaml(&hass, &registries, &items).await;
+            automations.set_registry(registry.clone());
+            Some(automations)
+        }
+        None => None,
+    };
     if automations.is_some() {
         api_config.integrations.push("automation");
     }

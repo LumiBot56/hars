@@ -311,3 +311,43 @@ the state machine only while it runs (one `Arc` per state it iterates,
 dropped at the end), and `render_template` still holds no task, timer or
 listener after its reply, so idle RSS, CPU and wakeups are unaffected.
 Hot paths (state writes, fan-out) are untouched.
+
+### Templates in automations, 2026-11-16
+
+Templates in YAML automations (`ha-automation`'s `tpl`, `cond`, `track`,
+`listen`; `ha_core::template::{run, vars}` and the limited environment). A
+`template` trigger is one task that listens only to the entities, domains
+or states its last render read and sleeps otherwise; reading the clock
+adds HA's minute tick. Renders run on the shared render threads, started
+from tokio's blocking pool (so one pool thread lingers 10 s after a
+render). Measured with `PERF_GATE=1 PERF_CONFIG=<dir> scripts/perf-docker.sh
+15 60`, Docker on an Apple-silicon Mac (linux/aarch64), the dir holding a
+`configuration.yaml` with the automations named:
+
+| build | binary | start→/api/ | idle RSS | idle PSS | idle CPU | wakeups/s | threads | run |
+|---|---|---|---|---|---|---|---|---|
+| branch, a template trigger on a sensor (template condition, templated notify) | 9.58 MiB | 10 ms | 11.4 MiB | 10.5 MiB | 0.000 % | 0.00 | 4 | 15s warm-up, 60s quiet |
+| branch, that and a template trigger reading `now()` | 9.58 MiB | 16 ms | 11.1 MiB | 10.2 MiB | 0.000 % | 0.07 | 4 | 15s warm-up, 60s quiet |
+
+The second row's wakeups are the `now()` template re-rendering once a
+minute at second 0, as HA's `async_track_template_result` does: each tick
+starts a render thread from the blocking pool, whose thread then exits
+after its 10 s keep-alive. A trigger that reads only states wakes only when
+one of them changes (the test `a_template_trigger_sleeps_until_what_it_reads_changes`
+counts deliveries).
+
+No dependency added (`smol_str`, already in the tree, is now a direct
+dependency of `ha-automation`). macOS release builds (Apple M4, same
+toolchain and profile), `cargo build --release -p ha-server`:
+
+| build | bytes |
+|---|---|
+| main (4c78179) | 8,542,560 |
+| branch | 8,857,216 (+314,656) |
+
+The growth is over the 256 KiB note threshold. It is the automation engine
+for templates: the template trigger's tracker (rate limits, listeners by
+domain and for every state, the minute tick), HA's condition errors,
+`render_complex`, script variables and the limited environment. It is only
+paid in pages that run when an automation uses templates; an automation
+without templates takes the same path as before and makes no variables.

@@ -520,6 +520,7 @@ dependencies = [
  "parking_lot",
  "rand",
  "serde_json",
+ "smol_str",
  "tokio",
  "tracing",
  "tracing-subscriber",

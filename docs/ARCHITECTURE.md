@@ -198,8 +198,22 @@ the intake's rows.
 `ha-automation` reads `automation:` from `configuration.yaml` at start.
 Automations whose config hars can't run are `unavailable`; the import report
 says why. Triggers attach at `homeassistant_started`
-and listen on the lossless state feed. Time triggers sleep until their wall
-time, and check the wall clock again when they wake.
+and listen on the lossless state feed, by entity, by domain or to every
+change. Time triggers sleep until their wall time, and check the wall clock
+again when they wake.
+
+Templates in automations compile once, when the config loads (on a render
+thread: compiling recurses as deep as a template nests). They render on the
+render threads `ha_core::template::run` keeps for every template, the
+WebSocket's `render_template` too: a thread per job with
+`template::STACK`, at most two at a time, started from tokio's blocking pool
+and never on the async runtime. What a render logs is written back on the
+runtime. When a change needs a render before the next change can be judged
+(a template trigger, a templated condition or variable, the run's first
+templated step), the listener takes a guard and the state feed waits for
+it, so changes are handled in order, as in HA's event loop. A `template`
+trigger is one task that listens only to what its last render read and
+sleeps otherwise (a minute tick while it reads the clock).
 
 ### Shadow mode
 
@@ -270,7 +284,8 @@ How it is kept:
 - **Vectors.** Where hars must give HA's answer, tests compare with inputs
   run through HA's own code at the pinned version. A new vector set commits
   the script that made it in `scripts/vectors/` (`onboarding.py`,
-  `render_template.py`, `mobile_app_notify.py`, `template_functions.py`).
+  `render_template.py`, `mobile_app_notify.py`, `template_functions.py`,
+  `automation_templates.py`).
   The sets made before that rule have no script yet;
   they are listed as a backlog in
   [scripts/vectors/README.md](../scripts/vectors/README.md#vector-sets-made-before-this-rule)

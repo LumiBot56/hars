@@ -1,0 +1,4437 @@
+{
+ "start": "2026-11-10T16:00:00+00:00",
+ "time_zone": "Europe/London",
+ "scenarios": [
+  {
+   "name": "alert_numeric_state",
+   "doc": "The owner's alert: numeric_state above 27 on the lounge sensor sends a phone notification whose message reads the trigger, states() and state_attr(); it fires on each crossing only.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "hot_lounge",
+     "alias": "Hot lounge",
+     "triggers": [
+      {
+       "trigger": "numeric_state",
+       "entity_id": "sensor.lounge_temperature",
+       "above": 27
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "title": "{{ state_attr(trigger.entity_id, 'friendly_name') }}",
+        "message": "It's {{ trigger.to_state.state }}°C in the lounge ({{ states('sensor.lounge_humidity') }}% humidity, was {{ trigger.from_state.state }})",
+        "data": {
+         "tag": "lounge-temp",
+         "push": {
+          "sound": "default"
+         }
+        }
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "26",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 60
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "28",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 60
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "29",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 60
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "25",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 60
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "51",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "30.5",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 10
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.hot_lounge",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:01:00+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "title": "Lounge Temperature",
+      "message": "It's 28°C in the lounge (48% humidity, was 26)",
+      "data": {
+       "tag": "lounge-temp",
+       "push": {
+        "sound": "default"
+       }
+      }
+     }
+    },
+    {
+     "t": "2026-11-10T16:01:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Hot lounge",
+      "entity_id": "automation.hot_lounge",
+      "source": "numeric state of sensor.lounge_temperature"
+     }
+    },
+    {
+     "t": "2026-11-10T16:04:00+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "title": "Lounge Temperature",
+      "message": "It's 30.5°C in the lounge (51% humidity, was 25)",
+      "data": {
+       "tag": "lounge-temp",
+       "push": {
+        "sound": "default"
+       }
+      }
+     }
+    },
+    {
+     "t": "2026-11-10T16:04:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Hot lounge",
+      "entity_id": "automation.hot_lounge",
+      "source": "numeric state of sensor.lounge_temperature"
+     }
+    }
+   ]
+  },
+  {
+   "name": "alert_state_template_condition",
+   "doc": "A state trigger with no `to` (attribute changes fire too) gated by a template condition and a shorthand template condition.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "hot_lounge_closed",
+     "alias": "Hot lounge, window closed",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "sensor.lounge_temperature"
+      }
+     ],
+     "conditions": [
+      {
+       "condition": "template",
+       "value_template": "{{ trigger.to_state.state | float(0) > 27 }}"
+      },
+      "{{ is_state('binary_sensor.lounge_window', 'off') }}"
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "{{ trigger.from_state.state }} -> {{ trigger.to_state.state }} {{ trigger.to_state.attributes.unit_of_measurement }}"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "26",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "28",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "28",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C",
+      "source": "attr"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "29",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {}
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "27",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "31",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.hot_lounge_closed",
+     "state": null
+    },
+    {
+     "t": "2026-11-10T16:00:05+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "26 -> 28 °C"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:05+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Hot lounge, window closed",
+      "entity_id": "automation.hot_lounge_window_closed",
+      "source": "state of sensor.lounge_temperature"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:10+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "28 -> 28 °C"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:10+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Hot lounge, window closed",
+      "entity_id": "automation.hot_lounge_window_closed",
+      "source": "state of sensor.lounge_temperature"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:25+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "27 -> 31 °C"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:25+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Hot lounge, window closed",
+      "entity_id": "automation.hot_lounge_window_closed",
+      "source": "state of sensor.lounge_temperature"
+     }
+    }
+   ]
+  },
+  {
+   "name": "trigger_variables_state",
+   "doc": "Every `trigger` variable of a state trigger with an id, an alias and `for`, and `this`, as the action's data sees them (native types).",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "window_open",
+     "alias": "Window open",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "binary_sensor.lounge_window",
+       "to": "on",
+       "for": {
+        "seconds": 5
+       },
+       "id": "opened",
+       "alias": "Opened"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "platform": "{{ trigger.platform }}",
+        "id": "{{ trigger.id }}",
+        "idx": "{{ trigger.idx }}",
+        "alias": "{{ trigger.alias }}",
+        "entity_id": "{{ trigger.entity_id }}",
+        "from": "{{ trigger.from_state.state }}",
+        "to": "{{ trigger.to_state.state }}",
+        "to_name": "{{ trigger.to_state.name }}",
+        "to_domain": "{{ trigger.to_state.domain }}",
+        "to_object_id": "{{ trigger.to_state.object_id }}",
+        "to_changed": "{{ trigger.to_state.last_changed }}",
+        "for": "{{ trigger.for }}",
+        "for_seconds": "{{ trigger.for.total_seconds() }}",
+        "attribute": "{{ trigger.attribute }}",
+        "description": "{{ trigger.description }}",
+        "keys": "{{ ['above', 'alias', 'attribute', 'below', 'description', 'entity_id', 'for', 'from_state', 'id', 'idx', 'now', 'platform', 'to_state'] | select('in', trigger) | list }}",
+        "this_entity": "{{ this.entity_id }}",
+        "this_state": "{{ this.state }}",
+        "this_current": "{{ this.attributes.current }}",
+        "this_mode": "{{ this.attributes.mode }}",
+        "this_last": "{{ this.attributes.last_triggered }}",
+        "this_id": "{{ this.attributes.id }}"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 2
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 2
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 10
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 1
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 10
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.window_open",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:09+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "platform": "state",
+      "id": "opened",
+      "idx": 0,
+      "alias": "Opened",
+      "entity_id": "binary_sensor.lounge_window",
+      "from": "off",
+      "to": "on",
+      "to_name": "lounge window",
+      "to_domain": "binary_sensor",
+      "to_object_id": "lounge_window",
+      "to_changed": "2026-11-10 16:00:04+00:00",
+      "for": "0:00:05",
+      "for_seconds": 5.0,
+      "attribute": null,
+      "description": "state of binary_sensor.lounge_window",
+      "keys": [
+       "alias",
+       "attribute",
+       "description",
+       "entity_id",
+       "for",
+       "from_state",
+       "id",
+       "idx",
+       "platform",
+       "to_state"
+      ],
+      "this_entity": "automation.window_open",
+      "this_state": "on",
+      "this_current": 0,
+      "this_mode": "single",
+      "this_last": null,
+      "this_id": "window_open"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:09+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Window open",
+      "entity_id": "automation.window_open",
+      "source": "state of binary_sensor.lounge_window"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:20+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "platform": "state",
+      "id": "opened",
+      "idx": 0,
+      "alias": "Opened",
+      "entity_id": "binary_sensor.lounge_window",
+      "from": "off",
+      "to": "on",
+      "to_name": "lounge window",
+      "to_domain": "binary_sensor",
+      "to_object_id": "lounge_window",
+      "to_changed": "2026-11-10 16:00:15+00:00",
+      "for": "0:00:05",
+      "for_seconds": 5.0,
+      "attribute": null,
+      "description": "state of binary_sensor.lounge_window",
+      "keys": [
+       "alias",
+       "attribute",
+       "description",
+       "entity_id",
+       "for",
+       "from_state",
+       "id",
+       "idx",
+       "platform",
+       "to_state"
+      ],
+      "this_entity": "automation.window_open",
+      "this_state": "on",
+      "this_current": 0,
+      "this_mode": "single",
+      "this_last": "2026-11-10 16:00:09+00:00",
+      "this_id": "window_open"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:20+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Window open",
+      "entity_id": "automation.window_open",
+      "source": "state of binary_sensor.lounge_window"
+     }
+    }
+   ]
+  },
+  {
+   "name": "trigger_variables_numeric_time",
+   "doc": "The `trigger` variables of numeric_state and time triggers.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "numeric_vars",
+     "alias": "Numeric vars",
+     "triggers": [
+      {
+       "trigger": "numeric_state",
+       "entity_id": "sensor.lounge_temperature",
+       "above": 20,
+       "below": "30"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "platform": "{{ trigger.platform }}",
+        "entity_id": "{{ trigger.entity_id }}",
+        "below": "{{ trigger.below }}",
+        "above": "{{ trigger.above }}",
+        "for": "{{ trigger.for }}",
+        "attribute": "{{ trigger.attribute is defined }}",
+        "description": "{{ trigger.description }}",
+        "from": "{{ trigger.from_state.state }}",
+        "keys": "{{ ['above', 'alias', 'attribute', 'below', 'description', 'entity_id', 'for', 'from_state', 'id', 'idx', 'now', 'platform', 'to_state'] | select('in', trigger) | list }}"
+       }
+      }
+     ]
+    },
+    {
+     "id": "time_vars",
+     "alias": "Time vars",
+     "triggers": [
+      {
+       "trigger": "time",
+       "at": "16:02:00",
+       "id": "afternoon"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "platform": "{{ trigger.platform }}",
+        "id": "{{ trigger.id }}",
+        "now": "{{ trigger.now.strftime('%Y-%m-%d %H:%M:%S %Z') }}",
+        "tz": "{{ trigger.now.tzinfo }}",
+        "entity_id": "{{ trigger.entity_id }}",
+        "description": "{{ trigger.description }}",
+        "keys": "{{ ['above', 'alias', 'attribute', 'below', 'description', 'entity_id', 'for', 'from_state', 'id', 'idx', 'now', 'platform', 'to_state'] | select('in', trigger) | list }}"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "35",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 30
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "25",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 150
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.numeric_vars",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.time_vars",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:30+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "platform": "numeric_state",
+      "entity_id": "sensor.lounge_temperature",
+      "below": 30.0,
+      "above": 20.0,
+      "for": null,
+      "attribute": false,
+      "description": "numeric state of sensor.lounge_temperature",
+      "from": 35,
+      "keys": [
+       "above",
+       "alias",
+       "below",
+       "description",
+       "entity_id",
+       "for",
+       "from_state",
+       "id",
+       "idx",
+       "platform",
+       "to_state"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:30+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Numeric vars",
+      "entity_id": "automation.numeric_vars",
+      "source": "numeric state of sensor.lounge_temperature"
+     }
+    },
+    {
+     "t": "2026-11-10T16:02:00.309750+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "platform": "time",
+      "id": "afternoon",
+      "now": "2026-11-10 16:02:00 GMT",
+      "tz": "Europe/London",
+      "entity_id": null,
+      "description": "time",
+      "keys": [
+       "alias",
+       "description",
+       "entity_id",
+       "id",
+       "idx",
+       "now",
+       "platform"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:02:00.309750+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Time vars",
+      "entity_id": "automation.time_vars",
+      "source": "time"
+     }
+    }
+   ]
+  },
+  {
+   "name": "service_trigger_variables",
+   "doc": "automation.trigger with `variables`: `trigger` is {platform: None} and the variables are there; `trigger.id` is undefined.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "manual",
+     "alias": "Manual",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "platform": "{{ trigger.platform }}",
+        "who": "{{ who }}",
+        "n": "{{ n + 1 }}",
+        "id": "{{ trigger.id }}"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "wait",
+     "s": 1
+    },
+    {
+     "op": "service",
+     "domain": "automation",
+     "service": "trigger",
+     "data": {
+      "entity_id": "automation.manual",
+      "variables": {
+       "who": "me",
+       "n": 41
+      }
+     }
+    },
+    {
+     "op": "wait",
+     "s": 1
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.manual",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:01+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "platform": null,
+      "who": "me",
+      "n": 42,
+      "id": ""
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:01+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.helpers.template",
+     "msg": "Template variable warning: 'dict object' has no attribute 'id' when rendering '{{ trigger.id }}'"
+    },
+    {
+     "t": "2026-11-10T16:00:01+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Manual",
+      "entity_id": "automation.manual"
+     }
+    }
+   ]
+  },
+  {
+   "name": "variables",
+   "doc": "Top-level `variables` (static, templated, chained, reading `trigger` and `this`) and `trigger_variables` (rendered limited at attach, and available to the trigger's templates and the actions).",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "with_variables",
+     "alias": "With variables",
+     "trigger_variables": {
+      "limit": 27,
+      "label": "{{ 'Lounge' ~ ' room' }}",
+      "sensor": "sensor.lounge_temperature"
+     },
+     "variables": {
+      "unit": "°C",
+      "value": "{{ trigger.to_state.state | float }}",
+      "over": "{{ value - limit }}",
+      "summary": "{{ label }}: {{ value }}{{ unit }} ({{ over }} over)",
+      "nested": {
+       "a": "{{ 1 + 1 }}",
+       "b": [
+        "{{ 'x' }}",
+        3
+       ]
+      },
+      "who": "{{ this.attributes.friendly_name }}"
+     },
+     "triggers": [
+      {
+       "trigger": "template",
+       "value_template": "{{ states(sensor) | float(0) > limit }}"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "{{ summary }}",
+        "over": "{{ over }}",
+        "nested": "{{ nested }}",
+        "nested_a": "{{ nested.a + 1 }}",
+        "who": "{{ who }}",
+        "limit": "{{ limit }}"
+       }
+      }
+     ]
+    },
+    {
+     "id": "limited_trigger_variables",
+     "alias": "Limited trigger variables",
+     "trigger_variables": {
+      "now_state": "{{ states('sensor.lounge_temperature') }}"
+     },
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "sensor.lounge_temperature"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "never"
+       }
+      }
+     ]
+    },
+    {
+     "id": "bad_variables",
+     "alias": "Bad variables",
+     "variables": {
+      "x": "{{ 1 / 0 }}"
+     },
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.hall",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "never"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "26",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 1
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "28.5",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 1
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 1
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.bad_variables",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.limited_trigger_variables",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.with_variables",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.limited_trigger_variables",
+     "msg": "Error rendering trigger variables: TemplateError: Use of 'states' is not supported in limited templates"
+    },
+    {
+     "t": "2026-11-10T16:00:01+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "Lounge room: 28.5°C (1.5 over)",
+      "over": 1.5,
+      "nested": {
+       "a": 2,
+       "b": [
+        "x",
+        3
+       ]
+      },
+      "nested_a": 3,
+      "who": "With variables",
+      "limit": 27
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:01+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "With variables",
+      "entity_id": "automation.with_variables",
+      "source": "sensor.lounge_temperature via template"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:02+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.bad_variables",
+     "msg": "Error rendering variables: ZeroDivisionError: division by zero"
+    }
+   ]
+  },
+  {
+   "name": "native_types",
+   "doc": "Service data rendered with `template_complex` and `_parse_result`: numbers, lists, dicts, booleans, None, strings that stay strings, templated keys and lists, and data that is one template.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "types",
+     "alias": "Types",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "int": "{{ 5 }}",
+        "neg": "{{ -3 }}",
+        "float": "{{ 1.50 }}",
+        "exp": "{{ '1e3' }}",
+        "leading_zero": "{{ '007' }}",
+        "padded": "{{ ' 42 ' }}",
+        "list": "{{ [1, 'two', 3.0] }}",
+        "tuple": "{{ (1, 2) }}",
+        "dict": "{{ {'a': 1, 'b': [True, None]} }}",
+        "true": "{{ true }}",
+        "on": "{{ 'on' }}",
+        "none": "{{ none }}",
+        "empty": "{{ '' }}",
+        "text": "{{ 'hello' }} world",
+        "static": "plain text",
+        "static_num": 12,
+        "static_list": [
+         1,
+         "{{ 1 + 1 }}",
+         {
+          "k": "{{ 'v' }}"
+         }
+        ],
+        "{{ 'templated_key' }}": "{{ 'x' * 3 }}",
+        "brace_text": "a { b } c",
+        "big": "{{ 2 ** 70 }}",
+        "str_list": "{{ \"['a', 'b']\" }}"
+       }
+      },
+      {
+       "action": "notify.mobile_app_phone",
+       "data": "{{ {'message': 'whole', 'n': 2} }}"
+      },
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "{{ 'data_template' }}",
+        "a": 1
+       },
+       "data_template": {
+        "a": "{{ 2 }}",
+        "b": "{{ 3 }}"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 1
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.types",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "int": 5,
+      "neg": -3,
+      "float": 1.5,
+      "exp": "1e3",
+      "leading_zero": "007",
+      "padded": 42,
+      "list": [
+       1,
+       "two",
+       3.0
+      ],
+      "tuple": [
+       1,
+       2
+      ],
+      "dict": {
+       "a": 1,
+       "b": [
+        true,
+        null
+       ]
+      },
+      "true": true,
+      "on": "on",
+      "none": null,
+      "empty": "",
+      "text": "hello world",
+      "static": "plain text",
+      "static_num": 12,
+      "static_list": [
+       1,
+       2,
+       {
+        "k": "v"
+       }
+      ],
+      "templated_key": "xxx",
+      "brace_text": "a { b } c",
+      "big": 1180591620717411303424,
+      "str_list": [
+       "a",
+       "b"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "whole",
+      "n": 2
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "data_template",
+      "a": 2,
+      "b": 3
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Types",
+      "entity_id": "automation.types",
+      "source": "state of light.lounge"
+     }
+    }
+   ]
+  },
+  {
+   "name": "service_and_target_templates",
+   "doc": "A templated action name and target (a dict of templates, and one template), entity ids rendered as a string or a list.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "targets",
+     "alias": "Targets",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "binary_sensor.lounge_window",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.{{ 'mobile_app_' ~ 'phone' }}",
+       "data": {
+        "message": "templated action"
+       }
+      },
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "{{ 'light.lounge' }}"
+       },
+       "data": {
+        "brightness": "{{ 100 + 28 }}"
+       }
+      },
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "{{ ['light.lounge', 'LIGHT.HALL'] }}"
+       }
+      },
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "{{ 'light.lounge, light.hall' }}"
+       }
+      },
+      {
+       "action": "light.turn_on",
+       "target": "{{ {'entity_id': 'light.hall'} }}"
+      },
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": [
+         "light.lounge",
+         "{{ 'light.hall' }}"
+        ]
+       }
+      },
+      {
+       "action": "light.turn_off",
+       "target": {
+        "entity_id": "light.lounge"
+       },
+       "data": {
+        "transition": "{{ 2 }}"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 1
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.targets",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "templated action"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "light",
+     "service": "turn_on",
+     "data": {
+      "brightness": 128,
+      "entity_id": [
+       "light.lounge"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "light",
+     "service": "turn_on",
+     "data": {
+      "entity_id": [
+       "light.lounge",
+       "light.hall"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "light",
+     "service": "turn_on",
+     "data": {
+      "entity_id": [
+       "light.lounge",
+       "light.hall"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "light",
+     "service": "turn_on",
+     "data": {
+      "entity_id": [
+       "light.hall"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "light",
+     "service": "turn_on",
+     "data": {
+      "entity_id": [
+       "light.lounge",
+       "light.hall"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "light",
+     "service": "turn_off",
+     "data": {
+      "transition": 2,
+      "entity_id": [
+       "light.lounge"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Targets",
+      "entity_id": "automation.targets",
+      "source": "state of binary_sensor.lounge_window"
+     }
+    }
+   ]
+  },
+  {
+   "name": "registry_id_targets",
+   "doc": "Rendered targets may name entities by their entity registry id (`comp_entity_ids_or_uuids`): resolved to the current entity id; an unknown one fails the call.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "by_registry_id",
+     "alias": "By registry id",
+     "variables": {
+      "selected": "1e2feb89414c343c1027c4d1c386bbc4"
+     },
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "binary_sensor.lounge_window",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "{{ selected }}"
+       }
+      },
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "{{ ['cd613e30d8f16adf91b7584a2265b1f5', 'light.hall'] }}"
+       }
+      },
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "{{ 'cd613e30d8f16adf91b7584a2265b1f5, light.hall' }}"
+       }
+      },
+      {
+       "action": "light.turn_off",
+       "target": {
+        "entity_id": "cd613e30d8f16adf91b7584a2265b1f5"
+       }
+      },
+      {
+       "action": "light.turn_off",
+       "target": {
+        "entity_id": "{{ '0123456789abcdef0123456789abcdef' }}"
+       }
+      }
+     ]
+    },
+    {
+     "id": "unknown_id_and_bad_data",
+     "alias": "Unknown id and bad data",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "binary_sensor.lounge_window",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "{{ '0123456789abcdef0123456789abcdef' }}"
+       },
+       "data": {
+        "brightness": "{{ 1 / 0 }}"
+       }
+      }
+     ]
+    },
+    {
+     "id": "unknown_static_id_and_bad_data",
+     "alias": "Unknown static id and bad data",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "binary_sensor.lounge_window",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "0123456789abcdef0123456789abcdef"
+       },
+       "data": {
+        "brightness": "{{ 1 / 0 }}"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 1
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.by_registry_id",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.unknown_id_and_bad_data",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.unknown_static_id_and_bad_data",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "light",
+     "service": "turn_on",
+     "data": {
+      "entity_id": [
+       "light.hall"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "light",
+     "service": "turn_on",
+     "data": {
+      "entity_id": [
+       "light.lounge",
+       "light.hall"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "light",
+     "service": "turn_on",
+     "data": {
+      "entity_id": [
+       "light.lounge",
+       "light.hall"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "light",
+     "service": "turn_off",
+     "data": {
+      "entity_id": [
+       "light.lounge"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.by_registry_id",
+     "msg": "By registry id: Error executing script. Error for call_service at pos 5: Template rendered invalid entity IDs: 0123456789abcdef0123456789abcdef"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.by_registry_id",
+     "msg": "Error while executing automation automation.by_registry_id: Template rendered invalid entity IDs: 0123456789abcdef0123456789abcdef"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.unknown_id_and_bad_data",
+     "msg": "Unknown id and bad data: Error executing script. Error for call_service at pos 1: Template rendered invalid entity IDs: 0123456789abcdef0123456789abcdef"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.unknown_id_and_bad_data",
+     "msg": "Error while executing automation automation.unknown_id_and_bad_data: Template rendered invalid entity IDs: 0123456789abcdef0123456789abcdef"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.unknown_static_id_and_bad_data",
+     "msg": "Unknown static id and bad data: Error executing script. Error for call_service at pos 1: Template rendered invalid entity IDs: ['0123456789abcdef0123456789abcdef']"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.unknown_static_id_and_bad_data",
+     "msg": "Error while executing automation automation.unknown_static_id_and_bad_data: Template rendered invalid entity IDs: ['0123456789abcdef0123456789abcdef']"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "By registry id",
+      "entity_id": "automation.by_registry_id",
+      "source": "state of binary_sensor.lounge_window"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Unknown id and bad data",
+      "entity_id": "automation.unknown_id_and_bad_data",
+      "source": "state of binary_sensor.lounge_window"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Unknown static id and bad data",
+      "entity_id": "automation.unknown_static_id_and_bad_data",
+      "source": "state of binary_sensor.lounge_window"
+     }
+    }
+   ],
+   "registry": [
+    {
+     "entity_id": "light.lounge",
+     "id": "cd613e30d8f16adf91b7584a2265b1f5"
+    },
+    {
+     "entity_id": "light.hall",
+     "id": "1e2feb89414c343c1027c4d1c386bbc4"
+    }
+   ]
+  },
+  {
+   "name": "render_errors",
+   "doc": "Templates that fail while running: in data (an error, an undefined value printed and used, data that isn't a dict), in the action name, in a target, and in a condition. Each stops that run; the next trigger runs again.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "zero",
+     "alias": "Zero",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "{{ missing }} printed"
+       }
+      },
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "{{ 1 / 0 }}"
+       }
+      },
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "never"
+       }
+      }
+     ]
+    },
+    {
+     "id": "undefined_use",
+     "alias": "Undefined use",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "{{ missing + 1 }}"
+       }
+      }
+     ]
+    },
+    {
+     "id": "not_a_dict",
+     "alias": "Not a dict",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": "{{ [1, 2] }}"
+      }
+     ]
+    },
+    {
+     "id": "bad_service",
+     "alias": "Bad service",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "action": "{{ 'not a service' }}"
+      }
+     ]
+    },
+    {
+     "id": "bad_target",
+     "alias": "Bad target",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "{{ 'not valid' }}"
+       }
+      }
+     ]
+    },
+    {
+     "id": "bad_condition",
+     "alias": "Bad condition",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge",
+       "to": "on"
+      }
+     ],
+     "conditions": [
+      {
+       "condition": "template",
+       "value_template": "{{ 1 / 0 }}"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "never"
+       }
+      }
+     ]
+    },
+    {
+     "id": "undefined_condition",
+     "alias": "Undefined condition",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge",
+       "to": "on"
+      }
+     ],
+     "conditions": [
+      "{{ nothing }}"
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "never"
+       }
+      }
+     ]
+    },
+    {
+     "id": "numeric_template_error",
+     "alias": "Numeric template error",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge",
+       "to": "on"
+      }
+     ],
+     "conditions": [
+      {
+       "condition": "numeric_state",
+       "entity_id": [
+        "light.lounge",
+        "light.hall"
+       ],
+       "value_template": "{{ 1 / 0 }}",
+       "below": 5
+      },
+      {
+       "condition": "template",
+       "value_template": "{{ x.y }}"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "never"
+       }
+      }
+     ]
+    },
+    {
+     "id": "numeric_template_values",
+     "alias": "Numeric template values",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge",
+       "to": "on"
+      }
+     ],
+     "conditions": [
+      {
+       "condition": "numeric_state",
+       "entity_id": "light.lounge",
+       "value_template": "{{ [1] }}",
+       "below": 5
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "never"
+       }
+      }
+     ]
+    },
+    {
+     "id": "numeric_template_true",
+     "alias": "Numeric template true",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge",
+       "to": "on"
+      }
+     ],
+     "conditions": [
+      {
+       "condition": "numeric_state",
+       "entity_id": "light.lounge",
+       "value_template": "{{ true }}",
+       "below": 5,
+       "above": 0.5
+      },
+      {
+       "condition": "numeric_state",
+       "entity_id": "light.lounge",
+       "value_template": "{{ 'unknown' }}",
+       "below": 5
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "never"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 1
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.bad_condition",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.bad_service",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.bad_target",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.not_a_dict",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.numeric_template_error",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.numeric_template_true",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.numeric_template_values",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.undefined_condition",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.undefined_use",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.zero",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "printed"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.automation",
+     "msg": "Error evaluating condition in 'Bad condition':\nIn 'condition':\n  In 'template' condition: ZeroDivisionError: division by zero"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.automation",
+     "msg": "Error evaluating condition in 'Numeric template error':\nIn 'condition' (item 1 of 2):\n  In 'numeric_state' (item 1 of 2):\n    In 'numeric_state' condition: template error: ZeroDivisionError: division by zero\n  In 'numeric_state' (item 2 of 2):\n    In 'numeric_state' condition: template error: ZeroDivisionError: division by zero\nIn 'condition' (item 2 of 2):\n  In 'template' condition: UndefinedError: 'x' is undefined"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.automation",
+     "msg": "Error evaluating condition in 'Numeric template values':\nIn 'condition':\n  In 'numeric_state':\n    In 'numeric_state' condition: entity light.lounge state '[1]' cannot be processed as a number"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.bad_service",
+     "msg": "Bad service: Error executing script. Error for call_service at pos 1: Template rendered invalid service: not a service"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.bad_service",
+     "msg": "Error while executing automation automation.bad_service: Template rendered invalid service: not a service"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.bad_target",
+     "msg": "Bad target: Error executing script. Error for call_service at pos 1: Template rendered invalid entity IDs: not valid"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.bad_target",
+     "msg": "Error while executing automation automation.bad_target: Template rendered invalid entity IDs: not valid"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.not_a_dict",
+     "msg": "Not a dict: Error executing script. Error for call_service at pos 1: Error rendering data template: Result is not a Dictionary"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.not_a_dict",
+     "msg": "Error while executing automation automation.not_a_dict: Error rendering data template: Result is not a Dictionary"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.undefined_use",
+     "msg": "Undefined use: Error executing script. Error for call_service at pos 1: Error rendering data template: UndefinedError: 'missing' is undefined"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.undefined_use",
+     "msg": "Error while executing automation automation.undefined_use: Error rendering data template: UndefinedError: 'missing' is undefined"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.zero",
+     "msg": "Zero: Error executing script. Error for call_service at pos 2: Error rendering data template: ZeroDivisionError: division by zero"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.zero",
+     "msg": "Error while executing automation automation.zero: Error rendering data template: ZeroDivisionError: division by zero"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.helpers.template",
+     "msg": "Template variable warning: 'missing' is undefined when rendering '{{ missing }} printed'"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.helpers.template",
+     "msg": "Template variable warning: 'nothing' is undefined when rendering '{{ nothing }}'"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.helpers.template",
+     "msg": "Template variable error: 'x' is undefined when rendering '{{ x.y }}'"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Bad service",
+      "entity_id": "automation.bad_service",
+      "source": "state of light.lounge"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Bad target",
+      "entity_id": "automation.bad_target",
+      "source": "state of light.lounge"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Not a dict",
+      "entity_id": "automation.not_a_dict",
+      "source": "state of light.lounge"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Undefined use",
+      "entity_id": "automation.undefined_use",
+      "source": "state of light.lounge"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Zero",
+      "entity_id": "automation.zero",
+      "source": "state of light.lounge"
+     }
+    }
+   ]
+  },
+  {
+   "name": "invalid_templates",
+   "doc": "A template that doesn't compile makes its automation invalid (unavailable), wherever it is.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "bad_syntax",
+     "alias": "Bad syntax",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "{{ 1 + }}"
+       }
+      }
+     ]
+    },
+    {
+     "id": "static_condition",
+     "alias": "Static condition",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge"
+      }
+     ],
+     "conditions": [
+      "not a template"
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "x"
+       }
+      }
+     ]
+    },
+    {
+     "id": "good",
+     "alias": "Good",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "{{ 'still runs' }}"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 1
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.bad_syntax",
+     "state": "unavailable"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.good",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.static_condition",
+     "state": "unavailable"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "still runs"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation",
+     "msg": "Automation with alias 'Bad syntax' could not be validated and has been disabled: template value should be a string for dictionary value @ data['actions'][0]['data']. Got {'message': '{{ 1 + }}'}"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation",
+     "msg": "Automation with alias 'Static condition' could not be validated and has been disabled: Expected a dictionary @ data['conditions'][0]. Got 'not a template'"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Good",
+      "entity_id": "automation.good",
+      "source": "state of light.lounge"
+     }
+    }
+   ]
+  },
+  {
+   "name": "template_trigger_entity",
+   "doc": "A template trigger on a sensor: fires when the template becomes true, not while it stays true, and re-arms when it is false; with its `trigger` variables.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "hot_template",
+     "alias": "Hot template",
+     "triggers": [
+      {
+       "trigger": "template",
+       "id": "hot",
+       "value_template": "{{ states('sensor.lounge_temperature') | float(0) > 27 }}"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "{{ trigger.to_state.state }}",
+        "platform": "{{ trigger.platform }}",
+        "id": "{{ trigger.id }}",
+        "idx": "{{ trigger.idx }}",
+        "entity_id": "{{ trigger.entity_id }}",
+        "from": "{{ trigger.from_state.state }}",
+        "for": "{{ trigger.for }}",
+        "description": "{{ trigger.description }}",
+        "keys": "{{ ['above', 'alias', 'attribute', 'below', 'description', 'entity_id', 'for', 'from_state', 'id', 'idx', 'now', 'platform', 'to_state'] | select('in', trigger) | list }}"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "26",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "28",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "29",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "50",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "20",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "30",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.hot_template",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:05+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": 28,
+      "platform": "template",
+      "id": "hot",
+      "idx": 0,
+      "entity_id": "sensor.lounge_temperature",
+      "from": 26,
+      "for": null,
+      "description": "sensor.lounge_temperature via template",
+      "keys": [
+       "alias",
+       "description",
+       "entity_id",
+       "for",
+       "from_state",
+       "id",
+       "idx",
+       "platform",
+       "to_state"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:05+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Hot template",
+      "entity_id": "automation.hot_template",
+      "source": "sensor.lounge_temperature via template"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:25+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": 30,
+      "platform": "template",
+      "id": "hot",
+      "idx": 0,
+      "entity_id": "sensor.lounge_temperature",
+      "from": 20,
+      "for": null,
+      "description": "sensor.lounge_temperature via template",
+      "keys": [
+       "alias",
+       "description",
+       "entity_id",
+       "for",
+       "from_state",
+       "id",
+       "idx",
+       "platform",
+       "to_state"
+      ]
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:25+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Hot template",
+      "entity_id": "automation.hot_template",
+      "source": "sensor.lounge_temperature via template"
+     }
+    }
+   ]
+  },
+  {
+   "name": "template_trigger_for",
+   "doc": "A template trigger with `for`: fires once the template has stayed true that long; going false first cancels it.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "hot_for",
+     "alias": "Hot for",
+     "triggers": [
+      {
+       "trigger": "template",
+       "for": {
+        "seconds": 30
+       },
+       "value_template": "{{ states('sensor.lounge_temperature') | float(0) > 27 }}"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "{{ trigger.to_state.state }} for {{ trigger.for }}"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "28",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 20
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "20",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 20
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "29",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 10
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "30",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 40
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.hot_for",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:01:10+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "29 for 0:00:30"
+     }
+    },
+    {
+     "t": "2026-11-10T16:01:10+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Hot for",
+      "entity_id": "automation.hot_for",
+      "source": "sensor.lounge_temperature via template"
+     }
+    }
+   ]
+  },
+  {
+   "name": "template_trigger_time",
+   "doc": "Template triggers that read the clock re-render every minute (at second 0); ones that don't, never do.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "minute_three",
+     "alias": "Minute three",
+     "triggers": [
+      {
+       "trigger": "template",
+       "value_template": "{{ now().minute == 3 }}"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "{{ trigger.description }}",
+        "entity_id": "{{ trigger.entity_id }}",
+        "to": "{{ trigger.to_state }}"
+       }
+      }
+     ]
+    },
+    {
+     "id": "time_or_light",
+     "alias": "Time or light",
+     "triggers": [
+      {
+       "trigger": "template",
+       "value_template": "{{ is_state('light.hall', 'on') and now().minute >= 2 }}"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "{{ trigger.description }}"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "wait",
+     "s": 30
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 300
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.minute_three",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.time_or_light",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:02:00.448963+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "time change or manual update via template"
+     }
+    },
+    {
+     "t": "2026-11-10T16:02:00.448963+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Time or light",
+      "entity_id": "automation.time_or_light",
+      "source": "time change or manual update via template"
+     }
+    },
+    {
+     "t": "2026-11-10T16:03:00.309750+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "time change or manual update via template",
+      "entity_id": null,
+      "to": null
+     }
+    },
+    {
+     "t": "2026-11-10T16:03:00.309750+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Minute three",
+      "entity_id": "automation.minute_three",
+      "source": "time change or manual update via template"
+     }
+    }
+   ]
+  },
+  {
+   "name": "template_trigger_domain",
+   "doc": "A template trigger that iterates a domain is rate limited to one render a second; a specific entity it reads is not.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "two_lights",
+     "alias": "Two lights",
+     "triggers": [
+      {
+       "trigger": "template",
+       "value_template": "{{ states.light | selectattr('state', 'eq', 'on') | list | count >= 2 }}"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "{{ trigger.description }}"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 0.2
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 0.2
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "light.attic",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 0.1
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 5
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.two_lights",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:06+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "light.lounge via template"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:06+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Two lights",
+      "entity_id": "automation.two_lights",
+      "source": "light.lounge via template"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:15.400000+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "light.attic via template"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:15.400000+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Two lights",
+      "entity_id": "automation.two_lights",
+      "source": "light.attic via template"
+     }
+    }
+   ]
+  },
+  {
+   "name": "template_trigger_errors",
+   "doc": "A template trigger whose template fails: a warning when it is set up, a warning the first time it fails after that, none while it keeps failing, and it fires once it renders true.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "abc",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "bad_float",
+     "alias": "Bad float",
+     "triggers": [
+      {
+       "trigger": "template",
+       "value_template": "{{ states('sensor.lounge_humidity') | float > 50 }}"
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "humid"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "x",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "45",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "y",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "55",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.bad_float",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.template.trigger",
+     "msg": "Error initializing 'template' trigger for 'Bad float': ValueError: Template error: float got invalid input 'abc' when rendering template '{{ states('sensor.lounge_humidity') | float > 50 }}' but no default was specified"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.helpers.event",
+     "msg": "Error while processing template: Template<template=({{ states('sensor.lounge_humidity') | float > 50 }}) renders=3>"
+    },
+    {
+     "t": "2026-11-10T16:00:05+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.template.trigger",
+     "msg": "Error evaluating 'template' trigger for 'Bad float': ValueError: Template error: float got invalid input 'x' when rendering template '{{ states('sensor.lounge_humidity') | float > 50 }}' but no default was specified"
+    },
+    {
+     "t": "2026-11-10T16:00:15+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.template.trigger",
+     "msg": "Error evaluating 'template' trigger for 'Bad float': ValueError: Template error: float got invalid input 'y' when rendering template '{{ states('sensor.lounge_humidity') | float > 50 }}' but no default was specified"
+    },
+    {
+     "t": "2026-11-10T16:00:20+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "humid"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:20+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Bad float",
+      "entity_id": "automation.bad_float",
+      "source": "sensor.lounge_humidity via template"
+     }
+    }
+   ]
+  },
+  {
+   "name": "numeric_value_template",
+   "doc": "numeric_state with `value_template` (trigger and condition), reading the `state` variable.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "thermostat",
+     "alias": "Thermostat",
+     "triggers": [
+      {
+       "trigger": "numeric_state",
+       "entity_id": "climate.lounge",
+       "value_template": "{{ state.attributes.current_temperature }}",
+       "above": 21
+      }
+     ],
+     "conditions": [
+      {
+       "condition": "numeric_state",
+       "entity_id": "climate.lounge",
+       "value_template": "{{ state.attributes.target_temperature - 1 }}",
+       "below": 25
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "{{ trigger.to_state.attributes.current_temperature }}"
+       }
+      }
+     ]
+    },
+    {
+     "id": "thermostat_bad",
+     "alias": "Thermostat bad",
+     "triggers": [
+      {
+       "trigger": "numeric_state",
+       "entity_id": "climate.lounge",
+       "value_template": "{{ state.attributes.mode }}",
+       "above": 21
+      }
+     ],
+     "actions": [
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "message": "never"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "climate.lounge",
+     "state": "heat",
+     "attributes": {
+      "current_temperature": 22,
+      "target_temperature": 22,
+      "mode": "x"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 1
+    },
+    {
+     "op": "set",
+     "entity_id": "climate.lounge",
+     "state": "heat",
+     "attributes": {
+      "current_temperature": 20,
+      "target_temperature": 22,
+      "mode": "x"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 1
+    },
+    {
+     "op": "set",
+     "entity_id": "climate.lounge",
+     "state": "heat",
+     "attributes": {
+      "current_temperature": 21.5,
+      "target_temperature": 22,
+      "mode": "x"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 1
+    },
+    {
+     "op": "set",
+     "entity_id": "climate.lounge",
+     "state": "heat",
+     "attributes": {
+      "current_temperature": 20,
+      "target_temperature": 27,
+      "mode": "x"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 1
+    },
+    {
+     "op": "set",
+     "entity_id": "climate.lounge",
+     "state": "heat",
+     "attributes": {
+      "current_temperature": 23,
+      "target_temperature": 27,
+      "mode": "x"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 1
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.thermostat",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.thermostat_bad",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.homeassistant.triggers.numeric_state",
+     "msg": "Error initializing 'Thermostat' trigger: In 'numeric_state' condition: unknown entity climate.lounge"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.homeassistant.triggers.numeric_state",
+     "msg": "Error initializing 'Thermostat bad' trigger: In 'numeric_state' condition: unknown entity climate.lounge"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.homeassistant.triggers.numeric_state",
+     "msg": "Error in 'Thermostat bad' trigger: In 'numeric_state' condition: entity climate.lounge state 'x' cannot be processed as a number"
+    },
+    {
+     "t": "2026-11-10T16:00:01+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.homeassistant.triggers.numeric_state",
+     "msg": "Error in 'Thermostat bad' trigger: In 'numeric_state' condition: entity climate.lounge state 'x' cannot be processed as a number"
+    },
+    {
+     "t": "2026-11-10T16:00:02+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": 21.5
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:02+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.homeassistant.triggers.numeric_state",
+     "msg": "Error in 'Thermostat bad' trigger: In 'numeric_state' condition: entity climate.lounge state 'x' cannot be processed as a number"
+    },
+    {
+     "t": "2026-11-10T16:00:02+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Thermostat",
+      "entity_id": "automation.thermostat",
+      "source": "numeric state of climate.lounge"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:03+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.homeassistant.triggers.numeric_state",
+     "msg": "Error in 'Thermostat bad' trigger: In 'numeric_state' condition: entity climate.lounge state 'x' cannot be processed as a number"
+    },
+    {
+     "t": "2026-11-10T16:00:04+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.homeassistant.triggers.numeric_state",
+     "msg": "Error in 'Thermostat bad' trigger: In 'numeric_state' condition: entity climate.lounge state 'x' cannot be processed as a number"
+    }
+   ]
+  },
+  {
+   "name": "choose_templates",
+   "doc": "choose with template conditions (and the shorthand), picking a choice or the default by the trigger.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "chooser",
+     "alias": "Chooser",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "sensor.lounge_temperature"
+      }
+     ],
+     "actions": [
+      {
+       "choose": [
+        {
+         "conditions": [
+          {
+           "condition": "template",
+           "value_template": "{{ trigger.to_state.state | int > 30 }}"
+          }
+         ],
+         "sequence": [
+          {
+           "action": "notify.mobile_app_phone",
+           "data": {
+            "message": "very hot {{ trigger.to_state.state }}"
+           }
+          }
+         ]
+        },
+        {
+         "conditions": "{{ trigger.to_state.state | int > 25 }}",
+         "sequence": [
+          {
+           "action": "notify.mobile_app_phone",
+           "data": {
+            "message": "hot {{ trigger.to_state.state }}"
+           }
+          }
+         ]
+        }
+       ],
+       "default": [
+        {
+         "action": "notify.mobile_app_phone",
+         "data": {
+          "message": "fine {{ trigger.to_state.state }}"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "chooser_errors",
+     "alias": "Chooser errors",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "sensor.lounge_temperature"
+      }
+     ],
+     "actions": [
+      {
+       "choose": [
+        {
+         "conditions": [
+          "{{ true }}",
+          "{{ 1 / 0 }}",
+          "{{ 1 / 0 }}"
+         ],
+         "sequence": [
+          {
+           "action": "notify.mobile_app_phone",
+           "data": {
+            "message": "never"
+           }
+          }
+         ]
+        },
+        {
+         "conditions": [
+          {
+           "condition": "numeric_state",
+           "entity_id": "sensor.missing",
+           "below": 5
+          }
+         ],
+         "sequence": [
+          {
+           "action": "notify.mobile_app_phone",
+           "data": {
+            "message": "never"
+           }
+          }
+         ]
+        }
+       ],
+       "default": [
+        {
+         "action": "notify.mobile_app_phone",
+         "data": {
+          "message": "default"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "31",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 1
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "27",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 1
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "20",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 1
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.chooser",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.chooser_errors",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "very hot 31"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "default"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.automation.chooser_errors",
+     "msg": "Chooser errors: Error in 'choose[1]' evaluation: In 'template' condition: ZeroDivisionError: division by zero"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.automation.chooser_errors",
+     "msg": "Chooser errors: Error in 'choose[0]' evaluation: In 'numeric_state':\n  In 'numeric_state' condition: unknown entity sensor.missing"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Chooser",
+      "entity_id": "automation.chooser",
+      "source": "state of sensor.lounge_temperature"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Chooser errors",
+      "entity_id": "automation.chooser_errors",
+      "source": "state of sensor.lounge_temperature"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:01+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "hot 27"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:01+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "default"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:01+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.automation.chooser_errors",
+     "msg": "Chooser errors: Error in 'choose[1]' evaluation: In 'template' condition: ZeroDivisionError: division by zero"
+    },
+    {
+     "t": "2026-11-10T16:00:01+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.automation.chooser_errors",
+     "msg": "Chooser errors: Error in 'choose[0]' evaluation: In 'numeric_state':\n  In 'numeric_state' condition: unknown entity sensor.missing"
+    },
+    {
+     "t": "2026-11-10T16:00:01+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Chooser",
+      "entity_id": "automation.chooser",
+      "source": "state of sensor.lounge_temperature"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:01+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Chooser errors",
+      "entity_id": "automation.chooser_errors",
+      "source": "state of sensor.lounge_temperature"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:02+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "fine 20"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:02+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "message": "default"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:02+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.automation.chooser_errors",
+     "msg": "Chooser errors: Error in 'choose[1]' evaluation: In 'template' condition: ZeroDivisionError: division by zero"
+    },
+    {
+     "t": "2026-11-10T16:00:02+00:00",
+     "kind": "log",
+     "level": "WARNING",
+     "logger": "homeassistant.components.automation.chooser_errors",
+     "msg": "Chooser errors: Error in 'choose[0]' evaluation: In 'numeric_state':\n  In 'numeric_state' condition: unknown entity sensor.missing"
+    },
+    {
+     "t": "2026-11-10T16:00:02+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Chooser",
+      "entity_id": "automation.chooser",
+      "source": "state of sensor.lounge_temperature"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:02+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Chooser errors",
+      "entity_id": "automation.chooser_errors",
+      "source": "state of sensor.lounge_temperature"
+     }
+    }
+   ]
+  },
+  {
+   "name": "wait_for_trigger_templates",
+   "doc": "wait_for_trigger with a template trigger and a state trigger; the actions after it read `wait`.",
+   "states": [
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "22",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_humidity",
+     "state": "48",
+     "attributes": {
+      "friendly_name": "Lounge Humidity",
+      "unit_of_measurement": "%"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge Window"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Lounge"
+     }
+    },
+    {
+     "op": "set",
+     "entity_id": "light.hall",
+     "state": "off",
+     "attributes": {
+      "friendly_name": "Hall"
+     }
+    }
+   ],
+   "automations": [
+    {
+     "id": "waiter",
+     "alias": "Waiter",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "light.lounge",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "wait_for_trigger": [
+        {
+         "trigger": "template",
+         "value_template": "{{ states('sensor.lounge_temperature') | float(0) > 27 }}"
+        },
+        {
+         "trigger": "state",
+         "entity_id": "binary_sensor.lounge_window",
+         "to": "on",
+         "id": "window"
+        }
+       ]
+      },
+      {
+       "action": "notify.mobile_app_phone",
+       "data": {
+        "platform": "{{ wait.trigger.platform }}",
+        "id": "{{ wait.trigger.id }}",
+        "to": "{{ wait.trigger.to_state.state }}",
+        "completed": "{{ wait.completed }}",
+        "remaining": "{{ wait.remaining }}",
+        "first": "{{ trigger.to_state.state }}"
+       }
+      }
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "sensor.lounge_temperature",
+     "state": "28",
+     "attributes": {
+      "friendly_name": "Lounge Temperature",
+      "unit_of_measurement": "°C"
+     }
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "off",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 1
+    },
+    {
+     "op": "set",
+     "entity_id": "light.lounge",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 5
+    },
+    {
+     "op": "set",
+     "entity_id": "binary_sensor.lounge_window",
+     "state": "on",
+     "attributes": {}
+    },
+    {
+     "op": "wait",
+     "s": 5
+    }
+   ],
+   "expected": [
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.waiter",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Waiter",
+      "entity_id": "automation.waiter",
+      "source": "state of light.lounge"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:05+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "platform": "template",
+      "id": 0,
+      "to": 28,
+      "completed": true,
+      "remaining": null,
+      "first": "on"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:11+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Waiter",
+      "entity_id": "automation.waiter",
+      "source": "state of light.lounge"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:16+00:00",
+     "kind": "call",
+     "domain": "notify",
+     "service": "mobile_app_phone",
+     "data": {
+      "platform": "state",
+      "id": "window",
+      "to": "on",
+      "completed": true,
+      "remaining": null,
+      "first": "on"
+     }
+    }
+   ]
+  }
+ ]
+}
