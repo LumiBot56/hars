@@ -412,7 +412,29 @@ SCENARIOS = [
                     {"action": "light.turn_off",
                      "target": {"entity_id": "{{ '0123456789abcdef0123456789abcdef' }}"}},
                 ],
-            }
+            },
+            {
+                "id": "unknown_id_and_bad_data",
+                "alias": "Unknown id and bad data",
+                "triggers": [{"trigger": "state", "entity_id": "binary_sensor.lounge_window",
+                              "to": "on"}],
+                "actions": [
+                    {"action": "light.turn_on",
+                     "target": {"entity_id": "{{ '0123456789abcdef0123456789abcdef' }}"},
+                     "data": {"brightness": "{{ 1 / 0 }}"}},
+                ],
+            },
+            {
+                "id": "unknown_static_id_and_bad_data",
+                "alias": "Unknown static id and bad data",
+                "triggers": [{"trigger": "state", "entity_id": "binary_sensor.lounge_window",
+                              "to": "on"}],
+                "actions": [
+                    {"action": "light.turn_on",
+                     "target": {"entity_id": "0123456789abcdef0123456789abcdef"},
+                     "data": {"brightness": "{{ 1 / 0 }}"}},
+                ],
+            },
         ],
         [set_("binary_sensor.lounge_window", "on"), wait(1)],
         [],

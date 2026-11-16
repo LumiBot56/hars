@@ -108,16 +108,17 @@ impl Prepared {
     }
 }
 
-/// `async_prepare_call_from_config`: the service name, the target, then
-/// the data, rendered; the error is HA's `HomeAssistantError` text. Entity
-/// registry ids in the target are checked for shape here and resolved
-/// against the registry as it is when the call is made ([`resolve_ids`]).
+/// `async_prepare_call_from_config`: the service name, the target (its
+/// entity registry ids resolved against `registry` as it is now), then the
+/// data, rendered; the error is HA's `HomeAssistantError` text.
+#[allow(clippy::too_many_arguments)] // HA's own inputs, one each.
 pub(crate) fn prepare(
     service: &Service,
     data: &[Complex],
     target: Option<&Complex>,
     home: &Home,
     vars: &Vars,
+    registry: Option<&ha_registry::Registry>,
     out: &mut Out,
 ) -> Result<Prepared, String> {
     let (domain, service) = match service {
@@ -168,22 +169,30 @@ pub(crate) fn prepare(
             (Some(t), shown)
         }
     };
-    let mut service_data = Map::new();
+    let mut prepared = Prepared {
+        domain,
+        service,
+        data: Map::new(),
+        target,
+        shown,
+    };
+    // The target's registry ids resolve before the data renders, as HA
+    // orders it, against the registry as it is now (this runs once the
+    // render thread is ours, however long that took).
+    if prepared.shown.is_some() {
+        let snapshot = registry.map(ha_registry::Registry::snapshot);
+        resolve_ids(&mut prepared, snapshot.as_deref())?;
+        prepared.shown = None;
+    }
     for d in data {
         let rendered = complex_json(d, home, vars, out)
             .map_err(|e| format!("Error rendering data template: {e}"))?;
         let Value::Object(m) = rendered else {
             return Err("Error rendering data template: Result is not a Dictionary".into());
         };
-        service_data.extend(m);
+        prepared.data.extend(m);
     }
-    Ok(Prepared {
-        domain,
-        service,
-        data: service_data,
-        target,
-        shown,
-    })
+    Ok(prepared)
 }
 
 /// `cv.fake_uuid4_hex`: an entity registry id (32 lower-case hex digits).

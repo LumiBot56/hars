@@ -1797,6 +1797,50 @@
        }
       }
      ]
+    },
+    {
+     "id": "unknown_id_and_bad_data",
+     "alias": "Unknown id and bad data",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "binary_sensor.lounge_window",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "{{ '0123456789abcdef0123456789abcdef' }}"
+       },
+       "data": {
+        "brightness": "{{ 1 / 0 }}"
+       }
+      }
+     ]
+    },
+    {
+     "id": "unknown_static_id_and_bad_data",
+     "alias": "Unknown static id and bad data",
+     "triggers": [
+      {
+       "trigger": "state",
+       "entity_id": "binary_sensor.lounge_window",
+       "to": "on"
+      }
+     ],
+     "actions": [
+      {
+       "action": "light.turn_on",
+       "target": {
+        "entity_id": "0123456789abcdef0123456789abcdef"
+       },
+       "data": {
+        "brightness": "{{ 1 / 0 }}"
+       }
+      }
+     ]
     }
    ],
    "steps": [
@@ -1816,6 +1860,18 @@
      "t": "2026-11-10T16:00:00+00:00",
      "kind": "automation",
      "entity_id": "automation.by_registry_id",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.unknown_id_and_bad_data",
+     "state": "on"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "automation",
+     "entity_id": "automation.unknown_static_id_and_bad_data",
      "state": "on"
     },
     {
@@ -1880,10 +1936,56 @@
     },
     {
      "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.unknown_id_and_bad_data",
+     "msg": "Unknown id and bad data: Error executing script. Error for call_service at pos 1: Template rendered invalid entity IDs: 0123456789abcdef0123456789abcdef"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.unknown_id_and_bad_data",
+     "msg": "Error while executing automation automation.unknown_id_and_bad_data: Template rendered invalid entity IDs: 0123456789abcdef0123456789abcdef"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.unknown_static_id_and_bad_data",
+     "msg": "Unknown static id and bad data: Error executing script. Error for call_service at pos 1: Template rendered invalid entity IDs: ['0123456789abcdef0123456789abcdef']"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "log",
+     "level": "ERROR",
+     "logger": "homeassistant.components.automation.unknown_static_id_and_bad_data",
+     "msg": "Error while executing automation automation.unknown_static_id_and_bad_data: Template rendered invalid entity IDs: ['0123456789abcdef0123456789abcdef']"
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
      "kind": "triggered",
      "data": {
       "name": "By registry id",
       "entity_id": "automation.by_registry_id",
+      "source": "state of binary_sensor.lounge_window"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Unknown id and bad data",
+      "entity_id": "automation.unknown_id_and_bad_data",
+      "source": "state of binary_sensor.lounge_window"
+     }
+    },
+    {
+     "t": "2026-11-10T16:00:00+00:00",
+     "kind": "triggered",
+     "data": {
+      "name": "Unknown static id and bad data",
+      "entity_id": "automation.unknown_static_id_and_bad_data",
       "source": "state of binary_sensor.lounge_window"
      }
     }

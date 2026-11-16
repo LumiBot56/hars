@@ -1008,9 +1008,14 @@ impl Automation {
                             let (s, d, t, v) =
                                 (service.clone(), data.clone(), target.clone(), vars.clone());
                             let home = shared.home();
+                            let registry = shared.registry.read().clone();
                             match ha_core::template::run::run(move || {
                                 let mut out = Out::default();
-                                (tpl::prepare(&s, &d, t.as_ref(), &home, &v, &mut out), out)
+                                let r = registry.as_deref();
+                                (
+                                    tpl::prepare(&s, &d, t.as_ref(), &home, &v, r, &mut out),
+                                    out,
+                                )
                             })
                             .await
                             {
@@ -1021,9 +1026,10 @@ impl Automation {
                                 None => Err("the template stopped unexpectedly".into()),
                             }
                         };
-                        // Registry ids resolve against the registry as it
-                        // is now, after any wait for a render (only a target
-                        // naming one reads it).
+                        // A static target's registry ids resolve against the
+                        // registry as it is now (a rendered one's already
+                        // did, before its data; only a target naming one
+                        // reads it).
                         let prepared = prepared.and_then(|mut p| {
                             if p.shown.is_some() {
                                 tpl::resolve_ids(&mut p, shared.registries().as_deref())?;
