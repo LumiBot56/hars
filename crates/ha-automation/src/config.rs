@@ -461,6 +461,36 @@ fn enabled_items(list: &[Value], at: &str) -> R<Vec<(usize, Value)>> {
     Ok(out)
 }
 
+/// HA's `_MINIMAL_PLATFORM_SCHEMA`: an `id` is a string (`str`, on
+/// purpose), an alias and a description are text (`cv.string`: a number
+/// will do, nothing, a list or a mapping won't). HA drops an automation
+/// that fails this altogether; one that only fails the rest is shown
+/// `unavailable`.
+pub fn minimal(item: &Value) -> Result<(), String> {
+    let Some(o) = item.as_object() else {
+        return Ok(());
+    };
+    if o.get("id").is_some_and(|id| !id.is_string()) {
+        return Err("expected str for dictionary value @ data['id']".into());
+    }
+    for key in ["alias", "description"] {
+        match o.get(key) {
+            Some(Value::Null) => {
+                return Err(format!(
+                    "string value is None for dictionary value @ data['{key}']"
+                ));
+            }
+            Some(Value::Array(_) | Value::Object(_)) => {
+                return Err(format!(
+                    "value should be a string for dictionary value @ data['{key}']"
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn alias(o: &Map<String, Value>) -> Option<String> {
     match o.get("alias") {
         None | Some(Value::Null) => None,
@@ -507,6 +537,10 @@ impl Ctx {
                 "a trigger's 'variables' are not supported by hars yet @ data{at}"
             ));
         }
+        // From here it is the trigger platform's own schema, which HA
+        // validates one trigger at a time: its errors name the place in
+        // the trigger, not in the automation.
+        let at = "";
         let common = ["trigger", "platform", "id", "enabled", "alias"];
         let kind = match platform {
             "state" => {
@@ -789,9 +823,17 @@ impl Ctx {
                     "data_template",
                     "alias",
                     "enabled",
+                    "metadata",
                 ],
                 at,
             )?;
+            // "The frontend stores data here. Don't use in core."
+            // (`vol.Remove("metadata"): dict`).
+            if o.get("metadata").is_some_and(|m| !m.is_object()) {
+                return Err(format!(
+                    "expected dict for dictionary value @ data{at}['metadata']"
+                ));
+            }
             let service = match name.as_str() {
                 Some(s) if is_template_string(s) => Service::Template(self.dynamic_template(
                     name,
@@ -804,7 +846,7 @@ impl Ctx {
                         .split_once('.')
                         .filter(|(d, s)| !d.is_empty() && !s.is_empty())
                         .ok_or_else(|| {
-                            format!("Service {name} does not match format <domain>.<name> @ data{at}['action']")
+                            format!("Service {name} does not match format <domain>.<name> for dictionary value @ data{at}['action']")
                         })?;
                     Service::Static {
                         domain: domain.to_lowercase(),
@@ -1024,18 +1066,25 @@ pub fn parse_ordered(v: &Value, order: &Order) -> Result<Config, String> {
         ],
         "",
     )?;
+    minimal(v)?;
     let mut ctx = Ctx::default();
-    let id = match o.get("id") {
-        None | Some(Value::Null) => None,
-        Some(Value::String(s)) => Some(s.clone()),
-        Some(Value::Number(n)) => Some(n.to_string()),
-        Some(_) => return Err("expected str for dictionary value @ data['id']".into()),
-    };
+    let id = o.get("id").and_then(Value::as_str).map(str::to_owned);
     let alias = alias(o);
-    let mode = match o.get("mode").and_then(Value::as_str) {
-        None | Some("single") => Mode::Single,
-        Some("restart") => Mode::Restart,
-        Some(m) => return Err(format!("mode {m} is not supported by hars yet")),
+    let mode = match o.get("mode") {
+        None => Mode::Single,
+        Some(Value::String(m)) => match m.as_str() {
+            "single" => Mode::Single,
+            "restart" => Mode::Restart,
+            "queued" | "parallel" => {
+                return Err(format!("mode {m} is not supported by hars yet"));
+            }
+            _ => {
+                return Err("value must be one of ['parallel', 'queued', 'restart', 'single'] for dictionary value @ data['mode']".into());
+            }
+        },
+        Some(_) => {
+            return Err("value must be one of ['parallel', 'queued', 'restart', 'single'] for dictionary value @ data['mode']".into());
+        }
     };
     let initial_state = match o.get("initial_state") {
         None => None,
@@ -1073,9 +1122,10 @@ pub fn parse_ordered(v: &Value, order: &Order) -> Result<Config, String> {
     } else {
         "action"
     };
-    let triggers = ctx.triggers(o.get(tkey), &format!("['{tkey}']"))?;
-    let conditions = ctx.conditions(o.get(ckey), &format!("['{ckey}']"))?;
-    let actions = ctx.actions(o.get(akey), &format!("['{akey}']"))?;
+    // HA renames the old keys first, so its errors name the new ones.
+    let triggers = ctx.triggers(o.get(tkey), "['triggers']")?;
+    let conditions = ctx.conditions(o.get(ckey), "['conditions']")?;
+    let actions = ctx.actions(o.get(akey), "['actions']")?;
     Ok(Config {
         id,
         alias,
