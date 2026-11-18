@@ -99,17 +99,7 @@ async fn run(thp_disabled: std::io::Result<bool>) -> anyhow::Result<()> {
     // automations later.
     let config_yaml = {
         let dir = config_dir.clone();
-        let loaded = tokio::task::spawn_blocking(move || {
-            let file = dir.join("configuration.yaml");
-            if !file.is_file() {
-                return Ok(None);
-            }
-            let secrets = ha_core::yaml::Secrets {
-                config_dir: dir.clone(),
-            };
-            ha_core::yaml::load_file(&file, Some(&secrets)).map(Some)
-        })
-        .await?;
+        let loaded = tokio::task::spawn_blocking(move || config_yaml::load(&dir)).await?;
         loaded.unwrap_or_else(|e| {
             tracing::error!("configuration.yaml: {e}");
             None
@@ -205,8 +195,17 @@ async fn run(thp_disabled: std::io::Result<bool>) -> anyhow::Result<()> {
         Some(config) => {
             let items = ha_automation::from_config_yaml(config);
             let automations =
-                ha_automation::Automations::setup_yaml(&hass, &registries, &items).await;
-            automations.set_registry(registry.clone());
+                ha_automation::Automations::setup_live(&hass, registry.clone(), &items).await;
+            // `automation.reload` reads the file again, off the runtime.
+            let dir = config_dir.clone();
+            automations.set_loader(std::sync::Arc::new(move || {
+                let dir = dir.clone();
+                Box::pin(async move {
+                    let loaded =
+                        tokio::task::spawn_blocking(move || config_yaml::automations(&dir)).await;
+                    loaded.unwrap_or_else(|e| Err(e.to_string()))
+                })
+            }));
             Some(automations)
         }
         None => None,
@@ -272,6 +271,12 @@ async fn run(thp_disabled: std::io::Result<bool>) -> anyhow::Result<()> {
         tokio::task::spawn_blocking(move || ha_auth::Auth::load(&dir, clock)).await??
     };
     tracing::info!("config directory {}", config_dir.display());
+    if let Some(a) = &automations {
+        let auth = auth.clone();
+        a.set_admin_check(std::sync::Arc::new(move |user_id| {
+            auth.user(user_id).map(|u| u.is_admin())
+        }));
+    }
     if !auth.is_onboarded() {
         let port = addr.rsplit(':').next().unwrap_or("8123");
         tracing::info!(
