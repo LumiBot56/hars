@@ -174,6 +174,10 @@ that must reach disk at stop registers with `hass.on_final_write`.
   renamed over the old one, and the directory synced. Secrets are written
   mode 0600. `Store` is blocking: use `spawn_blocking` from async code,
   including during start-up; offline CLI commands can call it directly.
+  As in HA, a file of a newer major version is an error; one of a newer
+  minor version loads, and the next save writes hars's own minor version
+  (the registries and config entries never write over another minor
+  version: [what that means for imports](#which-home-assistant-releases-can-be-imported)).
 - **Delayed saves** (`DelayedSave`) are HA's `async_delay_save`: a change
   schedules a write after a quiet period (registries 10 s, or 180 s while
   starting; config entries 1 s; `person` 10 s), and `flush()` writes at
@@ -296,7 +300,8 @@ first reproduce the current pin before being updated to the new one.
 
 | Thing | Pinned version |
 |---|---|
-| Home Assistant core (behaviour, `.storage` shapes, import) | **2026.6.1** |
+| Home Assistant core (behaviour, `.storage` shapes) | **2026.6.1** |
+| Home Assistant installs `hars import` takes over | **2026.6.x and 2026.7.x** ([below](#which-home-assistant-releases-can-be-imported)) |
 | Frontend served by hars | **`home-assistant-frontend` 20260527.4** (what 2026.6.1 ships; `Dockerfile` checks its sha256), with its map tile layer pointed at OpenStreetMap ([ADR 0010](adr/0010-map-tiles-from-osm.md)) |
 | iOS companion app | **2026.9.0** on iOS 27 |
 | Test time zone and units | Europe/London (for its DST transitions), metric |
@@ -321,7 +326,8 @@ How it is kept:
   records their sources and missing extractors, plus Python's case-fold table.
 - **Same files.** hars reads and writes HA's `.storage` files, so
   `hars import` copies them byte for byte after checking them with hars's own
-  loaders.
+  loaders. Which releases' files it takes is
+  [below](#which-home-assistant-releases-can-be-imported).
 - **Deliberate differences** are written in the module's doc comment and in
   the [roadmap](ROADMAP.md).
 - **One patched dependency.** `vendor/minijinja` is minijinja 3.1.0 with a
@@ -331,6 +337,89 @@ How it is kept:
   attributes), and wording a missing attribute's message
   ([`vendor/minijinja/HARS.md`](../vendor/minijinja/HARS.md));
   `[patch.crates-io]` in `Cargo.toml` points at it.
+
+### Which Home Assistant releases can be imported
+
+The pin says what hars *behaves like*. What `hars import` *accepts* is
+wider: the release lines it is tested with are 2026.6 and 2026.7. The rule
+starts from Home Assistant's own for a downgrade (what would 2026.6.1 do
+with these files?) and is stricter where hars could not keep the data
+safe. It is applied to each store, not to the release number.
+
+- A store with a newer **major** storage version stops the import.
+  Home Assistant refuses such a file too (`helpers/storage.py` raises
+  `UnsupportedStorageVersionError`); for the stores its bootstrap loads
+  (the registries, the config entries, the restore state) it then starts
+  in recovery mode. So does a config entry of a newer **version** for an
+  integration hars runs (`ConfigEntry.async_migrate` answers
+  `migration_error`; hars refuses a disabled one as well). The whole
+  import is refused, with the store and both versions named, and none of
+  the destination's files is changed.
+- A newer **minor** storage version is compatible by HA's rule: HA loads
+  the data as it is and saves it at its own minor version. hars takes one
+  only where its own reader and writer make that safe, store by store
+  (`Minor` in `crates/ha-server/src/import.rs`):
+  - most stores: read, and written at hars's minor version the next time
+    they change, with what hars's writer for that store keeps (`mobile_app`:
+    the deleted ids only, as 2026.6.1; the frontend's settings and the
+    dashboards: every key);
+  - the entity, device and area registries and `core.config_entries`: only
+    the exact minor version hars writes. hars never writes these over a
+    file of another minor version, so every later change would be lost at
+    the next restart. A newer one is refused, and an older one too, which
+    is stricter than HA (it migrates an older file and saves it when it
+    starts, so a directory 2026.6 or 2026.7 has run on is at these
+    versions);
+  - the floor, label and category registries, which hars only reads, and
+    `person`: not a newer one (2026.6.1's own `person` migration fails on
+    one).
+- Each store is also decoded with the decoder the server uses at start, so
+  a file the server would start without (and then overwrite) stops the
+  import. Frontend settings that don't decode are the exception: they are
+  left out and listed in the report.
+- Releases older than 2026.6 are refused: update Home Assistant first.
+
+| Home Assistant | `hars import` | What that release changed in what hars reads |
+|---|---|---|
+| before 2026.6 | refused: update to 2026.6 or 2026.7 first | older store formats, which hars doesn't migrate |
+| **2026.6.x** | **imports** (tested: 2026.6.1, 2026.6.4) | nothing (2026.6.4 gives Hue's grouped lights a `translation_key`) |
+| **2026.7.x** | **imports** (tested: 2026.7.0, 2026.7.4) | `mobile_app`'s store is 1.2 (Live Activity push tokens); `switchbot_cloud` entries can hold a `cloudhook_url`; `sun` removes its long-gone `solar_rising` sensor's registry row; the Labs preview for the new triggers and conditions leaves `core.labs`. No other store hars reads changes version or shape |
+| 2026.8.x, 2026.9.x | refused | `core.device_registry` is major version 3: a device belongs to one config entry, and a device two integrations shared is split in two with new ids (3.4 in 2026.9 adds `child_devices`); `core.entity_registry` is 1.23 (`settings`) |
+| 2026.10.x | refused | and: `hue` entries are 1.2 (Zigbee addresses leave the devices' `mac` connections), `lifx` entries are version 2 (`serial` in `data`, the unique id without colons) |
+| 2026.11.x | refused | and: `core.entity_registry` is 1.24 (a user's entity name is stored without the device's name, which is added when shown), `met` entries are version 2 (`location` nested), restore-state rows gain `entity_registry_id` |
+
+Unchanged from 2026.6.1 through 2026.11.2: `auth`,
+`auth_provider.homeassistant`, `onboarding`, `core.config`,
+`core.config_entries` (the store itself), the area, floor, label and
+category registries, `core.labs`, `person`, `zone`, the dashboards'
+stores, the frontend's settings, and the YAML loader (`util/yaml`).
+
+The evidence is in the tests: `crates/ha-server/tests/vectors/import/` holds
+one synthetic install as each of 2026.6.1, 2026.6.4, 2026.7.0, 2026.7.4,
+2026.8.3 and 2026.11.2 leaves it on disk, made by running each release's own
+storage code (`scripts/vectors/import_releases.py`), and `downgrade.json`
+there is what Home Assistant 2026.6.1's base bootstrap (registries, config
+entries, restore state; no integration is set up) did with each one: it
+loads the first four and refuses the last two, naming
+`core.device_registry`, the first store it can't read. hars must agree on
+every one. The list of tested releases is `TESTED_HA` in
+`crates/ha-server/src/import.rs`.
+
+The decision is made per store, not from `.HA_VERSION`: a directory that
+says it is from a later release and whose stores and entries all pass is
+imported, with `ha_version_tested: false` in the report and a warning
+(`ha_version_tested` is about the release line, not each patch release).
+A 2026.8 install with a device registry file doesn't pass: Home Assistant
+rewrites that file the first time 2026.8 starts.
+
+After an import from 2026.7, hars still behaves like 2026.6.1 and serves
+2026.6's frontend. What the user should expect is in
+[INSTALL.md](INSTALL.md#which-home-assistant-releases).
+
+Taking 2026.8 and later needs hars to read the version 3 device registry
+(and write it, or convert it back and lose the split), then the migrated
+`hue`, `lifx` and `met` entries and 2026.11's entity names. That is the
+size of moving the pin, and is on the [roadmap](ROADMAP.md).
 
 ## Where new code goes
 

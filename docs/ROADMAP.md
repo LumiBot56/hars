@@ -152,7 +152,7 @@ ids, addresses, names and coordinates replaced with fake ones
 
 ### M1: Import, registries, config & restore
 - [x] Versioned, idempotent **importer** (`hars import`) that reads a consistent copy of an HA
-      2026.6.1 config dir and writes a machine-readable report of anything
+      2026.6 or 2026.7 config dir and writes a machine-readable report of anything
       unsupported or unresolved (`import-report.json`). Stores `hars` reads
       are validated with its own loaders and copied byte for byte; a re-run
       that would replace state `hars` changed needs `--force`. It imports:
@@ -177,6 +177,41 @@ ids, addresses, names and coordinates replaced with fake ones
         report marks each entry's integration as supported or not. Hue host/key,
         LIFX host, SwitchBot token/secret and mobile_app registration are used
         by the implemented integrations in M4/M5
+  - [x] Releases after the pin: the importer decides store by store,
+        starting from what Home Assistant 2026.6.1 does with a newer file
+        after a downgrade and stricter where `hars` could not keep the
+        data. It takes 2026.6.x and 2026.7.x (`TESTED_HA`). A store of a newer major
+        storage version, a registry or `person` store of a newer minor
+        version, an entity, device or area registry or
+        `core.config_entries` of any minor version but the one `hars`
+        writes, or a config entry of a newer version for an integration
+        `hars` runs refuses the whole import, naming the store and both
+        versions; other newer minor versions are read and written back as
+        2026.6.1 writes them (`mobile_app`'s 1.2 store from 2026.7: vectors
+        from 2026.6.1's own code). `mobile_app`'s store and
+        `core.analytics` are imported, and every store is decoded with the
+        server's own decoder first. Also refused before any change: a
+        source inside the destination, a symlinked `.storage`, and a
+        directory where a YAML file or the report would go; settings
+        skipped as unreadable no longer remove the destination's own.
+        `import-report.json` has
+        `ha_version_tested`, `behaves_like` and `newer_stores`. Tested on
+        one synthetic install as 2026.6.1, 2026.6.4, 2026.7.0, 2026.7.4,
+        2026.8.3 and 2026.11.2 leave it, each made by that release's code,
+        against what 2026.6.1 does with each
+        (`scripts/vectors/import_releases.py`;
+        [the table](ARCHITECTURE.md#which-home-assistant-releases-can-be-imported)).
+        Entries of a newer config flow version are not started either
+  - [ ] Import from Home Assistant 2026.8 and later. Needs, in order:
+        `core.device_registry` version 3 (2026.8: one config entry per
+        device; devices two integrations shared are split, entities and
+        `via_device_id` links moved to the split devices; 3.4 adds
+        `child_devices`) and `core.entity_registry` 1.23 (`settings`);
+        `hue` entries 1.2 and `lifx` entries version 2 (2026.10); the
+        entity registry's 1.24 names and `met` entries version 2
+        (2026.11). `hars` serves 2026.6's frontend, which expects the
+        version 1 device shape, so this is either a conversion back at
+        import (lossy for split devices) or part of moving the pin
 - [x] `configuration.yaml` loaded as HA loads it: `!include`, the
       `!include_dir_*` tags, `!secret`, `!env_var`; unsupported
       **automation** syntax makes that automation `unavailable`
