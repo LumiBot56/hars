@@ -83,8 +83,11 @@ resource budget gate (`PERF_GATE=1 scripts/perf.sh`, see
   so far); the sets made before that rule have none yet
   and are listed there as a backlog. The rules, a skeleton
   and the backlog are in [scripts/vectors/README.md](scripts/vectors/README.md).
-- **Fixtures are sanitised:** no tokens or keys, ids replaced, coordinates
-  rounded. Nothing personal is committed.
+- **Fixtures are sanitised.** Nothing personal is committed: MAC addresses,
+  serial numbers and other hardware ids, IP addresses, people's and device
+  names, SSIDs, coordinates and tokens are replaced with fake values, in
+  every spelling. The list and how to check it are in
+  [scripts/vectors/README.md](scripts/vectors/README.md#sanitising-a-fixture).
 - **Python scripts** have `test_*.py` tests in `scripts/`
   (`scripts/test_shadow_diff.py`). `scripts/test_crate_layers.py` checks that
   crates depend only downwards.

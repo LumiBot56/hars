@@ -620,7 +620,7 @@ mod tests {
         }
 
         async fn login(&self, password: &str) -> Reply {
-            self.login_with("adam", password).await
+            self.login_with("alex", password).await
         }
 
         /// `authorize.html`'s requests, then the token exchange `core.js` does.
@@ -689,7 +689,7 @@ mod tests {
         let wrong = c
             .post_json(
                 &format!("/auth/login_flow/{flow_id}"),
-                json!({"client_id": CLIENT, "username": "adam", "password": "nope"}),
+                json!({"client_id": CLIENT, "username": "alex", "password": "nope"}),
             )
             .await;
         assert_eq!(wrong.status, StatusCode::OK);
@@ -699,7 +699,7 @@ mod tests {
         let done = c
             .post_json(
                 &format!("/auth/login_flow/{flow_id}"),
-                json!({"client_id": CLIENT, "username": "Adam", "password": "secret"}),
+                json!({"client_id": CLIENT, "username": "Alex", "password": "secret"}),
             )
             .await;
         let code = done.json()["result"].as_str().unwrap().to_owned();
@@ -980,7 +980,7 @@ mod tests {
             msg(c
                 .step(
                     &flow,
-                    json!({"client_id": CLIENT, "username": "adam", "password": "secret", "x": 1})
+                    json!({"client_id": CLIENT, "username": "alex", "password": "secret", "x": 1})
                 )
                 .await),
             (StatusCode::BAD_REQUEST, "User input malformed".into())
@@ -989,7 +989,7 @@ mod tests {
             msg(c
                 .step(
                     &flow,
-                    json!({"client_id": CLIENT, "username": "adam", "password": "secret"})
+                    json!({"client_id": CLIENT, "username": "alex", "password": "secret"})
                 )
                 .await),
             (StatusCode::FORBIDDEN, "Invalid redirect URI".into())
@@ -998,7 +998,7 @@ mod tests {
             msg(c
                 .step(
                     &"0".repeat(32),
-                    json!({"client_id": CLIENT, "username": "adam", "password": "secret"})
+                    json!({"client_id": CLIENT, "username": "alex", "password": "secret"})
                 )
                 .await),
             (StatusCode::NOT_FOUND, "Invalid flow specified".into())
@@ -1010,12 +1010,12 @@ mod tests {
             .json()["flow_id"].as_str().unwrap().to_owned();
         let other = Client {
             router: c.router.clone(),
-            ip: "192.168.1.99:1".parse().unwrap(),
+            ip: "192.168.1.21:1".parse().unwrap(),
         };
         let r = other
             .post_json(
                 &format!("/auth/login_flow/{flow}"),
-                json!({"client_id": CLIENT, "username": "adam", "password": "secret"}),
+                json!({"client_id": CLIENT, "username": "alex", "password": "secret"}),
             )
             .await;
         assert_eq!(

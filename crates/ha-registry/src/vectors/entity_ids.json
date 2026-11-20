@@ -27,7 +27,7 @@
         "device_id": null,
         "disabled_by": null,
         "entity_category": null,
-        "entity_id": "person.adam",
+        "entity_id": "person.alex",
         "hidden_by": null,
         "icon": null,
         "id": "<uuid#1>",
@@ -35,16 +35,16 @@
         "labels": [],
         "modified_at": "<t:boot#2>",
         "name": null,
-        "object_id_base": "adam",
+        "object_id_base": "alex",
         "options": {},
         "original_device_class": null,
         "original_icon": null,
-        "original_name": "adam",
+        "original_name": "alex",
         "platform": "person",
         "suggested_object_id": null,
         "supported_features": 0,
         "translation_key": null,
-        "unique_id": "adam",
+        "unique_id": "alex",
         "previous_unique_id": null,
         "unit_of_measurement": null
        }
@@ -132,8 +132,8 @@
      "unique_id": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f_speed"
     },
     "object_id_base ' Phone Heading' (device in area 'Bedroom')": "sensor.bedroom_phone_heading",
-    "object_id_base ' Phone Altitude' (device renamed by user, in area)": "sensor.bedroom_adam_s_iphone_phone_altitude",
-    "sensor.phone_battery_level name after the user renamed the device": "Adam's iPhone Battery Level"
+    "object_id_base ' Phone Altitude' (device renamed by user, in area)": "sensor.bedroom_alex_s_iphone_phone_altitude",
+    "sensor.phone_battery_level name after the user renamed the device": "Alex's iPhone Battery Level"
    },
    "config_entry_signals_ws": [],
    "ws_event_frames": [
@@ -169,21 +169,21 @@
     "{\"type\":\"event\",\"event\":{\"event_type\":\"entity_registry_updated\",\"data\":{\"action\":\"update\",\"entity_id\":\"binary_sensor.phone_kiosk_screensaver\",\"changes\":{\"name\":null}},\"origin\":\"LOCAL\",\"time_fired\":\"<t:async_get_or_create#57>\",\"context\":{\"id\":\"<ulid#30>\",\"parent_id\":null,\"user_id\":null}},\"id\":1}",
     "{\"type\":\"event\",\"event\":{\"event_type\":\"entity_registry_updated\",\"data\":{\"action\":\"update\",\"entity_id\":\"sensor.phone_camera_stream\",\"changes\":{\"name\":null}},\"origin\":\"LOCAL\",\"time_fired\":\"<t:async_get_or_create#59>\",\"context\":{\"id\":\"<ulid#31>\",\"parent_id\":null,\"user_id\":null}},\"id\":1}",
     "{\"type\":\"event\",\"event\":{\"event_type\":\"entity_registry_updated\",\"data\":{\"action\":\"update\",\"entity_id\":\"sensor.bedroom_phone_heading\",\"changes\":{\"name\":null}},\"origin\":\"LOCAL\",\"time_fired\":\"<t:async_get_or_create#61>\",\"context\":{\"id\":\"<ulid#32>\",\"parent_id\":null,\"user_id\":null}},\"id\":1}",
-    "{\"type\":\"event\",\"event\":{\"event_type\":\"entity_registry_updated\",\"data\":{\"action\":\"create\",\"entity_id\":\"sensor.bedroom_adam_s_iphone_phone_altitude\"},\"origin\":\"LOCAL\",\"time_fired\":\"<t:async_get_or_create#64>\",\"context\":{\"id\":\"<ulid#33>\",\"parent_id\":null,\"user_id\":null}},\"id\":1}"
+    "{\"type\":\"event\",\"event\":{\"event_type\":\"entity_registry_updated\",\"data\":{\"action\":\"create\",\"entity_id\":\"sensor.bedroom_alex_s_iphone_phone_altitude\"},\"origin\":\"LOCAL\",\"time_fired\":\"<t:async_get_or_create#64>\",\"context\":{\"id\":\"<ulid#33>\",\"parent_id\":null,\"user_id\":null}},\"id\":1}"
    ],
    "final_states": {
     "binary_sensor.phone_kiosk_mode": {
      "state": "off",
      "attributes": {
       "icon": "mdi:tablet",
-      "friendly_name": "Adam's iPhone Kiosk Mode"
+      "friendly_name": "Alex's iPhone Kiosk Mode"
      }
     },
     "binary_sensor.phone_kiosk_screensaver": {
      "state": "off",
      "attributes": {
       "icon": "mdi:sleep-off",
-      "friendly_name": "Adam's iPhone Kiosk Screensaver"
+      "friendly_name": "Alex's iPhone Kiosk Screensaver"
      }
     },
     "device_tracker.phone": {
@@ -192,13 +192,13 @@
       "in_zones": [],
       "source_type": "gps",
       "battery_level": 70,
-      "friendly_name": "Adam's iPhone"
+      "friendly_name": "Alex's iPhone"
      }
     },
     "notify.phone": {
      "state": "unknown",
      "attributes": {
-      "friendly_name": "Adam's iPhone",
+      "friendly_name": "Alex's iPhone",
       "supported_features": 1
      }
     },
@@ -206,14 +206,14 @@
      "state": "2026.9.0",
      "attributes": {
       "icon": "mdi:cellphone",
-      "friendly_name": "Adam's iPhone App Version"
+      "friendly_name": "Alex's iPhone App Version"
      }
     },
     "sensor.phone_audio_output": {
      "state": "Built-in Speaker",
      "attributes": {
       "icon": "mdi:volume-high",
-      "friendly_name": "Adam's iPhone Audio Output"
+      "friendly_name": "Alex's iPhone Audio Output"
      }
     },
     "sensor.phone_battery_level": {
@@ -222,7 +222,7 @@
       "unit_of_measurement": "%",
       "device_class": "battery",
       "icon": "mdi:battery-70",
-      "friendly_name": "Adam's iPhone Battery Level"
+      "friendly_name": "Alex's iPhone Battery Level"
      }
     },
     "sensor.phone_battery_state": {
@@ -230,56 +230,56 @@
      "attributes": {
       "Low Power Mode": false,
       "icon": "mdi:battery-70",
-      "friendly_name": "Adam's iPhone Battery State"
+      "friendly_name": "Alex's iPhone Battery State"
      }
     },
     "sensor.phone_bssid": {
      "state": "02:00:00:00:00:01",
      "attributes": {
       "icon": "mdi:wifi-star",
-      "friendly_name": "Adam's iPhone BSSID"
+      "friendly_name": "Alex's iPhone BSSID"
      }
     },
     "sensor.phone_connection_type": {
      "state": "Wi-Fi",
      "attributes": {
       "icon": "mdi:wifi",
-      "friendly_name": "Adam's iPhone Connection Type"
+      "friendly_name": "Alex's iPhone Connection Type"
      }
     },
     "sensor.phone_geocoded_location": {
      "state": "Unknown",
      "attributes": {
       "icon": "mdi:map",
-      "friendly_name": "Adam's iPhone Geocoded Location"
+      "friendly_name": "Alex's iPhone Geocoded Location"
      }
     },
     "sensor.phone_kiosk_brightness": {
      "state": "unavailable",
      "attributes": {
       "icon": "mdi:dots-square",
-      "friendly_name": "Adam's iPhone Kiosk Brightness"
+      "friendly_name": "Alex's iPhone Kiosk Brightness"
      }
     },
     "sensor.phone_kiosk_volume": {
      "state": "unavailable",
      "attributes": {
       "icon": "mdi:dots-square",
-      "friendly_name": "Adam's iPhone Kiosk Volume"
+      "friendly_name": "Alex's iPhone Kiosk Volume"
      }
     },
     "sensor.phone_last_update_trigger": {
      "state": "Launch",
      "attributes": {
       "icon": "mdi:cellphone-wireless",
-      "friendly_name": "Adam's iPhone Last Update Trigger"
+      "friendly_name": "Alex's iPhone Last Update Trigger"
      }
     },
     "sensor.phone_location_permission": {
      "state": "Authorized when in use",
      "attributes": {
       "icon": "mdi:map",
-      "friendly_name": "Adam's iPhone Location permission"
+      "friendly_name": "Alex's iPhone Location permission"
      }
     },
     "sensor.phone_sim_1": {
@@ -292,7 +292,7 @@
       "Mobile Country Code": "65535",
       "Mobile Network Code": "65535",
       "icon": "mdi:sim",
-      "friendly_name": "Adam's iPhone SIM 1"
+      "friendly_name": "Alex's iPhone SIM 1"
      }
     },
     "sensor.phone_sim_2": {
@@ -306,7 +306,7 @@
       "Mobile Country Code": "65535",
       "Mobile Network Code": "65535",
       "icon": "mdi:sim",
-      "friendly_name": "Adam's iPhone SIM 2"
+      "friendly_name": "Alex's iPhone SIM 2"
      }
     },
     "sensor.phone_speed": null,
@@ -314,7 +314,7 @@
      "state": "FakeSSID",
      "attributes": {
       "icon": "mdi:wifi",
-      "friendly_name": "Adam's iPhone SSID"
+      "friendly_name": "Alex's iPhone SSID"
      }
     },
     "sensor.phone_storage": {
@@ -326,7 +326,7 @@
       "Total": "255.42 GB",
       "unit_of_measurement": "% available",
       "icon": "mdi:database",
-      "friendly_name": "Adam's iPhone Storage"
+      "friendly_name": "Alex's iPhone Storage"
      }
     }
    },
@@ -440,7 +440,7 @@
         "has_entity_name": false,
         "labels": [],
         "modified_at": "<t:async_get_or_create#60>",
-        "name": "Adam's iPhone Heading",
+        "name": "Alex's iPhone Heading",
         "object_id_base": " Phone Heading",
         "options": {},
         "original_device_class": null,
@@ -469,7 +469,7 @@
         "device_id": "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
         "disabled_by": null,
         "entity_category": null,
-        "entity_id": "sensor.bedroom_adam_s_iphone_phone_altitude",
+        "entity_id": "sensor.bedroom_alex_s_iphone_phone_altitude",
         "hidden_by": null,
         "icon": null,
         "id": "<uuid#5>",
@@ -500,7 +500,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone"
+         "Alex's iPhone"
         ]
        },
        "00000000000000000000000000000002": {
@@ -510,7 +510,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone Battery Level"
+         "Alex's iPhone Battery Level"
         ]
        },
        "00000000000000000000000000000003": {
@@ -520,7 +520,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone Storage"
+         "Alex's iPhone Storage"
         ]
        },
        "00000000000000000000000000000004": {
@@ -530,7 +530,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone Battery State"
+         "Alex's iPhone Battery State"
         ]
        },
        "00000000000000000000000000000005": {
@@ -540,7 +540,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone SIM 1"
+         "Alex's iPhone SIM 1"
         ]
        },
        "00000000000000000000000000000006": {
@@ -550,7 +550,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone SIM 2"
+         "Alex's iPhone SIM 2"
         ]
        },
        "00000000000000000000000000000007": {
@@ -560,7 +560,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone Geocoded Location"
+         "Alex's iPhone Geocoded Location"
         ]
        },
        "00000000000000000000000000000008": {
@@ -570,7 +570,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone SSID"
+         "Alex's iPhone SSID"
         ]
        },
        "00000000000000000000000000000009": {
@@ -580,7 +580,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone BSSID"
+         "Alex's iPhone BSSID"
         ]
        },
        "0000000000000000000000000000000a": {
@@ -590,7 +590,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone Connection Type"
+         "Alex's iPhone Connection Type"
         ]
        },
        "0000000000000000000000000000000b": {
@@ -600,7 +600,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone Last Update Trigger"
+         "Alex's iPhone Last Update Trigger"
         ]
        },
        "0000000000000000000000000000000c": {
@@ -610,7 +610,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone Kiosk Brightness"
+         "Alex's iPhone Kiosk Brightness"
         ]
        },
        "0000000000000000000000000000000d": {
@@ -620,7 +620,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone Location permission"
+         "Alex's iPhone Location permission"
         ]
        },
        "0000000000000000000000000000000e": {
@@ -630,7 +630,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone Audio Output"
+         "Alex's iPhone Audio Output"
         ]
        },
        "0000000000000000000000000000000f": {
@@ -640,7 +640,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone App Version"
+         "Alex's iPhone App Version"
         ]
        },
        "00000000000000000000000000000010": {
@@ -650,7 +650,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone Kiosk Mode"
+         "Alex's iPhone Kiosk Mode"
         ]
        },
        "00000000000000000000000000000011": {
@@ -660,7 +660,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone Kiosk Volume"
+         "Alex's iPhone Kiosk Volume"
         ]
        },
        "00000000000000000000000000000012": {
@@ -670,7 +670,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone Camera Motion"
+         "Alex's iPhone Camera Motion"
         ]
        },
        "00000000000000000000000000000013": {
@@ -680,7 +680,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone Kiosk Screensaver"
+         "Alex's iPhone Kiosk Screensaver"
         ]
        },
        "00000000000000000000000000000014": {
@@ -690,7 +690,7 @@
         ],
         "name": [
          null,
-         "Adam's iPhone Camera Stream"
+         "Alex's iPhone Camera Stream"
         ]
        }
       }
@@ -745,7 +745,7 @@
         ],
         "name_by_user": [
          null,
-         "Adam's iPhone"
+         "Alex's iPhone"
         ]
        }
       }

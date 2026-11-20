@@ -357,7 +357,7 @@ mod tests {
         let token = {
             const C: &str = "http://127.0.0.1:8123/";
             let flow = auth.start_login_flow(C, None);
-            let user = auth.check_password("adam", "secret").unwrap();
+            let user = auth.check_password("alex", "secret").unwrap();
             let code = auth.finish_login_flow(&flow, C, &user, None).unwrap();
             auth.exchange_code(Some(C), Some(&code), None)
                 .unwrap()
@@ -528,7 +528,7 @@ mod tests {
                     .access_token
             };
             auth.add_user("user", "pw").unwrap();
-            let (admin, user) = (token("adam", "secret"), token("user", "pw"));
+            let (admin, user) = (token("alex", "secret"), token("user", "pw"));
             let user_id = auth.validate_access_token(&user, None).unwrap().user_id;
             auth.set_user_groups(&user_id, &[ha_auth::GROUP_ID_USER]);
             let config = crate::ApiConfig {

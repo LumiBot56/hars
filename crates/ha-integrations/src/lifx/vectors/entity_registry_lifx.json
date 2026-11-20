@@ -35,7 +35,7 @@
   "suggested_object_id": null,
   "supported_features": 0,
   "translation_key": null,
-  "unique_id": "d0:73:d5:13:bc:cd_restart",
+  "unique_id": "d0:73:d5:01:02:03_restart",
   "previous_unique_id": null,
   "unit_of_measurement": null
  },
@@ -75,7 +75,7 @@
   "suggested_object_id": null,
   "supported_features": 0,
   "translation_key": null,
-  "unique_id": "d0:73:d5:13:bc:cd_identify",
+  "unique_id": "d0:73:d5:01:02:03_identify",
   "previous_unique_id": null,
   "unit_of_measurement": null
  },
@@ -127,7 +127,7 @@
   "suggested_object_id": null,
   "supported_features": 36,
   "translation_key": null,
-  "unique_id": "d0:73:d5:13:bc:cd",
+  "unique_id": "d0:73:d5:01:02:03",
   "previous_unique_id": null,
   "unit_of_measurement": null
  },
@@ -165,7 +165,7 @@
   "suggested_object_id": null,
   "supported_features": 0,
   "translation_key": "rssi",
-  "unique_id": "d0:73:d5:13:bc:cd_rssi",
+  "unique_id": "d0:73:d5:01:02:03_rssi",
   "previous_unique_id": null,
   "unit_of_measurement": "dB"
  }

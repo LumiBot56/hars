@@ -134,7 +134,7 @@ fn new_ids_take_device_and_area_names() {
     r.devices.push(Arc::new(Device {
         id: "renamed".into(),
         name: Some(" Phone".into()),
-        name_by_user: Some("Adam's iPhone".into()),
+        name_by_user: Some("Alex's iPhone".into()),
         area_id: Some("bedroom".into()),
         ..Default::default()
     }));
@@ -698,9 +698,9 @@ async fn clearing_an_entry_as_ha() {
     let step = &v["steps"][1];
     let snap = reg.snapshot();
     assert!(snap.devices.is_empty());
-    // Only rows of other entries stay (the fixture's `person.adam`).
+    // Only rows of other entries stay (the fixture's `person.alex`).
     let left: Vec<&str> = snap.entities.iter().map(|e| e.entity_id.as_str()).collect();
-    assert_eq!(left, ["person.adam"]);
+    assert_eq!(left, ["person.alex"]);
     let deleted: Value = serde_json::from_str(snap.device_file.deleted[0].get()).unwrap();
     let stamps = ["modified_at", "orphaned_timestamp"];
     assert_eq!(
@@ -741,7 +741,7 @@ async fn clearing_an_entry_as_ha() {
     // But person's own update of its row (its storage hash), not ours.
     let want: Vec<String> = frames(step)
         .into_iter()
-        .filter(|f| !f.contains("person.adam"))
+        .filter(|f| !f.contains("person.alex"))
         .collect();
     assert_eq!(got, want);
 }

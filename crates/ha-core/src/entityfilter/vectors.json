@@ -19,7 +19,7 @@
   "sensor.1abc",
   "sensor.a1",
   "zone.home",
-  "person.adam",
+  "person.alex",
   "abc",
   "acb",
   "ab",
@@ -64,7 +64,7 @@
     "sensor.1abc",
     "sensor.a1",
     "zone.home",
-    "person.adam",
+    "person.alex",
     "abc",
     "acb",
     "ab",
@@ -143,7 +143,7 @@
     "sensor.1abc",
     "sensor.a1",
     "zone.home",
-    "person.adam",
+    "person.alex",
     "light.kitchen",
     "ébc",
     "sensor.phone_x_level",
@@ -182,7 +182,7 @@
     "sensor.1abc",
     "sensor.a1",
     "zone.home",
-    "person.adam",
+    "person.alex",
     "light.kitchen",
     "ébc",
     "sensor.phone_x_level",
@@ -221,7 +221,7 @@
     "sensor.1abc",
     "sensor.a1",
     "zone.home",
-    "person.adam",
+    "person.alex",
     "light.kitchen",
     "ébc",
     "sensor.phone_x_level",
@@ -278,7 +278,7 @@
     "sensor.1abc",
     "sensor.a1",
     "zone.home",
-    "person.adam",
+    "person.alex",
     "abc",
     "acb",
     "ab",
@@ -383,7 +383,7 @@
     "a",
     "sensor.1abc",
     "sensor.a1",
-    "person.adam",
+    "person.alex",
     "abc",
     "acb",
     "ab",
@@ -433,7 +433,7 @@
     "sensor.1abc",
     "sensor.a1",
     "zone.home",
-    "person.adam",
+    "person.alex",
     "abc",
     "acb",
     "ab",
@@ -487,7 +487,7 @@
     "sensor.1abc",
     "sensor.a1",
     "zone.home",
-    "person.adam",
+    "person.alex",
     "abc",
     "acb",
     "ab",
@@ -520,7 +520,7 @@
     "sensor.1abc",
     "sensor.a1",
     "zone.home",
-    "person.adam",
+    "person.alex",
     "abc",
     "acb",
     "ab",
@@ -543,7 +543,7 @@
     "sensor.1abc",
     "sensor.a1",
     "zone.home",
-    "person.adam",
+    "person.alex",
     "abc",
     "acb",
     "ab",
@@ -571,7 +571,7 @@
     "sensor.1abc",
     "sensor.a1",
     "zone.home",
-    "person.adam",
+    "person.alex",
     "light.kitchen",
     "sensor.phone_x_level"
    ]
@@ -601,7 +601,7 @@
     "sensor.1abc",
     "sensor.a1",
     "zone.home",
-    "person.adam",
+    "person.alex",
     "light.kitchen",
     "sensor.phone_x_level"
    ]
@@ -617,7 +617,7 @@
    "empty": false,
    "pass": [
     "zone.home",
-    "person.adam"
+    "person.alex"
    ]
   },
   {
@@ -636,7 +636,7 @@
     "sensor.phone_battery_level",
     "light.kitchen_main",
     "zone.home",
-    "person.adam",
+    "person.alex",
     "light.kitchen"
    ]
   },
@@ -663,7 +663,7 @@
    "pass": [
     "light.kitchen_main",
     "zone.home",
-    "person.adam",
+    "person.alex",
     "light.kitchen"
    ]
   },
@@ -681,7 +681,7 @@
     "light.kitchen_main",
     "sensor.1abc",
     "sensor.a1",
-    "person.adam",
+    "person.alex",
     "light.kitchen",
     "sensor.phone_x_level"
    ]
@@ -700,7 +700,7 @@
     "sensor.1abc",
     "sensor.a1",
     "zone.home",
-    "person.adam",
+    "person.alex",
     "light.kitchen"
    ]
   },
@@ -782,7 +782,7 @@
    "pass": [
     "sensor.x",
     "light.kitchen_main",
-    "person.adam",
+    "person.alex",
     "light.kitchen"
    ]
   },

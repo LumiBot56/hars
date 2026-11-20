@@ -58,7 +58,7 @@ async fn matches_home_assistant() {
     hass.start();
     let auth = crate::test_util::auth(true);
     auth.add_user("user", "pass").unwrap();
-    let admin = login(&auth, "adam", "secret");
+    let admin = login(&auth, "alex", "secret");
     let user = login(&auth, "user", "pass");
     let uid = auth.validate_access_token(&user, None).unwrap().user_id;
     auth.set_user_groups(&uid, &[ha_auth::GROUP_ID_USER]);

@@ -277,7 +277,7 @@ async fn security_headers(mut res: Response) -> Response {
 mod test_util {
     use ha_auth::Auth;
 
-    /// An `Auth` in a fresh temp dir. `onboarded` adds the owner `adam` /
+    /// An `Auth` in a fresh temp dir. `onboarded` adds the owner `alex` /
     /// `secret` (bcrypt cost 4), which completes onboarding.
     pub(crate) fn auth(onboarded: bool) -> Auth {
         use std::sync::atomic::{AtomicU32, Ordering};
@@ -290,7 +290,7 @@ mod test_util {
         let _ = std::fs::remove_dir_all(&dir);
         let auth = Auth::load_with_cost(&dir, ha_core::Clock::system(), 4).unwrap();
         if onboarded {
-            auth.add_user("adam", "secret").unwrap();
+            auth.add_user("alex", "secret").unwrap();
         }
         auth
     }

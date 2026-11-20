@@ -19,23 +19,23 @@ fn start() -> Timestamp {
     "2026-11-14T08:00:00Z".parse().unwrap()
 }
 
-/// A fresh install with an owner `adam` / `secret`; bcrypt cost 4 keeps tests fast.
+/// A fresh install with an owner `alex` / `secret`; bcrypt cost 4 keeps tests fast.
 fn setup(name: &str) -> (Auth, SimulatedClock, PathBuf) {
     let dir = temp_dir(name);
     let sim = SimulatedClock::new(start());
     let auth = Auth::load_with_cost(&dir, sim.clock(), 4).unwrap();
-    assert_eq!(auth.add_user("adam", "secret").unwrap(), Added::Owner);
+    assert_eq!(auth.add_user("alex", "secret").unwrap(), Added::Owner);
     (auth, sim, dir)
 }
 
-/// `adam`'s login, password checked.
-fn adam(auth: &Auth) -> Login {
-    auth.check_password("adam", "secret").unwrap()
+/// `alex`'s login, password checked.
+fn alex(auth: &Auth) -> Login {
+    auth.check_password("alex", "secret").unwrap()
 }
 
 fn login(auth: &Auth) -> Tokens {
     let flow = auth.start_login_flow(REDIRECT, lan());
-    let user = auth.check_password("adam", "secret").unwrap();
+    let user = auth.check_password("alex", "secret").unwrap();
     let code = auth.finish_login_flow(&flow, CLIENT, &user, lan()).unwrap();
     auth.exchange_code(Some(CLIENT), Some(&code), lan())
         .unwrap()
@@ -50,14 +50,14 @@ fn fresh_install_owner_completes_onboarding() {
         auth.onboarding_steps(),
         ONBOARDING_STEPS.map(|s| (s, false)).to_vec()
     );
-    assert_eq!(auth.add_user("adam", "secret").unwrap(), Added::Owner);
+    assert_eq!(auth.add_user("alex", "secret").unwrap(), Added::Owner);
     assert!(auth.is_onboarded());
     assert_eq!(auth.add_user("bob", "pw").unwrap(), Added::Credential);
     assert!(
-        matches!(auth.add_user("ADAM", "x"), Err(AddUserError::NotNormalized(n)) if n == "adam")
+        matches!(auth.add_user("ALEX", "x"), Err(AddUserError::NotNormalized(n)) if n == "alex")
     );
     assert!(matches!(
-        auth.add_user("adam", "x"),
+        auth.add_user("alex", "x"),
         Err(AddUserError::Exists)
     ));
     let _ = std::fs::remove_dir_all(dir);
@@ -67,14 +67,14 @@ fn fresh_install_owner_completes_onboarding() {
 fn passwords_are_checked_with_normalized_usernames() {
     let (auth, _, dir) = setup("passwords");
     assert_eq!(
-        auth.check_password("adam", "secret").as_deref(),
-        Some("adam")
+        auth.check_password("alex", "secret").as_deref(),
+        Some("alex")
     );
     assert_eq!(
-        auth.check_password("  Adam ", "secret").as_deref(),
-        Some("adam")
+        auth.check_password("  Alex ", "secret").as_deref(),
+        Some("alex")
     );
-    assert_eq!(auth.check_password("adam", "wrong"), None);
+    assert_eq!(auth.check_password("alex", "wrong"), None);
     assert_eq!(auth.check_password("nobody", "secret"), None);
     // Only the first 72 bytes count, as with HA's explicit truncation.
     auth.add_user("long", &"p".repeat(80)).unwrap();
@@ -97,7 +97,7 @@ fn full_login_issues_working_tokens() {
         .validate_access_token(&tokens.access_token, lan())
         .unwrap();
     assert_eq!(p.permission, Permission::Admin);
-    assert_eq!(auth.user(&p.user_id).unwrap().name.as_deref(), Some("adam"));
+    assert_eq!(auth.user(&p.user_id).unwrap().name.as_deref(), Some("alex"));
     assert!(auth.validate_access_token("garbage", lan()).is_none());
 
     // Refresh: same client, no new refresh token.
@@ -151,7 +151,7 @@ fn codes_are_single_use_bound_to_the_client_and_short_lived() {
     let (auth, sim, dir) = setup("codes");
     let code = |auth: &Auth| {
         let flow = auth.start_login_flow(REDIRECT, lan());
-        auth.finish_login_flow(&flow, CLIENT, &adam(auth), lan())
+        auth.finish_login_flow(&flow, CLIENT, &alex(auth), lan())
             .unwrap()
     };
 
@@ -206,7 +206,7 @@ fn login_flows_check_redirect_and_expire() {
     let flow = auth.start_login_flow("http://evil.example/", lan());
     assert_eq!(auth.login_flow_ip(&flow), Some(lan()));
     assert_eq!(
-        auth.finish_login_flow(&flow, CLIENT, &adam(&auth), lan())
+        auth.finish_login_flow(&flow, CLIENT, &alex(&auth), lan())
             .unwrap_err(),
         LoginError::InvalidRedirectUri
     );
@@ -275,7 +275,7 @@ fn inactive_and_local_only_users_are_blocked() {
             .data
             .users
             .iter_mut()
-            .find(|u| u.name.as_deref() == Some("adam"))
+            .find(|u| u.name.as_deref() == Some("alex"))
             .unwrap();
         f(u);
     };
@@ -292,7 +292,7 @@ fn inactive_and_local_only_users_are_blocked() {
     );
     let flow = auth.start_login_flow(REDIRECT, internet);
     assert_eq!(
-        auth.finish_login_flow(&flow, CLIENT, &adam(&auth), internet)
+        auth.finish_login_flow(&flow, CLIENT, &alex(&auth), internet)
             .unwrap_err(),
         LoginError::Blocked("User cannot authenticate remotely")
     );
@@ -329,7 +329,7 @@ fn state_survives_a_restart() {
             .validate_access_token(&tokens.access_token, lan())
             .is_some()
     );
-    assert!(again.check_password("adam", "secret").is_some());
+    assert!(again.check_password("alex", "secret").is_some());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -348,7 +348,7 @@ fn reads_and_preserves_has_files() {
     write(
         "auth_provider.homeassistant",
         json!({"version": 1, "minor_version": 1, "key": "auth_provider.homeassistant",
-        "data": {"users": [{"username": "adam", "password": B64.encode(&hash)}]}}),
+        "data": {"users": [{"username": "alex", "password": B64.encode(&hash)}]}}),
     );
     write(
         "onboarding",
@@ -359,14 +359,14 @@ fn reads_and_preserves_has_files() {
         "auth",
         json!({"version": 1, "minor_version": 1, "key": "auth", "data": {
         "users": [
-            {"id": "u1", "group_ids": ["system-admin"], "is_owner": true, "is_active": true, "name": "Adam", "system_generated": false, "local_only": false},
+            {"id": "u1", "group_ids": ["system-admin"], "is_owner": true, "is_active": true, "name": "Alex", "system_generated": false, "local_only": false},
             {"id": "u2", "group_ids": ["system-read-only"], "is_owner": false, "is_active": true, "name": "Home Assistant Content", "system_generated": true, "local_only": false}
         ],
         "groups": [
             {"id": "system-admin", "name": "Renamed"},
             {"id": "custom", "name": "Custom", "policy": {"entities": true}}
         ],
-        "credentials": [{"id": "c1", "user_id": "u1", "auth_provider_type": "homeassistant", "auth_provider_id": null, "data": {"username": "adam"}}],
+        "credentials": [{"id": "c1", "user_id": "u1", "auth_provider_type": "homeassistant", "auth_provider_id": null, "data": {"username": "alex"}}],
         "refresh_tokens": [
             {"id": "t1", "user_id": "u1", "client_id": CLIENT, "client_name": null, "client_icon": null, "token_type": "normal",
              "created_at": "2026-06-10T12:34:56.789012+00:00", "access_token_expiration": 1800.0, "token": "a".repeat(128),
@@ -396,7 +396,7 @@ fn reads_and_preserves_has_files() {
     // An existing user logs in through their linked credential.
     let flow = auth.start_login_flow(REDIRECT, lan());
     let code = auth
-        .finish_login_flow(&flow, CLIENT, &adam(&auth), lan())
+        .finish_login_flow(&flow, CLIENT, &alex(&auth), lan())
         .unwrap();
     let t = auth
         .exchange_code(Some(CLIENT), Some(&code), lan())
@@ -522,18 +522,18 @@ fn onboarding_creates_the_owner_and_records_steps() {
     let dir = temp_dir("onboarding-owner");
     let auth = Auth::load_with_cost(&dir, Clock::system(), 4).unwrap();
     assert!(matches!(
-        auth.create_owner("Adam", "Adam", "pw"),
-        Err(AddUserError::NotNormalized(n)) if n == "adam"
+        auth.create_owner("Alex", "Alex", "pw"),
+        Err(AddUserError::NotNormalized(n)) if n == "alex"
     ));
-    let owner = auth.create_owner("Adam Smith", "adam", "pw").unwrap();
+    let owner = auth.create_owner("Alex Smith", "alex", "pw").unwrap();
     assert!(matches!(
-        auth.create_owner("Other", "adam", "pw"),
+        auth.create_owner("Other", "alex", "pw"),
         Err(AddUserError::Exists)
     ));
     let user = auth.user(&owner.user_id).unwrap();
     assert!(user.is_owner && user.is_admin());
-    assert_eq!(user.name.as_deref(), Some("Adam Smith"));
-    assert_eq!(auth.check_password("adam", "pw").as_deref(), Some("adam"));
+    assert_eq!(user.name.as_deref(), Some("Alex Smith"));
+    assert_eq!(auth.check_password("alex", "pw").as_deref(), Some("alex"));
     // Not onboarded: the steps are the views' to mark.
     assert!(!auth.is_step_done("user"));
     auth.mark_step_done("user");
@@ -547,7 +547,7 @@ fn onboarding_creates_the_owner_and_records_steps() {
     assert_eq!(p.user_id, owner.user_id);
     assert_eq!(
         auth.refresh_token_username(&p.refresh_token_id).as_deref(),
-        Some("adam")
+        Some("alex")
     );
     assert_eq!(auth.refresh_token_username("nope"), None);
 

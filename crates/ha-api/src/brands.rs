@@ -384,7 +384,7 @@ mod tests {
         let access = {
             const CLIENT: &str = "http://127.0.0.1:8123/";
             let flow = auth.start_login_flow(CLIENT, None);
-            let user = auth.check_password("adam", "secret").unwrap();
+            let user = auth.check_password("alex", "secret").unwrap();
             let code = auth.finish_login_flow(&flow, CLIENT, &user, None).unwrap();
             auth.exchange_code(Some(CLIENT), Some(&code), None)
                 .unwrap()

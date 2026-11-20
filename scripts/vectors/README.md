@@ -49,13 +49,50 @@ and the command's messages around them.
   and call them. Only fake what is outside HA: the network (replay the
   recorded responses), the clock and randomness.
 - **Inputs are committed, sanitised**: recorded device responses and registry
-  files go in `vectors/` with ids replaced, no tokens, coordinates rounded
-  (the roadmap's fixture rule).
+  files go in `vectors/` only after everything that points at a real person,
+  home or device is replaced with a fake value
+  ([what to replace](#sanitising-a-fixture)).
 - **Same input, same output**: a fixed clock and seed, so rerunning on
   unchanged inputs leaves `git diff` empty. That is the check that the script
   still matches what is committed.
 - **The Rust test points back**: the comment at the top of the module's
   `tests.rs` names the script.
+
+## Sanitising a fixture
+
+Recordings come from a real install. Before one is committed, replace each
+of these with a fake value, the same fake everywhere it appears (inputs,
+expected outputs and the Rust tests):
+
+| Replace | With |
+|---|---|
+| MAC addresses, bridge ids, serial numbers and other hardware ids | The vendor prefix kept, the device part made up (`00:17:88:01:00:00:00:01`, `d0:73:d5:01:02:03`) |
+| Network ids: Zigbee extended PAN id, Wi-Fi SSID and BSSID | A made-up one (`FakeSSID`, `02:00:00:00:00:01`) |
+| IP addresses and host names of the home network | A documentation address (`192.0.2.60`) or `127.0.0.1` |
+| People's names, logins and device names that hold one, and their slugs | A made-up name (`alex`, `Alex's iPhone`, `person.alex`, `alex_s_iphone`) |
+| Coordinates and addresses | Rounded to a city centre, or made up (`0.5`, `0.5`) |
+| Tokens, keys, passwords, webhook ids, push tokens, cloud account ids | An obvious fake (`fake-push-token`, `0f0f…`) |
+
+A hardware id has several spellings, and all of them must go: with colons,
+without, upper case, inside a unique id (`<mac>_rssi`), inside another id
+made from it (a Hue bridge id is its MAC with `fffe` in the middle),
+inside a hex-encoded frame, and as a byte array in a test
+(`[0xd0, 0x73, …]`). Decode recorded frames and encrypted payloads and
+check what is inside.
+
+Random ids that name nothing outside the fixture can stay: Hue resource
+UUIDs, HA registry, device and config entry ids. So can vendor, model and
+firmware strings, and room or device names that name no person ("Kitchen").
+
+Use same-length fakes that sort the same way where you can, so offsets and
+orders HA produced stay true. Where a value feeds something HA computed
+that a rename can't keep (a hash, a signature, a sort), run the generator
+again on the sanitised input instead of editing the output. Then search for
+every old value before committing:
+
+```sh
+git grep -n -i -E '<device part of the id, with any separator>'   # must print nothing
+```
 
 ## Running one
 

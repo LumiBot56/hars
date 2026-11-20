@@ -4,7 +4,7 @@ use super::*;
 fn slugs_like_ha() {
     for (text, slug) in [
         ("Living Room", "living_room"),
-        ("Adam's Phone", "adam_s_phone"),
+        ("Alex's Phone", "alex_s_phone"),
         ("Café Ünïcode", "cafe_unicode"),
         ("  Straße  ", "strasse"),
         ("Zone #2!", "zone_2"),
@@ -39,7 +39,7 @@ fn creates_has_zone_and_person_entities() {
         PERSON_KEY,
         2,
         json!({"items": [
-            {"id": "p1", "name": "Adam", "user_id": "u1", "device_trackers": ["device_tracker.iphone"], "picture": "/api/image/serve/x/512x512"},
+            {"id": "p1", "name": "Alex", "user_id": "u1", "device_trackers": ["device_tracker.iphone"], "picture": "/api/image/serve/x/512x512"},
             {"id": "p2", "name": "Guest", "user_id": null, "device_trackers": []}
         ]}),
     );
@@ -177,7 +177,7 @@ fn old_person_stores_load_like_ha() {
         PERSON_KEY,
         1,
         json!({"persons": [
-            {"id": "p1", "name": "Adam", "user_id": "u1", "device_trackers": null}
+            {"id": "p1", "name": "Alex", "user_id": "u1", "device_trackers": null}
         ]}),
     );
     for c in [
@@ -189,11 +189,11 @@ fn old_person_stores_load_like_ha() {
     }
     let hass = Hass::new();
     Components::load(&dir).setup(&hass, &Registries::default());
-    let adam = hass
+    let alex = hass
         .states()
-        .get(&EntityId::parse("person.adam").unwrap())
+        .get(&EntityId::parse("person.alex").unwrap())
         .unwrap();
-    assert_eq!(adam.attributes["device_trackers"], json!([]));
+    assert_eq!(alex.attributes["device_trackers"], json!([]));
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -202,7 +202,7 @@ fn tracking_setup(dir: &Path) -> (Hass, Arc<Components>) {
         dir,
         PERSON_KEY,
         2,
-        json!({"items": [{"id": "adam", "name": "adam",
+        json!({"items": [{"id": "alex", "name": "alex",
                           "user_id": "00112233445566778899aabbccddeeff",
                           "device_trackers": ["device_tracker.phone"]}]}),
     );
@@ -254,7 +254,7 @@ async fn people_and_zones_follow_trackers_as_ha() {
     hass.begin_start();
     components.start(&hass);
     settle().await;
-    for id in ["person.adam", "zone.home"] {
+    for id in ["person.alex", "zone.home"] {
         assert_eq!(state_of(&hass, id), initial[id], "initial {id}");
     }
     let mut n = 0;
@@ -264,7 +264,7 @@ async fn people_and_zones_follow_trackers_as_ha() {
         };
         set(&after["device_tracker.phone"]);
         settle().await;
-        for id in ["person.adam", "zone.home"] {
+        for id in ["person.alex", "zone.home"] {
             assert_eq!(state_of(&hass, id), after[id], "step {n} {id}");
         }
         n += 1;
@@ -284,7 +284,7 @@ async fn people_restore_then_follow_from_start() {
         ha_core::restore::KEY,
         1,
         json!([{
-            "state": {"entity_id": "person.adam", "state": "home",
+            "state": {"entity_id": "person.alex", "state": "home",
                       "attributes": {"in_zones": ["zone.home"], "latitude": 0.5,
                                      "longitude": 0.5, "gps_accuracy": 5.0,
                                      "source": "device_tracker.phone"},
@@ -297,9 +297,9 @@ async fn people_restore_then_follow_from_start() {
         }]),
     );
     let (hass, components) = tracking_setup(&dir);
-    let person = state_of(&hass, "person.adam");
+    let person = state_of(&hass, "person.alex");
     assert_eq!(person["state"], "home");
-    assert_eq!(person["attributes"]["source"], "person.adam");
+    assert_eq!(person["attributes"]["source"], "person.alex");
     assert_eq!(person["attributes"]["gps_accuracy"], 5.0);
     // The home zone counts the restored person.
     assert_eq!(state_of(&hass, "zone.home")["state"], "1");
@@ -311,10 +311,10 @@ async fn people_restore_then_follow_from_start() {
         json!({"source_type": "gps"}).as_object().unwrap().clone(),
     );
     settle().await;
-    assert_eq!(state_of(&hass, "person.adam")["state"], "home");
+    assert_eq!(state_of(&hass, "person.alex")["state"], "home");
     components.start(&hass);
     settle().await;
-    assert_eq!(state_of(&hass, "person.adam")["state"], "not_home");
+    assert_eq!(state_of(&hass, "person.alex")["state"], "not_home");
     assert_eq!(state_of(&hass, "zone.home")["state"], "0");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -398,7 +398,7 @@ async fn zones_are_settled_when_start_returns() {
     let mut feed = hass.subscribe_state_changes();
     components.start(&hass);
     // No yield: the task hasn't run.
-    assert_eq!(state_of(&hass, "person.adam")["state"], "home");
+    assert_eq!(state_of(&hass, "person.alex")["state"], "home");
     assert_eq!(state_of(&hass, "zone.home")["state"], "1");
     // Person, then zone, in HA's order.
     let order: Vec<String> = std::iter::from_fn(|| feed.try_recv())
@@ -407,7 +407,7 @@ async fn zones_are_settled_when_start_returns() {
             _ => None,
         })
         .collect();
-    assert_eq!(order, ["person.adam", "zone.home"]);
+    assert_eq!(order, ["person.alex", "zone.home"]);
     // The task doesn't write either again once it catches up.
     settle().await;
     assert!(feed.try_recv().is_none());
@@ -441,7 +441,7 @@ async fn trackers_join_the_users_person_and_are_saved() {
         json!(["device_tracker.phone", "device_tracker.new"])
     );
     assert_eq!(
-        state_of(&hass, "person.adam")["attributes"]["device_trackers"],
+        state_of(&hass, "person.alex")["attributes"]["device_trackers"],
         json!(["device_tracker.phone", "device_tracker.new"])
     );
     // The person follows it now.
@@ -454,7 +454,7 @@ async fn trackers_join_the_users_person_and_are_saved() {
             .clone(),
     );
     settle().await;
-    assert_eq!(state_of(&hass, "person.adam")["state"], "home");
+    assert_eq!(state_of(&hass, "person.alex")["state"], "home");
     components.flush().await;
     let saved: Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join(".storage/person")).unwrap())

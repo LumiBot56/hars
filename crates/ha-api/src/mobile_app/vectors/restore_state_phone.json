@@ -1,17 +1,17 @@
 [
  {
   "state": {
-   "entity_id": "person.adam",
+   "entity_id": "person.alex",
    "state": "unknown",
    "attributes": {
     "editable": true,
-    "id": "adam",
+    "id": "alex",
     "device_trackers": [
      "device_tracker.phone"
     ],
     "in_zones": [],
     "user_id": "00112233445566778899aabbccddeeff",
-    "friendly_name": "adam"
+    "friendly_name": "alex"
    },
    "last_changed": "2026-11-14T08:00:28.766446+00:00",
    "last_reported": "2026-11-14T08:00:30.618072+00:00",

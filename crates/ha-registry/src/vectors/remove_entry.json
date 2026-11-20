@@ -27,7 +27,7 @@
         "device_id": null,
         "disabled_by": null,
         "entity_category": null,
-        "entity_id": "person.adam",
+        "entity_id": "person.alex",
         "hidden_by": null,
         "icon": null,
         "id": "<uuid#1>",
@@ -35,16 +35,16 @@
         "labels": [],
         "modified_at": "<t:boot#2>",
         "name": null,
-        "object_id_base": "adam",
+        "object_id_base": "alex",
         "options": {},
         "original_device_class": null,
         "original_icon": null,
-        "original_name": "adam",
+        "original_name": "alex",
         "platform": "person",
         "suggested_object_id": null,
         "supported_features": 0,
         "translation_key": null,
-        "unique_id": "adam",
+        "unique_id": "alex",
         "previous_unique_id": null,
         "unit_of_measurement": null
        }
@@ -93,22 +93,22 @@
     "{\"type\":\"event\",\"event\":{\"event_type\":\"entity_registry_updated\",\"data\":{\"action\":\"remove\",\"entity_id\":\"binary_sensor.phone_camera_motion\"},\"origin\":\"LOCAL\",\"time_fired\":\"<t:config_entries_async_remove#42>\",\"context\":{\"id\":\"<ulid#21>\",\"parent_id\":null,\"user_id\":null}},\"id\":1}",
     "{\"type\":\"event\",\"event\":{\"event_type\":\"entity_registry_updated\",\"data\":{\"action\":\"remove\",\"entity_id\":\"binary_sensor.phone_kiosk_screensaver\"},\"origin\":\"LOCAL\",\"time_fired\":\"<t:config_entries_async_remove#44>\",\"context\":{\"id\":\"<ulid#22>\",\"parent_id\":null,\"user_id\":null}},\"id\":1}",
     "{\"type\":\"event\",\"event\":{\"event_type\":\"entity_registry_updated\",\"data\":{\"action\":\"remove\",\"entity_id\":\"sensor.phone_camera_stream\"},\"origin\":\"LOCAL\",\"time_fired\":\"<t:config_entries_async_remove#46>\",\"context\":{\"id\":\"<ulid#23>\",\"parent_id\":null,\"user_id\":null}},\"id\":1}",
-    "{\"type\":\"event\",\"event\":{\"event_type\":\"entity_registry_updated\",\"data\":{\"action\":\"update\",\"entity_id\":\"person.adam\",\"changes\":{\"options\":{}}},\"origin\":\"LOCAL\",\"time_fired\":\"<t:config_entries_async_remove#49>\",\"context\":{\"id\":\"<ulid#24>\",\"parent_id\":null,\"user_id\":null}},\"id\":1}"
+    "{\"type\":\"event\",\"event\":{\"event_type\":\"entity_registry_updated\",\"data\":{\"action\":\"update\",\"entity_id\":\"person.alex\",\"changes\":{\"options\":{}}},\"origin\":\"LOCAL\",\"time_fired\":\"<t:config_entries_async_remove#49>\",\"context\":{\"id\":\"<ulid#24>\",\"parent_id\":null,\"user_id\":null}},\"id\":1}"
    ],
    "final_states": {
     "binary_sensor.phone_kiosk_mode": null,
     "binary_sensor.phone_kiosk_screensaver": null,
     "device_tracker.phone": null,
     "notify.phone": null,
-    "person.adam": {
+    "person.alex": {
      "state": "unknown",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [],
       "in_zones": [],
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "sensor.phone_app_version": null,
