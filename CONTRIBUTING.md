@@ -134,7 +134,8 @@ Where code goes, and when a new crate is justified, is in
   [roadmap](docs/ROADMAP.md) item it finishes, update
   [ARCHITECTURE.md](docs/ARCHITECTURE.md) if it changes structure or adds a
   crate, add a [results](docs/perf/RESULTS.md) entry if it changes the
-  numbers, and update the README's "works today" if users see it.
+  numbers, and update the README's "What works today" and
+  [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) if users see it.
 
 ## Review
 
@@ -157,8 +158,12 @@ Use the issue templates. Security problems go through
 hars is licensed under [Apache-2.0](LICENSE). By contributing you agree that
 your contribution is licensed under the same terms (Apache-2.0, section 5).
 When you port code from Home Assistant (Apache-2.0) or a library it uses,
-check the library's licence is compatible (Apache-2.0, MIT, BSD) and say what
-you ported in the module's doc comment.
+check the library's licence is compatible (Apache-2.0, MIT, BSD), say what
+you ported in the module's doc comment, and add the library to
+[NOTICE](NOTICE) with its licence and copyright line. After any change to
+`Cargo.lock`, run `python3 scripts/gen-third-party.py`: it rewrites
+[THIRD-PARTY-LICENSES.txt](THIRD-PARTY-LICENSES.txt), and a script test
+fails until you do.
 
 hars is an independent project. It is not affiliated with or endorsed by the
 Home Assistant project or Nabu Casa. Please don't ask for support with hars
