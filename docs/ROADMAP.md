@@ -614,21 +614,72 @@ ids, addresses, names and coordinates replaced with fake ones
       `hars` differs on purpose: only the integrations it has a flow for
       are offered (each on its own, not under HA's brands); no webhook id
       is added to the entry (see above)
+- [x] The Add integration dialog's last step, and the device page's own
+      dialog: a device's name, area and labels (WS
+      `config/device_registry/update`), a new area from the area picker
+      (`config/area_registry/create`), and the entity ids that follow
+      from a new name (`config/entity_registry/get_automatic_entity_ids`,
+      then `update` with each `new_entity_id`, as the dialog sends them).
+      SwitchBot Cloud's running entities take a new name (their friendly
+      names) and a new id (the old state goes, the entity writes what it
+      had under the new one, the services find it there) before the
+      command is answered, as HA's entities do; a restart finds the same
+      ids and names. The registry's row and the running entity change one
+      after the other, not in one step: set-up and removal of an entry
+      wait for both, but a service call does not, so one that names the
+      device or its area in between can select no entity. A climate
+      whose last state kept under its new id isn't a mode is not added
+      there, as in HA: it has no state and no service reaches it until
+      its entry is set up again. Entity ids written into dashboards and
+      automations are not rewritten by a rename, as in HA. All 4
+      scenarios of `scripts/vectors/device_step.py` match HA's replies,
+      registry and state events, stored rows and states, and the dialog
+      is run in Chromium with the pinned frontend. `hars` differs on
+      purpose: what its running entities can't follow is refused in words
+      rather than half done (a name for a device that has an entity of
+      an integration other than SwitchBot Cloud, or one whose own name
+      carries the device's, so a device with no entity rows takes a name
+      whatever its integration; another id for such an entity; disabling
+      or enabling a
+      device), and so is any of these changes when the registry file it
+      belongs in can't be written
 - [ ] Clean the registries at start as HA does
       (`device_registry.async_cleanup`: a config entry that no longer
       exists is taken off its devices, a device left with none and no
       entities is removed, and entities follow their device), so rows
       left behind by a crash between two store writes don't stay
 - [ ] Config flows: Hue (find the bridge or type its host, press the
-      link button) and LIFX (type a host or pick a found bulb); the
-      dialog's last step, naming a device and giving it an area (WS
-      `config/device_registry/update`, `config/area_registry/create`;
-      "Skip and finish" works); options, reauth, reconfigure, discovery
+      link button) and LIFX (type a host or pick a found bulb);
+      options, reauth, reconfigure, discovery
       and import flows; `single_config_entry`; a stop hook for the other
       integrations; taking a removed phone's tracker out of its person
       (HA's `person` does); `config_entries/get_single`, `update`, `disable`, the
       reload view; `logger/log_info` and `entity/source`, which the
       integration's page asks for and works without
+- [ ] Registry edits the rest of the frontend makes: the running
+      entities of Hue, LIFX, `met`, `sun` and the companion app taking a
+      device's new name and an entity's new id (so those devices can be
+      renamed); disabling and enabling a device (its entities stop, and
+      start after HA's 30 s); `config/area_registry/update`, `delete` and
+      `reorder`; an entity's own name, icon and the rest of
+      `config/entity_registry/update`; history and statistics moving to
+      an entity's new id, as HA's recorder moves them (in `hars` what was
+      recorded stays under the old id). Known differences in ids and
+      messages, older than these commands: a name in a script HA
+      transliterates (`東京` gives `dong_jing`) slugifies to `unknown`,
+      an entity id with a non-ASCII digit is refused, a message with
+      several invalid fields is told of the first only, and the fields
+      of `config/entity_registry/update` that `hars` refuses are not
+      checked against HA's schema first. Two more, of these commands:
+      `get_automatic_entity_ids` given a mapping takes its keys sorted,
+      not as sent, which shows when two of them would get the same id;
+      and an entity that a device change enables again (its row said
+      the device's disable had disabled it) starts with its entry's
+      next set-up, where HA reloads the entry after 30 s
+- [ ] A service call's targets (a device or area expanded to entity ids)
+      and the entity it then picks in its component, read under one guard
+      with a rename, so a call made while an entity is given another id
+      always finds it under the old id or the new
 - [ ] Acceptance: every inventory entity matches its HA fixture attributes, and
       every frontend control (light colour/temp, climate mode/setpoint) works
 

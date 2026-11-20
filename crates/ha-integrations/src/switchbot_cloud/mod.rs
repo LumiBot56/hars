@@ -32,6 +32,7 @@ use ha_core::{Attributes, EntityId, Hass, ServiceError};
 use ha_registry::{DeviceInfo, EntityPatch, Registries, Registry};
 use parking_lot::Mutex;
 use serde_json::{Map, Value, json};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -93,13 +94,120 @@ impl Shared {
     }
 }
 
+/// Where an entity writes: its id and friendly name as the registry has
+/// them. An entity whose id changes is replaced in its component by one
+/// that shares this (and its state), so a command still in flight on the
+/// old one reports under the new id, as HA's one entity object does.
+struct Ident {
+    /// What its registry row is found by.
+    domain: &'static str,
+    unique_id: String,
+    /// The device's name as SwitchBot has it (the user's comes first).
+    device_name: String,
+    /// The entity's own name beside the device's.
+    name: Option<&'static str>,
+    now: Mutex<Now>,
+}
+
+/// An entity's id and friendly name, and whether it is added under them.
+struct Now {
+    entity_id: EntityId,
+    friendly: String,
+    /// False once the entity failed to be added again under a new id: it
+    /// writes nothing from then on, as HA's entity that did not reach
+    /// `ADDED` (`_async_verify_state_writable`).
+    added: bool,
+}
+
+/// What became of an entity's row.
+enum Followed {
+    Same,
+    Named,
+    /// Another id: the old one, and the new.
+    Moved(EntityId, EntityId),
+    /// Another id, under which it could not be added: the old one.
+    Failed(EntityId),
+}
+
+impl Ident {
+    /// The entity's id now.
+    fn entity_id(&self) -> EntityId {
+        self.now.lock().entity_id.clone()
+    }
+
+    /// Write the entity's state where it is now: the state and attributes
+    /// `payload` makes, given its friendly name. All of it happens under
+    /// the lock the id changes under. So the id can't change between
+    /// being read and the state being written (a write that began under
+    /// the old id is in the state machine before the move takes the old
+    /// state out, never after), what is written is what the entity has at
+    /// that moment, not a copy taken before a move restored something
+    /// else, and an entity that could not be added under its new id
+    /// writes nothing, whoever still holds it.
+    fn publish(
+        &self,
+        shared: &Shared,
+        payload: impl FnOnce(&str) -> (Cow<'static, str>, Attributes),
+        context: Option<ha_core::Context>,
+    ) {
+        let now = self.now.lock();
+        if !now.added {
+            return;
+        }
+        let (state, attributes) = payload(&now.friendly);
+        shared.write(now.entity_id.clone(), &state, attributes, context);
+    }
+
+    /// Take the id and name `names` has for the entity now. A row that is
+    /// gone or disabled changes nothing: its entity runs on until its
+    /// entry is set up again.
+    ///
+    /// For another id, `moved` (given the old id and the new) takes the
+    /// entity out from under the old one and says whether it can be added
+    /// under the new, all before any state write of the entity gets
+    /// another turn: a command that finishes meanwhile writes after the
+    /// decision, or not at all.
+    fn follow(
+        &self,
+        names: &crate::naming::Names<'_>,
+        device: &str,
+        moved: impl FnOnce(&EntityId, &EntityId) -> bool,
+    ) -> Followed {
+        let Some((entity_id, friendly)) = names.entity(
+            self.domain,
+            &self.unique_id,
+            device,
+            &self.device_name,
+            self.name,
+        ) else {
+            return Followed::Same;
+        };
+        let mut now = self.now.lock();
+        if !now.added || (now.entity_id == entity_id && now.friendly == friendly) {
+            return Followed::Same;
+        }
+        now.friendly = friendly;
+        if now.entity_id == entity_id {
+            return Followed::Named;
+        }
+        let old = std::mem::replace(&mut now.entity_id, entity_id);
+        if moved(&old, &now.entity_id) {
+            Followed::Moved(old, now.entity_id.clone())
+        } else {
+            now.added = false;
+            Followed::Failed(old)
+        }
+    }
+}
+
 /// One config entry: its shared state and entities.
 pub struct Entry {
     shared: Arc<Shared>,
     sensors: Vec<Arc<Sensor>>,
-    buttons: Vec<Arc<BotButton>>,
-    climates: Vec<Arc<AcClimate>>,
-    switches: Vec<Arc<AcSwitch>>,
+    // Those the components know by id: one whose id changes is replaced.
+    buttons: Mutex<Vec<Arc<BotButton>>>,
+    climates: Mutex<Vec<Arc<AcClimate>>>,
+    switches: Mutex<Vec<Arc<AcSwitch>>>,
 }
 
 impl Entry {
@@ -110,22 +218,36 @@ impl Entry {
     /// No entity: every device belongs to another entry.
     fn is_empty(&self) -> bool {
         self.sensors.is_empty()
-            && self.buttons.is_empty()
-            && self.climates.is_empty()
-            && self.switches.is_empty()
+            && self.buttons.lock().is_empty()
+            && self.climates.lock().is_empty()
+            && self.switches.lock().is_empty()
+    }
+
+    /// Hand the entities the services reach to their components.
+    fn add_to(&self, components: &Components) {
+        for c in self.climates.lock().iter() {
+            components.climates().add(c.clone());
+        }
+        for s in self.switches.lock().iter() {
+            components.switches().add(s.clone());
+        }
+        for b in self.buttons.lock().iter() {
+            components.buttons().add(b.clone());
+        }
     }
 
     /// Write every entity, in HA's (unstable) startup order.
     fn write_all(&self) {
-        self.climates.iter().for_each(|c| c.write());
-        self.buttons.iter().for_each(|b| b.write());
-        self.switches.iter().for_each(|s| s.write());
+        self.climates.lock().iter().for_each(|c| c.write());
+        self.buttons.lock().iter().for_each(|b| b.write());
+        self.switches.lock().iter().for_each(|s| s.write());
         self.sensors.iter().for_each(|s| s.write());
     }
 
     /// Write a polled device's entities.
     fn write_device(&self, device: &str) {
         self.buttons
+            .lock()
             .iter()
             .filter(|b| b.device == device)
             .for_each(|b| b.write());
@@ -165,8 +287,126 @@ impl Entry {
                 self.write_device(&id);
             }
         }
-        self.climates.iter().for_each(|c| c.write());
-        self.switches.iter().for_each(|s| s.write());
+        self.climates.lock().iter().for_each(|c| c.write());
+        self.switches.lock().iter().for_each(|s| s.write());
+    }
+}
+
+impl crate::components::Follower for Entry {
+    /// `Entity._async_registry_updated` and
+    /// `_async_device_registry_updated` for every entity of the entry: one
+    /// whose device was named writes its state again, with the new
+    /// friendly name; one whose id changed is removed (its state too, its
+    /// last state kept for a restore) and added under the new id, where it
+    /// writes what it had.
+    ///
+    /// An entry whose task was stopped (it is being removed) still moves
+    /// its entities, writing nothing: the removal looks for them where the
+    /// registry says they are.
+    fn registry_changed(&self, components: &Components) {
+        let hass = &self.shared.hass;
+        let registries = components.registries();
+        let names = crate::naming::Names::new(hass, &registries, DOMAIN);
+        // `async_remove`: its last state is kept for a restore, then its
+        // state goes.
+        let gone = |old: &EntityId, restores: bool| {
+            if restores {
+                hass.restore().unregister(hass, old.as_str());
+            }
+            hass.remove_state(old);
+        };
+        for s in &self.sensors {
+            let moved = |old: &EntityId, _: &EntityId| {
+                gone(old, false);
+                true
+            };
+            if !matches!(s.ident.follow(&names, &s.device, moved), Followed::Same) {
+                s.write();
+            }
+        }
+        for b in self.buttons.lock().iter_mut() {
+            let moved = |old: &EntityId, new: &EntityId| {
+                gone(old, true);
+                // `async_internal_added_to_hass` again: a last press kept
+                // under the new id (it was this entity's id before) is
+                // taken; else what it had stays.
+                if let Some(last) = crate::button::restore(hass, new) {
+                    *b.last.lock() = Some(last);
+                }
+                true
+            };
+            match b.ident.follow(&names, &b.device, moved) {
+                Followed::Same | Followed::Failed(_) => continue,
+                Followed::Named => {}
+                Followed::Moved(old, new) => {
+                    components.buttons().remove(&old);
+                    *b = Arc::new(BotButton {
+                        entity_id: new,
+                        ..(**b).clone()
+                    });
+                    components.buttons().add(b.clone());
+                }
+            }
+            b.write();
+        }
+        // A climate whose last state under its new id isn't a mode is not
+        // added there (HA's `async_added_to_hass` raises): it is gone, and
+        // writes nothing more, until its entry is set up again.
+        let mut failed: Vec<EntityId> = Vec::new();
+        for c in self.climates.lock().iter_mut() {
+            let moved = |old: &EntityId, new: &EntityId| {
+                gone(old, true);
+                // `async_added_to_hass` again, for the new id.
+                if !c.st.lock().restore(hass, new) {
+                    tracing::error!(
+                        "Error adding entity {new} for domain climate with platform switchbot_cloud: its last state is not a valid HVACMode"
+                    );
+                    return false;
+                }
+                hass.restore().register(new.as_str(), None);
+                true
+            };
+            match c.ident.follow(&names, &c.device, moved) {
+                Followed::Same => continue,
+                Followed::Named => {}
+                Followed::Moved(old, new) => {
+                    components.climates().remove(&old);
+                    *c = Arc::new(AcClimate {
+                        entity_id: new,
+                        ..(**c).clone()
+                    });
+                    components.climates().add(c.clone());
+                }
+                Followed::Failed(old) => {
+                    components.climates().remove(&old);
+                    failed.push(old);
+                    continue;
+                }
+            }
+            c.write();
+        }
+        self.climates
+            .lock()
+            .retain(|c| !failed.contains(&c.entity_id));
+        for s in self.switches.lock().iter_mut() {
+            let moved = |old: &EntityId, _: &EntityId| {
+                gone(old, false);
+                true
+            };
+            match s.ident.follow(&names, &s.device, moved) {
+                Followed::Same | Followed::Failed(_) => continue,
+                Followed::Named => {}
+                Followed::Moved(old, new) => {
+                    components.switches().remove(&old);
+                    *s = Arc::new(AcSwitch {
+                        entity_id: new,
+                        ..(**s).clone()
+                    });
+                    components.switches().add(s.clone());
+                }
+            }
+            s.write();
+        }
     }
 }
 
@@ -372,21 +612,6 @@ fn register(
         });
         for row in rows {
             let text = |s: Option<&str>| Some(s.map(str::to_owned));
-            // The sensor's option goes beside the options the row has
-            // (`async_update_entity_options` for the `sensor` domain).
-            let options = row.precision.map(|precision| {
-                let mut options = registry
-                    .entity_by_unique_id(row.domain, DOMAIN, &row.unique_id)
-                    .map(|e| e.options.object())
-                    .unwrap_or_default();
-                let mut sensor = match options.remove("sensor") {
-                    Some(Value::Object(o)) => o,
-                    _ => Map::new(),
-                };
-                sensor.insert("suggested_display_precision".into(), json!(precision));
-                options.insert("sensor".into(), Value::Object(sensor));
-                Value::Object(options)
-            });
             let patch = EntityPatch {
                 capabilities: Some(row.capabilities),
                 config_entry_id: Some(Some(entry_id.to_owned())),
@@ -394,7 +619,6 @@ fn register(
                 entity_category: Some(None),
                 has_entity_name: Some(true),
                 object_id_base: text(row.name),
-                options,
                 original_device_class: text(row.device_class),
                 original_icon: Some(None),
                 original_name: text(row.name),
@@ -404,7 +628,31 @@ fn register(
                 ..Default::default()
             };
             let disabled_by = disable_new.then(|| "integration".to_owned());
-            registry.get_or_create_entity(row.domain, DOMAIN, &row.unique_id, disabled_by, patch);
+            let made = registry.get_or_create_entity(
+                row.domain,
+                DOMAIN,
+                &row.unique_id,
+                disabled_by,
+                patch,
+            );
+            // The sensor's option goes beside the options the row has
+            // (`async_update_entity_options` for the `sensor` domain): a
+            // change of its own, after the row is made or has come back
+            // with what the user had set.
+            if let Some(precision) = row.precision {
+                let mut options = made.options.object();
+                let mut sensor = match options.remove("sensor") {
+                    Some(Value::Object(o)) => o,
+                    _ => Map::new(),
+                };
+                sensor.insert("suggested_display_precision".into(), json!(precision));
+                options.insert("sensor".into(), Value::Object(sensor));
+                let options = EntityPatch {
+                    options: Some(Value::Object(options)),
+                    ..Default::default()
+                };
+                registry.update_entity(&made.entity_id, options);
+            }
         }
     }
 }
@@ -437,42 +685,54 @@ fn build(
     };
     let (mut sensors, mut buttons, mut climates, mut switches) = (vec![], vec![], vec![], vec![]);
     for d in devices {
-        let sensor = |key: &'static str, name: &str, class: &str, unit: &str| {
+        // An entity's id and name, unless its row is disabled.
+        let ident = |domain: &'static str, unique_id: &str, name: Option<&'static str>| {
+            let (entity_id, friendly) = names.entity(domain, unique_id, &d.id, &d.name, name)?;
+            Some(Arc::new(Ident {
+                domain,
+                unique_id: unique_id.to_owned(),
+                device_name: d.name.clone(),
+                name,
+                now: Mutex::new(Now {
+                    entity_id,
+                    friendly,
+                    added: true,
+                }),
+            }))
+        };
+        let sensor = |key: &'static str, name: &'static str, class: &str, unit: &str| {
             let unique_id = format!("{}_{key}", d.id);
             if !free("sensor", &unique_id) {
                 return None;
             }
-            let (entity_id, friendly) =
-                names.entity("sensor", &unique_id, &d.id, &d.name, Some(name))?;
+            let ident = ident("sensor", &unique_id, Some(name))?;
             let attrs = json!({"state_class": "measurement", "unit_of_measurement": unit,
-                "device_class": class, "friendly_name": friendly});
+                "device_class": class});
             Some(Sensor {
                 shared: shared.clone(),
                 device: d.id.clone(),
                 key,
-                entity_id,
+                ident,
                 attrs: attrs.as_object().cloned().unwrap_or_default(),
             })
         };
         match (d.remote, d.kind.as_str()) {
             (true, kind) if kind.ends_with("Air Conditioner") => {
                 if free("climate", &d.id)
-                    && let Some((entity_id, friendly)) =
-                        names.entity("climate", &d.id, &d.id, &d.name, None)
-                    && let Some(c) = AcClimate::restored(&shared, &d.id, entity_id, friendly)
+                    && let Some(ident) = ident("climate", &d.id, None)
+                    && let Some(c) = AcClimate::restored(&shared, &d.id, ident)
                 {
                     climates.push(c);
                 }
                 if free("switch", &d.id)
-                    && let Some((entity_id, friendly)) =
-                        names.entity("switch", &d.id, &d.id, &d.name, None)
+                    && let Some(ident) = ident("switch", &d.id, None)
                 {
                     switches.push(AcSwitch {
                         shared: shared.clone(),
                         device: d.id.clone(),
-                        entity_id,
-                        friendly,
-                        on: Mutex::new(None),
+                        entity_id: ident.entity_id(),
+                        ident,
+                        on: Arc::default(),
                     });
                 }
             }
@@ -489,16 +749,16 @@ fn build(
                         d.name
                     );
                 } else if free("button", &d.id)
-                    && let Some((entity_id, friendly)) =
-                        names.entity("button", &d.id, &d.id, &d.name, None)
+                    && let Some(ident) = ident("button", &d.id, None)
                 {
+                    let entity_id = ident.entity_id();
                     let last = crate::button::restore(hass, &entity_id);
                     buttons.push(BotButton {
                         shared: shared.clone(),
                         device: d.id.clone(),
                         entity_id,
-                        friendly,
-                        last: Mutex::new(last),
+                        ident,
+                        last: Arc::new(Mutex::new(last)),
                     });
                 }
             }
@@ -522,9 +782,9 @@ fn build(
     Arc::new(Entry {
         shared,
         sensors: sensors.into_iter().map(Arc::new).collect(),
-        buttons: buttons.into_iter().map(Arc::new).collect(),
-        climates: climates.into_iter().map(Arc::new).collect(),
-        switches: switches.into_iter().map(Arc::new).collect(),
+        buttons: Mutex::new(buttons.into_iter().map(Arc::new).collect()),
+        climates: Mutex::new(climates.into_iter().map(Arc::new).collect()),
+        switches: Mutex::new(switches.into_iter().map(Arc::new).collect()),
     })
 }
 
@@ -609,16 +869,18 @@ pub async fn run(
             register(&hass, registry, entry_id, disable_new, &devices, &polled);
         }
         let entry = build(&hass, &components.registries(), api, &devices, polled);
-        for c in &entry.climates {
-            components.climates().add(c.clone());
-        }
-        for s in &entry.switches {
-            components.switches().add(s.clone());
-        }
-        for b in &entry.buttons {
-            components.buttons().add(b.clone());
-        }
+        entry.add_to(&components);
         entry.write_all();
+        // From here on a device's new name or an entity's new id reaches
+        // the entities. Still under the lock such a change is made under:
+        // none comes between the entities being built from the registry
+        // and their following it, where another entry's set-up could take
+        // a renamed row for one nobody runs.
+        if let Some(entry_id) = entry_id
+            && !entry.is_empty()
+        {
+            components.follow(entry_id, entry.clone());
+        }
         entry
     };
     // When this task ends (its entry was removed), the entities stop
@@ -700,32 +962,43 @@ struct Sensor {
     shared: Arc<Shared>,
     device: String,
     key: &'static str,
-    entity_id: EntityId,
+    ident: Arc<Ident>,
+    /// All but the friendly name.
     attrs: Attributes,
 }
 
 impl Sensor {
     fn write(&self) {
         let entry = &self.shared;
-        let state = match entry.polled.lock().get(&self.device) {
-            Some(p) if p.ok => p
-                .data
-                .get(self.key)
-                .and_then(sensor_state)
-                .unwrap_or_else(|| "unknown".into()),
-            _ => "unavailable".into(),
-        };
-        entry.write(self.entity_id.clone(), &state, self.attrs.clone(), None);
+        self.ident.publish(
+            entry,
+            |friendly| {
+                let state = match entry.polled.lock().get(&self.device) {
+                    Some(p) if p.ok => p
+                        .data
+                        .get(self.key)
+                        .and_then(sensor_state)
+                        .unwrap_or_else(|| "unknown".into()),
+                    _ => "unavailable".into(),
+                };
+                let mut attrs = self.attrs.clone();
+                attrs.insert("friendly_name".into(), json!(friendly));
+                (Cow::Owned(state), attrs)
+            },
+            None,
+        );
     }
 }
 
 /// A Bot in press mode: its state is HA's time of the last press.
+#[derive(Clone)]
 struct BotButton {
     shared: Arc<Shared>,
     device: String,
+    /// What the component knows it by; it writes where `ident` says.
     entity_id: EntityId,
-    friendly: String,
-    last: Mutex<Option<String>>,
+    ident: Arc<Ident>,
+    last: Arc<Mutex<Option<String>>>,
 }
 
 impl BotButton {
@@ -735,13 +1008,19 @@ impl BotButton {
 
     fn write_with(&self, context: Option<ha_core::Context>) {
         let entry = &self.shared;
-        let state = match entry.ok(&self.device) {
-            true => self.last.lock().clone().unwrap_or_else(|| "unknown".into()),
-            false => "unavailable".into(),
-        };
-        let mut a = Map::new();
-        a.insert("friendly_name".into(), json!(self.friendly));
-        entry.write(self.entity_id.clone(), &state, a, context);
+        self.ident.publish(
+            entry,
+            |friendly| {
+                let state = match entry.ok(&self.device) {
+                    true => self.last.lock().clone().unwrap_or_else(|| "unknown".into()),
+                    false => "unavailable".into(),
+                };
+                let mut a = Map::new();
+                a.insert("friendly_name".into(), json!(friendly));
+                (Cow::Owned(state), a)
+            },
+            context,
+        );
     }
 }
 
@@ -774,12 +1053,14 @@ impl Button for BotButton {
 
 /// The DIY IR air conditioner's climate entity: its state is what was
 /// last sent, or restored.
+#[derive(Clone)]
 pub struct AcClimate {
     shared: Arc<Shared>,
     device: String,
+    /// What the component knows it by; it writes where `ident` says.
     entity_id: EntityId,
-    friendly: String,
-    st: Mutex<AcState>,
+    ident: Arc<Ident>,
+    st: Arc<Mutex<AcState>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -789,66 +1070,81 @@ struct AcState {
     target: Option<Temp>,
 }
 
+impl AcState {
+    /// `async_added_to_hass`: the last state kept for `entity_id`, if it
+    /// was a mode, with its `fan_mode` and `temperature` if present, over
+    /// what is here. False if that state isn't an `HVACMode` (nothing is
+    /// taken then).
+    fn restore(&mut self, hass: &Hass, entity_id: &EntityId) -> bool {
+        let Some(last) = hass.restore().last_state(entity_id.as_str()) else {
+            return true;
+        };
+        let state = last["state"].as_str().unwrap_or_default();
+        if matches!(state, "unavailable" | "unknown") {
+            return true;
+        }
+        if !climate::HVAC_MODES.contains(&state) {
+            return false;
+        }
+        self.mode = state.to_owned();
+        let attrs = &last["attributes"];
+        if let Some(f) = attrs.get("fan_mode") {
+            self.fan = f.as_str().map(str::to_owned);
+        }
+        if let Some(t) = attrs.get("temperature") {
+            self.target = match t {
+                Value::Number(n) if n.is_f64() => n.as_f64().map(Temp::Float),
+                Value::Number(n) => n.as_i64().map(Temp::Int),
+                _ => None,
+            };
+        }
+        true
+    }
+}
+
 impl AcClimate {
-    /// `async_added_to_hass`: the last state if it was a mode, its
-    /// `fan_mode` and `temperature` if present. A state that isn't an
-    /// `HVACMode` fails the entity (HA doesn't add it).
-    fn restored(
-        shared: &Arc<Shared>,
-        device: &str,
-        entity_id: EntityId,
-        friendly: String,
-    ) -> Option<Self> {
+    /// A new entity: what it starts with, restored. A last state that isn't
+    /// an `HVACMode` fails the entity (HA doesn't add it).
+    fn restored(shared: &Arc<Shared>, device: &str, ident: Arc<Ident>) -> Option<Self> {
+        let entity_id = ident.entity_id();
         let mut st = AcState {
             mode: "fan_only".into(),
             fan: Some("auto".into()),
             target: Some(Temp::Int(21)),
         };
-        let restore = shared.hass.restore();
-        if let Some(last) = restore.last_state(entity_id.as_str()) {
-            let state = last["state"].as_str().unwrap_or_default();
-            if !matches!(state, "unavailable" | "unknown") {
-                if !climate::HVAC_MODES.contains(&state) {
-                    tracing::error!(
-                        "Error adding entity {entity_id} for domain climate with platform switchbot_cloud: '{state}' is not a valid HVACMode"
-                    );
-                    return None;
-                }
-                st.mode = state.to_owned();
-                let attrs = &last["attributes"];
-                if let Some(f) = attrs.get("fan_mode") {
-                    st.fan = f.as_str().map(str::to_owned);
-                }
-                if let Some(t) = attrs.get("temperature") {
-                    st.target = match t {
-                        Value::Number(n) if n.is_f64() => n.as_f64().map(Temp::Float),
-                        Value::Number(n) => n.as_i64().map(Temp::Int),
-                        _ => None,
-                    };
-                }
-            }
+        if !st.restore(&shared.hass, &entity_id) {
+            tracing::error!(
+                "Error adding entity {entity_id} for domain climate with platform switchbot_cloud: its last state is not a valid HVACMode"
+            );
+            return None;
         }
-        restore.register(entity_id.as_str(), None);
+        shared.hass.restore().register(entity_id.as_str(), None);
         Some(Self {
             shared: shared.clone(),
             device: device.to_owned(),
             entity_id,
-            friendly,
-            st: Mutex::new(st),
+            ident,
+            st: Arc::new(Mutex::new(st)),
         })
     }
 
     fn write(&self) {
         let entry = &self.shared;
-        let mut a = climate::attributes(self);
-        a.insert("assumed_state".into(), json!(true));
-        a.insert("friendly_name".into(), json!(self.friendly));
-        a.insert(
-            "supported_features".into(),
-            json!(self.supported_features()),
+        self.ident.publish(
+            entry,
+            |friendly| {
+                let mut a = climate::attributes(self);
+                a.insert("assumed_state".into(), json!(true));
+                a.insert("friendly_name".into(), json!(friendly));
+                a.insert(
+                    "supported_features".into(),
+                    json!(self.supported_features()),
+                );
+                let mode = self.st.lock().mode.clone();
+                (Cow::Owned(mode), a)
+            },
+            None,
         );
-        let mode = self.st.lock().mode.clone();
-        entry.write(self.entity_id.clone(), &mode, a, None);
     }
 
     /// `_do_send_command`: always `setAll`, from the call's values or the
@@ -982,26 +1278,35 @@ impl Climate for AcClimate {
 }
 
 /// The IR remote's power switch: `unknown` until commanded.
+#[derive(Clone)]
 struct AcSwitch {
     shared: Arc<Shared>,
     device: String,
+    /// What the component knows it by; it writes where `ident` says.
     entity_id: EntityId,
-    friendly: String,
-    on: Mutex<Option<bool>>,
+    ident: Arc<Ident>,
+    on: Arc<Mutex<Option<bool>>>,
 }
 
 impl AcSwitch {
     fn write(&self) {
         let entry = &self.shared;
-        let state = match *self.on.lock() {
-            Some(true) => "on",
-            Some(false) => "off",
-            None => "unknown",
-        };
-        let mut a = Map::new();
-        a.insert("device_class".into(), json!("switch"));
-        a.insert("friendly_name".into(), json!(self.friendly));
-        entry.write(self.entity_id.clone(), state, a, None);
+        self.ident.publish(
+            entry,
+            |friendly| {
+                let state = match *self.on.lock() {
+                    Some(true) => "on",
+                    Some(false) => "off",
+                    None => "unknown",
+                };
+                let mut a = Map::new();
+                a.insert("device_class".into(), json!("switch"));
+                a.insert("friendly_name".into(), json!(friendly));
+                // Borrowed: an unchanged report allocates nothing for it.
+                (Cow::Borrowed(state), a)
+            },
+            None,
+        );
     }
 }
 

@@ -1687,3 +1687,383 @@ async fn the_stores_are_written_before_the_answer() {
     let devices: Value = serde_json::from_str(&disk.file("core.device_registry")).unwrap();
     assert_eq!(devices["data"]["devices"], json!([]));
 }
+
+/// The registry changes the dialog's last step makes for the Bot: a name
+/// and an area for the device, then the ids that follow from them.
+fn name_the_bot(registry: &Registry, components: &Components) {
+    let follows = &crate::components::follows;
+    let area = ha_registry::NewArea {
+        name: "Kitchen".into(),
+        ..Default::default()
+    };
+    registry.create_area(area).unwrap();
+    let snap = registry.snapshot();
+    let bot = snap.devices.iter().find(|d| d.identifiers[0][1] == BOT);
+    let patch = ha_registry::DevicePatch {
+        name_by_user: Some(Some("Coffee machine".into())),
+        area_id: Some(Some("kitchen".into())),
+        ..Default::default()
+    };
+    components
+        .registry_edit(|| registry.update_device(&bot.unwrap().id, &patch, follows))
+        .unwrap();
+    let old = ["button.towel_switch", "sensor.towel_switch_battery"].map(str::to_owned);
+    for (old, new) in registry.automatic_entity_ids(&old) {
+        rename(registry, components, &old, &new.unwrap());
+    }
+}
+
+/// Give an entity another id, as `config/entity_registry/update` does.
+fn rename(registry: &Registry, components: &Components, old: &str, new: &str) {
+    let follows = &crate::components::follows;
+    components
+        .registry_edit(|| registry.rename_entity(old, new, &Default::default(), follows))
+        .unwrap();
+}
+
+async fn press(hass: &Hass, entity_id: &str) -> Result<(), ha_core::ServiceError> {
+    let data = json!({"entity_id": entity_id});
+    let data = data.as_object().unwrap().clone();
+    hass.call_service("button", "press", data, None, false, None)
+        .await
+        .map(drop)
+}
+
+/// A device named in the dialog and its entities' new ids are what a
+/// restart finds: the files hold them, the entry sets up under the new
+/// ids with the new names, makes no row and changes none, and the old ids
+/// are gone from the states and the services.
+#[tokio::test]
+async fn a_named_device_and_its_new_ids_survive_a_restart() {
+    let disk = Disk::new("named");
+    let (base, api) = fake().await;
+    let hass = Hass::new();
+    let (entries, registry, flows) = disk.start(&hass, &base);
+    let flows = flows.expect("new stores can be written");
+    let FlowResult::Form { flow_id, .. } =
+        flows.init("switchbot_cloud", SOURCE_USER).await.unwrap()
+    else {
+        panic!("no form");
+    };
+    flows.configure(&flow_id, credentials(TOKEN)).await.unwrap();
+    name_the_bot(&registry, &flows.components);
+    let named = json!({"state": "unknown", "attributes": {"friendly_name": "Coffee machine"}});
+    let check = |hass: &Hass| {
+        assert_eq!(state(hass, "button.kitchen_coffee_machine"), named);
+        assert_eq!(
+            state(hass, "sensor.kitchen_coffee_machine_battery")["attributes"]["friendly_name"],
+            "Coffee machine Battery"
+        );
+        for old in ["button.towel_switch", "sensor.towel_switch_battery"] {
+            assert_eq!(state(hass, old), Value::Null, "{old}");
+        }
+    };
+    check(&hass);
+    // The Bot is pressed under its new id, and not under the old one.
+    api.take();
+    press(&hass, "button.towel_switch").await.unwrap();
+    assert_eq!(api.count(), 0, "the old id still reached the Bot");
+    press(&hass, "button.kitchen_coffee_machine").await.unwrap();
+    assert_eq!(api.take()[0].path, format!("/v1.1/devices/{BOT}/commands"));
+    let pressed = state(&hass, "button.kitchen_coffee_machine");
+    assert_ne!(pressed["state"], "unknown");
+
+    entries.flush().await;
+    registry.flush().await;
+    let rows = |registry: &Registry| {
+        let r = registry.snapshot();
+        json!([r.devices, r.entities, r.areas])
+    };
+    let before = rows(&registry);
+    assert!(
+        disk.file("core.device_registry")
+            .contains(r#""name_by_user":"Coffee machine""#)
+    );
+    assert!(disk.file("core.area_registry").contains(r#""kitchen""#));
+    assert!(
+        disk.file("core.entity_registry")
+            .contains(r#""entity_id":"sensor.kitchen_coffee_machine_battery""#)
+    );
+
+    // A restart on the same directory.
+    let hass = Hass::new();
+    let (_entries, registry, _flows) = disk.start(&hass, &base);
+    hass.setups_done().await;
+    assert_eq!(rows(&registry), before, "a restart changed a row");
+    assert_eq!(
+        state(&hass, "button.kitchen_coffee_machine")["attributes"]["friendly_name"],
+        "Coffee machine"
+    );
+    assert_eq!(state(&hass, "button.towel_switch"), Value::Null);
+    assert_eq!(
+        state(&hass, "sensor.kitchen_coffee_machine_battery")["attributes"]["friendly_name"],
+        "Coffee machine Battery"
+    );
+}
+
+/// A command still in flight when its entity is given another id reports
+/// under the new id, as HA's entity (one object before and after) does,
+/// and nothing comes back under the old one. What the entity had (the air
+/// conditioner's mode, kept in memory) goes with it.
+#[tokio::test]
+async fn a_command_in_flight_reports_under_the_new_id() {
+    let home = home().await;
+    add(&home, TOKEN).await;
+    let call = |service: &'static str, data: Value| {
+        let hass = home.hass.clone();
+        async move {
+            hass.call_service(
+                "climate",
+                service,
+                data.as_object().unwrap().clone(),
+                None,
+                false,
+                None,
+            )
+            .await
+        }
+    };
+    let cool = json!({"entity_id": "climate.air_conditioner", "hvac_mode": "cool"});
+    call("set_hvac_mode", cool).await.unwrap();
+    assert_eq!(
+        state(&home.hass, "climate.air_conditioner")["state"],
+        "cool"
+    );
+
+    home.api.take();
+    let hold = Arc::new(tokio::sync::Notify::new());
+    *home.api.hold.lock() = Some(hold.clone());
+    let heat = json!({"entity_id": "climate.air_conditioner", "hvac_mode": "heat"});
+    let in_flight = tokio::spawn(call("set_hvac_mode", heat));
+    // The command has reached the API, which holds its answer.
+    while home.api.count() < 1 {
+        home.api.arrived.notified().await;
+    }
+    rename(
+        &home.registry,
+        &home.flows.components,
+        "climate.air_conditioner",
+        "climate.bedroom",
+    );
+    // Moved, with the mode it had.
+    assert_eq!(state(&home.hass, "climate.air_conditioner"), Value::Null);
+    assert_eq!(state(&home.hass, "climate.bedroom")["state"], "cool");
+
+    hold.notify_one();
+    *home.api.hold.lock() = None;
+    in_flight.await.unwrap().unwrap();
+    assert_eq!(state(&home.hass, "climate.air_conditioner"), Value::Null);
+    assert_eq!(state(&home.hass, "climate.bedroom")["state"], "heat");
+    // The services find it under the new id only.
+    let off = |id: &str| json!({"entity_id": id, "hvac_mode": "off"});
+    home.api.take();
+    call("set_hvac_mode", off("climate.air_conditioner"))
+        .await
+        .unwrap();
+    assert_eq!(home.api.count(), 0);
+    call("set_hvac_mode", off("climate.bedroom")).await.unwrap();
+    assert_eq!(state(&home.hass, "climate.bedroom")["state"], "off");
+    // Its last state is kept for a restore under the new id.
+    let stored = home
+        .hass
+        .restore()
+        .stored(&home.hass, home.hass.clock().now());
+    let kept = |id: &str| stored.iter().any(|s| s["state"]["entity_id"] == id);
+    assert!(kept("climate.bedroom"), "{stored:?}");
+}
+
+/// An entity given back an id it had before takes what it had there, as
+/// HA's entity, added again under that id, restores its last state for
+/// it: the air conditioner was cooling as `climate.air_conditioner`,
+/// heated under another id, and cools again when it gets the first back.
+#[tokio::test]
+async fn an_entity_given_an_old_id_back_restores_what_it_had_there() {
+    let home = home().await;
+    add(&home, TOKEN).await;
+    let set = |entity_id: &'static str, mode: &'static str| {
+        let hass = home.hass.clone();
+        async move {
+            let data = json!({"entity_id": entity_id, "hvac_mode": mode});
+            let data = data.as_object().unwrap().clone();
+            hass.call_service("climate", "set_hvac_mode", data, None, false, None)
+                .await
+                .unwrap();
+        }
+    };
+    let components = &home.flows.components;
+    set("climate.air_conditioner", "cool").await;
+    rename(
+        &home.registry,
+        components,
+        "climate.air_conditioner",
+        "climate.bedroom",
+    );
+    assert_eq!(state(&home.hass, "climate.bedroom")["state"], "cool");
+    set("climate.bedroom", "heat").await;
+    rename(
+        &home.registry,
+        components,
+        "climate.bedroom",
+        "climate.air_conditioner",
+    );
+    assert_eq!(state(&home.hass, "climate.bedroom"), Value::Null);
+    assert_eq!(
+        state(&home.hass, "climate.air_conditioner")["state"],
+        "cool"
+    );
+}
+
+/// An entity renamed after its entry's task was stopped and before the
+/// removal cleans up (the removal waits for the task in between) is still
+/// moved, so the removal finds it where the registry says it is: no state
+/// and no service target is left under the old id or the new.
+#[tokio::test]
+async fn a_rename_while_its_entry_is_being_removed_leaves_nothing() {
+    let home = home().await;
+    let id = entry_id(&add(&home, TOKEN).await);
+    // The removal's first half: the entry's task is stopped.
+    home.flows.tasks.lock()[0].task.abort();
+    while !home.flows.tasks.lock()[0].task.is_finished() {
+        tokio::task::yield_now().await;
+    }
+    rename(
+        &home.registry,
+        &home.flows.components,
+        "button.towel_switch",
+        "button.rail",
+    );
+    assert_eq!(state(&home.hass, "button.towel_switch"), Value::Null);
+    assert_eq!(home.flows.remove_entry(&id).await, Some(false));
+    for gone in ["button.towel_switch", "button.rail"] {
+        assert_eq!(state(&home.hass, gone), Value::Null, "{gone}");
+        home.api.take();
+        press(&home.hass, gone).await.unwrap();
+        assert_eq!(home.api.count(), 0, "{gone} still reached the Bot");
+    }
+    assert!(home.hass.states().all().is_empty());
+}
+
+/// A sensor that comes back (its entry removed and added again) keeps the
+/// options the user had set on it: the precision the integration suggests
+/// goes beside them, as HA's `async_update_entity_options` puts it.
+#[tokio::test]
+async fn a_sensor_that_comes_back_keeps_its_options() {
+    let home = home().await;
+    let id = entry_id(&add(&home, TOKEN).await);
+    let options = |registry: &Registry| {
+        let r = registry.snapshot();
+        let row = r
+            .entities
+            .iter()
+            .find(|e| e.entity_id == "sensor.hub_2_9d_temperature");
+        row.unwrap().options.value()
+    };
+    assert_eq!(
+        options(&home.registry),
+        json!({"sensor": {"suggested_display_precision": 1}})
+    );
+    let users = json!({"sensor": {"suggested_display_precision": 1, "display_precision": 2},
+                       "conversation": {"should_expose": true}});
+    let patch = ha_registry::EntityPatch {
+        options: Some(users.clone()),
+        ..Default::default()
+    };
+    home.registry
+        .update_entity("sensor.hub_2_9d_temperature", patch);
+    assert_eq!(home.flows.remove_entry(&id).await, Some(false));
+    add(&home, TOKEN).await;
+    assert_eq!(options(&home.registry), users);
+}
+
+/// An air conditioner given an id whose last kept state isn't a mode is
+/// not added under it, as HA's entity fails to be added again there (its
+/// `async_added_to_hass` raises): no state is written at the new id, the
+/// old one is gone, and the services reach nothing.
+#[tokio::test]
+async fn a_climate_is_not_added_under_an_id_with_a_bad_last_state() {
+    let home = home().await;
+    add(&home, TOKEN).await;
+    // What an earlier entity left for `climate.den`.
+    let den = EntityId::parse("climate.den").unwrap();
+    home.hass
+        .set_state(den.clone(), "bogus", Default::default());
+    home.hass.restore().register("climate.den", None);
+    home.hass.restore().unregister(&home.hass, "climate.den");
+    home.hass.remove_state(&den);
+
+    rename(
+        &home.registry,
+        &home.flows.components,
+        "climate.air_conditioner",
+        "climate.den",
+    );
+    assert_eq!(state(&home.hass, "climate.air_conditioner"), Value::Null);
+    assert_eq!(state(&home.hass, "climate.den"), Value::Null);
+    home.api.take();
+    for id in ["climate.air_conditioner", "climate.den"] {
+        let data = json!({"entity_id": id, "hvac_mode": "cool"});
+        let data = data.as_object().unwrap().clone();
+        home.hass
+            .call_service("climate", "set_hvac_mode", data, None, false, None)
+            .await
+            .unwrap();
+    }
+    assert_eq!(home.api.count(), 0);
+    // The remote's switch, renamed too, is where it was put.
+    rename(
+        &home.registry,
+        &home.flows.components,
+        "switch.air_conditioner",
+        "switch.den",
+    );
+    assert_eq!(state(&home.hass, "switch.den")["state"], "unknown");
+}
+
+/// A command still in flight on an air conditioner that then fails to be
+/// added under a new id (its last kept state there isn't a mode) writes
+/// nothing when it finishes: no state comes back under either id, as HA's
+/// entity that did not reach `ADDED` writes none.
+#[tokio::test]
+async fn a_command_in_flight_does_not_bring_back_a_climate_that_failed_to_move() {
+    let home = home().await;
+    add(&home, TOKEN).await;
+    // What an earlier entity left for `climate.den`.
+    let den = EntityId::parse("climate.den").unwrap();
+    home.hass
+        .set_state(den.clone(), "bogus", Default::default());
+    home.hass.restore().register("climate.den", None);
+    home.hass.restore().unregister(&home.hass, "climate.den");
+    home.hass.remove_state(&den);
+
+    home.api.take();
+    let hold = Arc::new(tokio::sync::Notify::new());
+    *home.api.hold.lock() = Some(hold.clone());
+    let in_flight = {
+        let hass = home.hass.clone();
+        tokio::spawn(async move {
+            let data = json!({"entity_id": "climate.air_conditioner", "hvac_mode": "heat"});
+            let data = data.as_object().unwrap().clone();
+            hass.call_service("climate", "set_hvac_mode", data, None, false, None)
+                .await
+        })
+    };
+    // The command has reached the API, which holds its answer.
+    while home.api.count() < 1 {
+        home.api.arrived.notified().await;
+    }
+    rename(
+        &home.registry,
+        &home.flows.components,
+        "climate.air_conditioner",
+        "climate.den",
+    );
+    hold.notify_one();
+    *home.api.hold.lock() = None;
+    in_flight.await.unwrap().unwrap();
+    assert_eq!(state(&home.hass, "climate.air_conditioner"), Value::Null);
+    assert_eq!(
+        state(&home.hass, "climate.den"),
+        Value::Null,
+        "the command wrote a state for an entity that was not added"
+    );
+}

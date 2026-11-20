@@ -419,6 +419,65 @@ Against HA on the same host and devices: about 1/18th of the memory, 1/13th
 of the CPU, a fifth of the wakeups and a tenth of the start-up time. Within
 the [budgets](../PERF.md#budgets).
 
+### Device and area edits, 2026-11-20
+
+The Add integration dialog's last step: a device's name, area and labels,
+a new area, the entity ids that follow from a name, and SwitchBot Cloud's
+running entities taking a new name or id. All of it runs when a user
+saves a change and at no other time: no timer and no task of its own,
+nothing that wakes (the changed registry file is saved by the registries'
+existing delayed save). What stays in memory is one reference per
+SwitchBot entry, from its set-up until it is removed (an empty,
+unallocated list on an install with none), and per SwitchBot entity the
+names its id is made from (two short strings) behind a lock that a state
+write and a rename take.
+
+A state write of such an entity now reads its id and friendly name under
+that lock. It allocates what it allocated on main: the state's text is
+borrowed where the entity has a literal (a switch's `on`, `off` or
+`unknown`) and an owned string where main had one too (a sensor's
+reading, a button's last press, a climate's mode), and the friendly
+name's JSON value is built per write as before. An earlier revision of
+this change (8277405) made the switch's literal an owned string on every
+report; the final review caught it. The remotes' refresh, which reports
+a climate and a switch unchanged every 600 s, has a bench now
+(`cargo bench -p ha-integrations`, `switchbot_report/remote_unchanged`;
+an Apple-silicon Mac, criterion 0.7, the same bench file run on main):
+
+| | time per report (climate and switch) |
+|---|---|
+| main (49c08fc) | 2.038 µs [2.031, 2.044] |
+| branch, `--baseline main` | 2.005 µs [2.002, 2.009], change −0.43 %: "within noise threshold" |
+
+The bench does not resolve one small allocation: the switch's state as an
+owned string again, run the same way, measured 1.947 µs [1.945, 1.948],
+so runs on this machine differ by a few percent whatever the code. What
+the numbers show is that the lock and the closure cost nothing that can
+be measured here; the borrowed literal is back because rule 2 says so,
+not because a run was faster. A polled sensor's and a Bot's writes are
+not in the bench (each needs an API answer first); by reading, they make
+the same allocations as on main.
+
+Release binary (macOS arm64, stripped, `cargo build --release -p
+ha-server`): main (49c08fc) 9,469,328 bytes, branch 9,535,472
+(+66,144).
+
+The same change stops the registry from parsing every deleted entity row
+for each entity it removes (the row for the same unique id is now looked
+for in the rows' text first, and the list is changed in place instead of
+copied per removal). Removing an entry's 1,000 entities from a registry of
+8,000 (`Registry::clear_config_entry`, in memory, an Apple-silicon Mac,
+one run each):
+
+| | debug build | release build |
+|---|---|---|
+| before | 8.10 s | 634 ms |
+| after | 0.74 s | 30 ms |
+
+Then 200 single removals (`Registry::remove_entity`, 1,000 deleted rows
+kept): 3.65 s to 0.34 s in a debug build, 280 ms to 28 ms in a release
+build.
+
 ### Config flows, 2026-11-20
 
 Adding an integration from the UI: the flow engine and SwitchBot Cloud's
