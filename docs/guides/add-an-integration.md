@@ -187,9 +187,11 @@ Put tests in `<domain>/tests.rs`. `met/tests.rs` shows the three kinds:
 - **The wire** (`fetch_sends_if_modified_since_and_keeps_the_forecast_on_304`):
   a local `TcpListener` serving canned HTTP, checking the exact request.
 
-Sanitise every recorded input: no tokens or keys, ids replaced, coordinates
-rounded. Run `cargo test -p ha-integrations <domain>` while working and
-`scripts/check.sh` before you push.
+Sanitise every recorded input: no tokens or keys, and MAC addresses, serial
+numbers, IP addresses, names, SSIDs and coordinates replaced with fake ones
+([the list](../../scripts/vectors/README.md#sanitising-a-fixture)). Run
+`cargo test -p ha-integrations <domain>` while working and `scripts/check.sh`
+before you push.
 
 ## 8. Measure it
 

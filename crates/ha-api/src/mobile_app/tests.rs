@@ -873,7 +873,7 @@ async fn a_sealed_null_still_saves_the_flag() {
 fn owner_token(auth: &ha_auth::Auth) -> (String, String) {
     const CLIENT: &str = "http://127.0.0.1:8123/";
     let flow = auth.start_login_flow(CLIENT, None);
-    let user = auth.check_password("adam", "secret").unwrap();
+    let user = auth.check_password("alex", "secret").unwrap();
     let code = auth.finish_login_flow(&flow, CLIENT, &user, None).unwrap();
     let t = auth.exchange_code(Some(CLIENT), Some(&code), None).unwrap();
     let user_id = auth
@@ -898,7 +898,7 @@ async fn registrations_as_ha() {
     std::fs::write(
         dir.join(".storage/person"),
         json!({"version": 2, "minor_version": 1, "key": "person", "data": {"items": [
-            {"id": "adam", "name": "adam", "user_id": user_id, "device_trackers": []}]}})
+            {"id": "alex", "name": "alex", "user_id": user_id, "device_trackers": []}]}})
         .to_string(),
     )
     .unwrap();

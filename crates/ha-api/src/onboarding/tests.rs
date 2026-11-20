@@ -652,7 +652,7 @@ async fn the_command_line_owner_skips_onboarding() {
     let dir = temp_dir("cli");
     {
         let auth = Auth::load_with_cost(&dir, ha_core::Clock::system(), 4).unwrap();
-        assert_eq!(auth.add_user("adam", "pw").unwrap(), ha_auth::Added::Owner);
+        assert_eq!(auth.add_user("alex", "pw").unwrap(), ha_auth::Added::Owner);
         auth.save().unwrap();
     }
     let i = start(&dir, true).await;

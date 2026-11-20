@@ -60,7 +60,7 @@ const CLIENT: &str = "http://127.0.0.1:8123/";
 fn ha_config(dir: &Path) -> String {
     // HA's own formats; `hars auth add` writes the same files HA does.
     assert!(
-        hars(dir, &["auth", "add", "adam", "secret"])
+        hars(dir, &["auth", "add", "alex", "secret"])
             .status
             .success()
     );
@@ -427,7 +427,7 @@ fn stores_missing_from_the_source_are_removed() {
     assert!(!dest.join(".storage/onboarding").exists());
     assert_eq!(
         read_json(&dest.join(".storage/auth"))["data"]["users"][0]["name"],
-        "adam"
+        "alex"
     );
     for d in [src, dest] {
         let _ = std::fs::remove_dir_all(d);

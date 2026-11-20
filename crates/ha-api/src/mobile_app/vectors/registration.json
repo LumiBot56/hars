@@ -120,13 +120,13 @@
     "state": "unknown",
     "attributes": {
      "editable": true,
-     "id": "adam",
+     "id": "alex",
      "device_trackers": [
       "device_tracker.phone"
      ],
      "in_zones": [],
      "user_id": "00112233445566778899aabbccddeeff",
-     "friendly_name": "adam"
+     "friendly_name": "alex"
     }
    },
    "states": {

@@ -15,7 +15,7 @@ fn auth_add_creates_the_owner_in_has_files() {
     let dir = std::env::temp_dir().join(format!("hars-cli-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
 
-    let out = hars(&dir, &["auth", "add", "adam", "secret"]);
+    let out = hars(&dir, &["auth", "add", "alex", "secret"]);
     assert!(out.status.success(), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stdout).contains("created owner"));
 
@@ -34,7 +34,7 @@ fn auth_add_creates_the_owner_in_has_files() {
     assert_eq!(users[0]["is_owner"], true);
     assert_eq!(users[0]["group_ids"], serde_json::json!(["system-admin"]));
     let provider = read("auth_provider.homeassistant");
-    assert_eq!(provider["data"]["users"][0]["username"], "adam");
+    assert_eq!(provider["data"]["users"][0]["username"], "alex");
 
     #[cfg(unix)]
     {
@@ -52,7 +52,7 @@ fn auth_add_creates_the_owner_in_has_files() {
         String::from_utf8_lossy(&out.stdout).contains("added login"),
         "{out:?}"
     );
-    assert!(!hars(&dir, &["auth", "add", "adam", "x"]).status.success());
+    assert!(!hars(&dir, &["auth", "add", "alex", "x"]).status.success());
     assert!(
         !hars(&dir, &["auth", "add", "Bad Name", "x"])
             .status

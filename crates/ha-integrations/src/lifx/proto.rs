@@ -86,7 +86,7 @@ pub fn decode(b: &[u8]) -> Option<(Header, &[u8])> {
     ))
 }
 
-/// `"d0:73:d5:13:bc:cd"`.
+/// `"d0:73:d5:01:02:03"`.
 pub fn mac(serial: &[u8; 6]) -> String {
     serial
         .iter()
@@ -260,7 +260,7 @@ mod tests {
         // LightSetPower(65535, 0), seq 6, to the serial (vector 1).
         let out = Out {
             source: u32::from_le_bytes([0x71, 0x42, 0xbd, 0xa2]),
-            target: [0xd0, 0x73, 0xd5, 0x13, 0xbc, 0xcd],
+            target: [0xd0, 0x73, 0xd5, 0x01, 0x02, 0x03],
             seq: 6,
             ack: true,
             res: false,
@@ -270,7 +270,7 @@ mod tests {
         assert_eq!(
             out.encode(),
             hex(
-                "2a0000147142bda2d073d513bccd00000000000000000206000000000000000075000000ffff00000000"
+                "2a0000147142bda2d073d501020300000000000000000206000000000000000075000000ffff00000000"
             )
         );
     }

@@ -6,8 +6,8 @@ use crate::light::Profiles;
 use ha_registry::Registries;
 use proto::Out;
 
-const SERIAL: [u8; 6] = [0xd0, 0x73, 0xd5, 0x13, 0xbc, 0xcd];
-const UID: &str = "d0:73:d5:13:bc:cd";
+const SERIAL: [u8; 6] = [0xd0, 0x73, 0xd5, 0x01, 0x02, 0x03];
+const UID: &str = "d0:73:d5:01:02:03";
 
 /// A received message: (type, payload).
 type Got = (u16, Vec<u8>);
@@ -193,7 +193,7 @@ async fn serial_mismatch_retries() {
     assert_eq!(
         r.err(),
         Some(SetupError::Retry(
-            "Unexpected device found at 127.0.0.1; expected d0:73:d5:00:00:01, found d0:73:d5:13:bc:cd".into()
+            "Unexpected device found at 127.0.0.1; expected d0:73:d5:00:00:01, found d0:73:d5:01:02:03".into()
         ))
     );
     f.silent.store(true, Ordering::Relaxed);

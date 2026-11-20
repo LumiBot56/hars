@@ -117,7 +117,7 @@ mod tests {
             "\u{3c3}\u{3af}\u{3c3}\u{3c5}\u{3c6}\u{3bf}\u{3c3}"
         );
         assert_eq!(casefold("\u{fb01}le"), "file");
-        assert_eq!(casefold("ADAM"), "adam");
+        assert_eq!(casefold("ALEX"), "alex");
         assert_eq!(casefold("\u{130}stanbul"), "i\u{307}stanbul");
         assert_eq!(
             casefold("\u{13da}\u{13a2}\u{13b5}\u{13ac}\u{13a2}\u{13ac}\u{13d2}"),

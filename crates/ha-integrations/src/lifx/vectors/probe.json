@@ -1,5 +1,5 @@
 {
- "host": "192.168.0.60",
+ "host": "192.0.2.60",
  "captured_utc": "2026-11-14T16:03:04Z",
  "records": [
   {
@@ -12,7 +12,7 @@
    "replies": [
     {
      "t_ms": 5.05,
-     "hex": "29000014eeb19291d073d513bccd00004c4946585632010108111264d5f4e71803000000017cdd0000",
+     "hex": "29000014eeb19291d073d501020300004c4946585632010108111264d5f4e71803000000017cdd0000",
      "decoded": {
       "type": 3,
       "class": "StateService",
@@ -22,7 +22,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 1,
       "ack_requested": 0,
       "response_requested": 1,
@@ -32,7 +32,7 @@
     },
     {
      "t_ms": 38.45,
-     "hex": "29000014eeb19291d073d513bccd00004c494658563201010859fa65d5f4e71803000000057cdd0000",
+     "hex": "29000014eeb19291d073d501020300004c494658563201010859fa65d5f4e71803000000057cdd0000",
      "decoded": {
       "type": 3,
       "class": "StateService",
@@ -42,7 +42,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 1,
       "ack_requested": 0,
       "response_requested": 1,
@@ -62,7 +62,7 @@
    "replies": [
     {
      "t_ms": 13.05,
-     "hex": "38000014eeb19291d073d513bccd00004c494658563201020813407fd5f4e7180f000000009418581c05d914009418581c05d91416000100",
+     "hex": "38000014eeb19291d073d501020300004c494658563201020813407fd5f4e7180f000000009418581c05d914009418581c05d91416000100",
      "decoded": {
       "type": 15,
       "class": "StateHostFirmware",
@@ -72,7 +72,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 2,
       "ack_requested": 0,
       "response_requested": 1,
@@ -93,7 +93,7 @@
    "replies": [
     {
      "t_ms": 7.3,
-     "hex": "30000014eeb19291d073d513bccd00004c4946585632010308bb0b98d5f4e71821000000010000001600000000000000",
+     "hex": "30000014eeb19291d073d501020300004c4946585632010308bb0b98d5f4e71821000000010000001600000000000000",
      "decoded": {
       "type": 33,
       "class": "StateVersion",
@@ -103,7 +103,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 3,
       "ack_requested": 0,
       "response_requested": 1,
@@ -124,7 +124,7 @@
    "replies": [
     {
      "t_ms": 12.82,
-     "hex": "44000014eeb19291d073d513bccd00004c49465856320104087551b1d5f4e718190000004b69746368656e204c6967687400000000000000000000000000000000000000",
+     "hex": "44000014eeb19291d073d501020300004c49465856320104087551b1d5f4e718190000004b69746368656e204c6967687400000000000000000000000000000000000000",
      "decoded": {
       "type": 25,
       "class": "StateLabel",
@@ -134,7 +134,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 4,
       "ack_requested": 0,
       "response_requested": 1,
@@ -156,7 +156,7 @@
    "replies": [
     {
      "t_ms": 12.92,
-     "hex": "5c000014eeb19291d073d513bccd00004c49465856320105082f97cad5f4e718350000009f5f21550c008bdf0c29e542ea2a24234b69746368656e00000000000000000000000000000000000000000000000000c0aaeef180769518",
+     "hex": "5c000014eeb19291d073d501020300004c49465856320105082f97cad5f4e71835000000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf4b69746368656e00000000000000000000000000000000000000000000000000c0aaeef180769518",
      "decoded": {
       "type": 53,
       "class": "StateGroup",
@@ -166,27 +166,27 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 5,
       "ack_requested": 0,
       "response_requested": 1,
       "group": [
-       159,
-       95,
-       33,
-       85,
-       12,
-       0,
-       139,
-       223,
-       12,
-       41,
-       229,
-       66,
-       234,
-       42,
-       36,
-       35
+       160,
+       161,
+       162,
+       163,
+       164,
+       165,
+       166,
+       167,
+       168,
+       169,
+       170,
+       171,
+       172,
+       173,
+       174,
+       175
       ],
       "label": {
        "bytes_hex": "4b69746368656e00000000000000000000000000000000000000000000000000",
@@ -207,7 +207,7 @@
    "replies": [
     {
      "t_ms": 12.72,
-     "hex": "5c000014eeb19291d073d513bccd00004c4946585632010608e9dce3d5f4e71832000000658a256b837b13442e04ddbe101087b9486f6d6500000000000000000000000000000000000000000000000000000000c0aaeef180769518",
+     "hex": "5c000014eeb19291d073d501020300004c4946585632010608e9dce3d5f4e71832000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf486f6d6500000000000000000000000000000000000000000000000000000000c0aaeef180769518",
      "decoded": {
       "type": 50,
       "class": "StateLocation",
@@ -217,27 +217,27 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 6,
       "ack_requested": 0,
       "response_requested": 1,
       "location": [
-       101,
-       138,
-       37,
-       107,
-       131,
-       123,
-       19,
-       68,
-       46,
-       4,
-       221,
+       176,
+       177,
+       178,
+       179,
+       180,
+       181,
+       182,
+       183,
+       184,
+       185,
+       186,
+       187,
+       188,
+       189,
        190,
-       16,
-       16,
-       135,
-       185
+       191
       ],
       "label": {
        "bytes_hex": "486f6d6500000000000000000000000000000000000000000000000000000000",
@@ -258,7 +258,7 @@
    "replies": [
     {
      "t_ms": 8.36,
-     "hex": "58000014eeb19291d073d513bccd00004c494658563201070891a8fcd5f4e7186b0000000000000099998c0a0000ffff4b69746368656e204c69676874000000000000000000000000000000000000000000000000000000",
+     "hex": "58000014eeb19291d073d501020300004c494658563201070891a8fcd5f4e7186b0000000000000099998c0a0000ffff4b69746368656e204c69676874000000000000000000000000000000000000000000000000000000",
      "decoded": {
       "type": 107,
       "class": "LightState",
@@ -268,7 +268,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 7,
       "ack_requested": 0,
       "response_requested": 1,
@@ -299,7 +299,7 @@
    "replies": [
     {
      "t_ms": 5.73,
-     "hex": "26000014eeb19291d073d513bccd00004c4946585632010808397415d6f4e71876000000ffff",
+     "hex": "26000014eeb19291d073d501020300004c4946585632010808397415d6f4e71876000000ffff",
      "decoded": {
       "type": 118,
       "class": "LightStatePower",
@@ -309,7 +309,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 8,
       "ack_requested": 0,
       "response_requested": 1,
@@ -328,7 +328,7 @@
    "replies": [
     {
      "t_ms": 13.92,
-     "hex": "26000014eeb19291d073d513bccd00004c4946585632010908f3b92ed6f4e71816000000ffff",
+     "hex": "26000014eeb19291d073d501020300004c4946585632010908f3b92ed6f4e71816000000ffff",
      "decoded": {
       "type": 22,
       "class": "StatePower",
@@ -338,7 +338,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 9,
       "ack_requested": 0,
       "response_requested": 1,
@@ -357,7 +357,7 @@
    "replies": [
     {
      "t_ms": 12.85,
-     "hex": "32000014eeb19291d073d513bccd00004c4946585632010a08adff47d6f4e7181100000096bfd633ae257509015a1646fe15",
+     "hex": "32000014eeb19291d073d501020300004c4946585632010a08adff47d6f4e7181100000096bfd633ae257509015a1646fe15",
      "decoded": {
       "type": 17,
       "class": "StateWifiInfo",
@@ -367,7 +367,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 10,
       "ack_requested": 0,
       "response_requested": 1,
@@ -389,7 +389,7 @@
    "replies": [
     {
      "t_ms": 7.8,
-     "hex": "38000014eeb19291d073d513bccd00004c4946585632010b085e0861d6f4e71813000000008882aa7d15351400000000000000003e006500",
+     "hex": "38000014eeb19291d073d501020300004c4946585632010b085e0861d6f4e71813000000008882aa7d15351400000000000000003e006500",
      "decoded": {
       "type": 19,
       "class": "StateWifiFirmware",
@@ -399,7 +399,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 11,
       "ack_requested": 0,
       "response_requested": 1,
@@ -420,7 +420,7 @@
    "replies": [
     {
      "t_ms": 15.69,
-     "hex": "32000014eeb19291d073d513bccd00004c4946585632010c08184e7ad6f4e7180d000000000000000000000000000000bf1c",
+     "hex": "32000014eeb19291d073d501020300004c4946585632010c08184e7ad6f4e7180d000000000000000000000000000000bf1c",
      "decoded": {
       "type": 13,
       "class": "StateHostInfo",
@@ -430,7 +430,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 12,
       "ack_requested": 0,
       "response_requested": 1,
@@ -452,7 +452,7 @@
    "replies": [
     {
      "t_ms": 10.27,
-     "hex": "3c000014eeb19291d073d513bccd00004c4946585632010d08c95693d6f4e7182300000008c95693d6f4e7188004a22611e903000000000000000000",
+     "hex": "3c000014eeb19291d073d501020300004c4946585632010d08c95693d6f4e7182300000008c95693d6f4e7188004a22611e903000000000000000000",
      "decoded": {
       "type": 35,
       "class": "StateInfo",
@@ -462,7 +462,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 13,
       "ack_requested": 0,
       "response_requested": 1,
@@ -492,7 +492,7 @@
    "replies": [
     {
      "t_ms": 5.81,
-     "hex": "24000014eeb19291d073d513bccd00004c4946585632010f08c9680dd7f4e7182d000000",
+     "hex": "24000014eeb19291d073d501020300004c4946585632010f08c9680dd7f4e7182d000000",
      "decoded": {
       "type": 45,
       "class": "Acknowledgement",
@@ -502,7 +502,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 15,
       "ack_requested": 0,
       "response_requested": 1
@@ -510,7 +510,7 @@
     },
     {
      "t_ms": 14.14,
-     "hex": "58000014eeb19291d073d513bccd00004c4946585632010f08dbe20dd7f4e7186b0000000000000099998c0a0000ffff4b69746368656e204c69676874000000000000000000000000000000000000000000000000000000",
+     "hex": "58000014eeb19291d073d501020300004c4946585632010f08dbe20dd7f4e7186b0000000000000099998c0a0000ffff4b69746368656e204c69676874000000000000000000000000000000000000000000000000000000",
      "decoded": {
       "type": 107,
       "class": "LightState",
@@ -520,7 +520,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 15,
       "ack_requested": 0,
       "response_requested": 1,
@@ -551,7 +551,7 @@
    "replies": [
     {
      "t_ms": 12.45,
-     "hex": "58000014eeb19291d073d513bccd00004c4946585632011008952827d7f4e7186b0000000000000099998c0a0000ffff4b69746368656e204c69676874000000000000000000000000000000000000000000000000000000",
+     "hex": "58000014eeb19291d073d501020300004c4946585632011008952827d7f4e7186b0000000000000099998c0a0000ffff4b69746368656e204c69676874000000000000000000000000000000000000000000000000000000",
      "decoded": {
       "type": 107,
       "class": "LightState",
@@ -561,7 +561,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 16,
       "ack_requested": 0,
       "response_requested": 1,
@@ -592,7 +592,7 @@
    "replies": [
     {
      "t_ms": 33.68,
-     "hex": "58000014eeb19291d073d513bccd00004c4946585632011108736241d7f4e7186b0000000000000099998c0a0000ffff4b69746368656e204c69676874000000000000000000000000000000000000000000000000000000",
+     "hex": "58000014eeb19291d073d501020300004c4946585632011108736241d7f4e7186b0000000000000099998c0a0000ffff4b69746368656e204c69676874000000000000000000000000000000000000000000000000000000",
      "decoded": {
       "type": 107,
       "class": "LightState",
@@ -602,7 +602,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 17,
       "ack_requested": 0,
       "response_requested": 1,
@@ -633,7 +633,7 @@
    "replies": [
     {
      "t_ms": 9.52,
-     "hex": "58000014eeb19291d073d513bccd00004c49465856320112082da85ad7f4e7186b0000000000000099998c0a0000ffff4b69746368656e204c69676874000000000000000000000000000000000000000000000000000000",
+     "hex": "58000014eeb19291d073d501020300004c49465856320112082da85ad7f4e7186b0000000000000099998c0a0000ffff4b69746368656e204c69676874000000000000000000000000000000000000000000000000000000",
      "decoded": {
       "type": 107,
       "class": "LightState",
@@ -643,7 +643,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 18,
       "ack_requested": 0,
       "response_requested": 1,
@@ -674,7 +674,7 @@
    "replies": [
     {
      "t_ms": 11.14,
-     "hex": "58000014eeb19291d073d513bccd00004c4946585632011308e7ed73d7f4e7186b0000000000000099998c0a0000ffff4b69746368656e204c69676874000000000000000000000000000000000000000000000000000000",
+     "hex": "58000014eeb19291d073d501020300004c4946585632011308e7ed73d7f4e7186b0000000000000099998c0a0000ffff4b69746368656e204c69676874000000000000000000000000000000000000000000000000000000",
      "decoded": {
       "type": 107,
       "class": "LightState",
@@ -684,7 +684,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 19,
       "ack_requested": 0,
       "response_requested": 1,
@@ -715,7 +715,7 @@
    "replies": [
     {
      "t_ms": 14.56,
-     "hex": "58000014eeb19291d073d513bccd00004c4946585632011408a1338dd7f4e7186b0000000000000099998c0a0000ffff4b69746368656e204c69676874000000000000000000000000000000000000000000000000000000",
+     "hex": "58000014eeb19291d073d501020300004c4946585632011408a1338dd7f4e7186b0000000000000099998c0a0000ffff4b69746368656e204c69676874000000000000000000000000000000000000000000000000000000",
      "decoded": {
       "type": 107,
       "class": "LightState",
@@ -725,7 +725,7 @@
       "addressable": 1,
       "protocol": 1024,
       "source_id": 2442310126,
-      "target_addr": "d0:73:d5:13:bc:cd",
+      "target_addr": "d0:73:d5:01:02:03",
       "seq_num": 20,
       "ack_requested": 0,
       "response_requested": 1,
@@ -747,5 +747,5 @@
    ]
   }
  ],
- "note": "Read-only Get queries to the real LIFX Color 1000 (fw 1.22, product 22). Decoded with aiolifx 1.2.1 unpack_lifx_message. Location/group UUIDs are random ids, not personal data."
+ "note": "Read-only Get queries to the real LIFX Color 1000 (fw 1.22, product 22). Decoded with aiolifx 1.2.1 unpack_lifx_message. The bulb's address, the host and the location/group UUIDs are replaced with fake ones."
 }

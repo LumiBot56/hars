@@ -11,17 +11,17 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "unknown",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
       "in_zones": [],
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -90,17 +90,17 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "unknown",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
       "in_zones": [],
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -155,11 +155,11 @@
       "context_user_id": null
      },
      {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "home",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
@@ -171,7 +171,7 @@
        "gps_accuracy": 5.0,
        "source": "device_tracker.phone",
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "context_user_id": null
      },
@@ -184,7 +184,7 @@
        "radius": 100,
        "passive": false,
        "persons": [
-        "person.adam"
+        "person.alex"
        ],
        "editable": true,
        "icon": "mdi:home",
@@ -216,11 +216,11 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
@@ -232,7 +232,7 @@
       "gps_accuracy": 5.0,
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -243,7 +243,7 @@
       "radius": 100,
       "passive": false,
       "persons": [
-       "person.adam"
+       "person.alex"
       ],
       "editable": true,
       "icon": "mdi:home",
@@ -283,11 +283,11 @@
       "context_user_id": null
      },
      {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "not_home",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
@@ -297,7 +297,7 @@
        "gps_accuracy": 10.0,
        "source": "device_tracker.phone",
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "context_user_id": null
      },
@@ -334,11 +334,11 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "not_home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
@@ -348,7 +348,7 @@
       "gps_accuracy": 10.0,
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -399,11 +399,11 @@
       "context_user_id": null
      },
      {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "home",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
@@ -415,7 +415,7 @@
        "gps_accuracy": 60.0,
        "source": "device_tracker.phone",
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "context_user_id": null
      },
@@ -428,7 +428,7 @@
        "radius": 100,
        "passive": false,
        "persons": [
-        "person.adam"
+        "person.alex"
        ],
        "editable": true,
        "icon": "mdi:home",
@@ -456,11 +456,11 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
@@ -472,7 +472,7 @@
       "gps_accuracy": 60.0,
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -483,7 +483,7 @@
       "radius": 100,
       "passive": false,
       "persons": [
-       "person.adam"
+       "person.alex"
       ],
       "editable": true,
       "icon": "mdi:home",
@@ -525,11 +525,11 @@
       "context_user_id": null
      },
      {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "home",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
@@ -541,7 +541,7 @@
        "gps_accuracy": 50.0,
        "source": "device_tracker.phone",
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "context_user_id": null
      }
@@ -565,11 +565,11 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
@@ -581,7 +581,7 @@
       "gps_accuracy": 50.0,
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -592,7 +592,7 @@
       "radius": 100,
       "passive": false,
       "persons": [
-       "person.adam"
+       "person.alex"
       ],
       "editable": true,
       "icon": "mdi:home",
@@ -631,11 +631,11 @@
       "context_user_id": null
      },
      {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "home",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
@@ -644,7 +644,7 @@
        ],
        "source": "device_tracker.phone",
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "context_user_id": null
      }
@@ -665,11 +665,11 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
@@ -678,7 +678,7 @@
       ],
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -689,7 +689,7 @@
       "radius": 100,
       "passive": false,
       "persons": [
-       "person.adam"
+       "person.alex"
       ],
       "editable": true,
       "icon": "mdi:home",
@@ -726,18 +726,18 @@
       "context_user_id": null
      },
      {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "not_home",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
        "in_zones": [],
        "source": "device_tracker.phone",
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "context_user_id": null
      },
@@ -771,18 +771,18 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "not_home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
       "in_zones": [],
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -840,18 +840,18 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "not_home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
       "in_zones": [],
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -896,18 +896,18 @@
       "context_user_id": null
      },
      {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "home",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
        "in_zones": [],
        "source": "device_tracker.phone",
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "context_user_id": null
      },
@@ -920,7 +920,7 @@
        "radius": 100,
        "passive": false,
        "persons": [
-        "person.adam"
+        "person.alex"
        ],
        "editable": true,
        "icon": "mdi:home",
@@ -942,18 +942,18 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
       "in_zones": [],
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -964,7 +964,7 @@
       "radius": 100,
       "passive": false,
       "persons": [
-       "person.adam"
+       "person.alex"
       ],
       "editable": true,
       "icon": "mdi:home",
@@ -1000,18 +1000,18 @@
       "context_user_id": null
      },
      {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "not_home",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
        "in_zones": [],
        "source": "device_tracker.phone",
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "context_user_id": null
      },
@@ -1044,18 +1044,18 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "not_home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
       "in_zones": [],
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -1100,18 +1100,18 @@
       "context_user_id": null
      },
      {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "Work",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
        "in_zones": [],
        "source": "device_tracker.phone",
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "context_user_id": null
      }
@@ -1129,18 +1129,18 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "Work",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
       "in_zones": [],
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -1188,11 +1188,11 @@
       "context_user_id": null
      },
      {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "home",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
@@ -1202,7 +1202,7 @@
        "gps_accuracy": 5.0,
        "source": "device_tracker.phone",
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "context_user_id": null
      },
@@ -1215,7 +1215,7 @@
        "radius": 100,
        "passive": false,
        "persons": [
-        "person.adam"
+        "person.alex"
        ],
        "editable": true,
        "icon": "mdi:home",
@@ -1240,11 +1240,11 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
@@ -1254,7 +1254,7 @@
       "gps_accuracy": 5.0,
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -1265,7 +1265,7 @@
       "radius": 100,
       "passive": false,
       "persons": [
-       "person.adam"
+       "person.alex"
       ],
       "editable": true,
       "icon": "mdi:home",
@@ -1307,11 +1307,11 @@
       "context_user_id": null
      },
      {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "home",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
@@ -1323,7 +1323,7 @@
        "gps_accuracy": 5.0,
        "source": "device_tracker.phone",
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "context_user_id": null
      }
@@ -1347,11 +1347,11 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
@@ -1363,7 +1363,7 @@
       "gps_accuracy": 5.0,
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -1374,7 +1374,7 @@
       "radius": 100,
       "passive": false,
       "persons": [
-       "person.adam"
+       "person.alex"
       ],
       "editable": true,
       "icon": "mdi:home",
@@ -1418,11 +1418,11 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
@@ -1434,7 +1434,7 @@
       "gps_accuracy": 5.0,
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -1445,7 +1445,7 @@
       "radius": 100,
       "passive": false,
       "persons": [
-       "person.adam"
+       "person.alex"
       ],
       "editable": true,
       "icon": "mdi:home",
@@ -1489,11 +1489,11 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
@@ -1505,7 +1505,7 @@
       "gps_accuracy": 5.0,
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -1516,7 +1516,7 @@
       "radius": 100,
       "passive": false,
       "persons": [
-       "person.adam"
+       "person.alex"
       ],
       "editable": true,
       "icon": "mdi:home",
@@ -1557,11 +1557,11 @@
       "context_user_id": null
      },
      {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "home",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
@@ -1573,7 +1573,7 @@
        "gps_accuracy": 0.0,
        "source": "device_tracker.phone",
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "context_user_id": null
      }
@@ -1596,11 +1596,11 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
@@ -1612,7 +1612,7 @@
       "gps_accuracy": 0.0,
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -1623,7 +1623,7 @@
       "radius": 100,
       "passive": false,
       "persons": [
-       "person.adam"
+       "person.alex"
       ],
       "editable": true,
       "icon": "mdi:home",
@@ -1675,17 +1675,17 @@
       "context_user_id": null
      },
      {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "unknown",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
        "in_zones": [],
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "context_user_id": null
      }
@@ -1704,17 +1704,17 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "unknown",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
       "in_zones": [],
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -1762,17 +1762,17 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "unknown",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
       "in_zones": [],
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -1830,17 +1830,17 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "unknown",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
       "in_zones": [],
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -1891,11 +1891,11 @@
       "context_user_id": null
      },
      {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "home",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
@@ -1907,7 +1907,7 @@
        "gps_accuracy": 5.0,
        "source": "device_tracker.phone",
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "context_user_id": null
      },
@@ -1920,7 +1920,7 @@
        "radius": 100,
        "passive": false,
        "persons": [
-        "person.adam"
+        "person.alex"
        ],
        "editable": true,
        "icon": "mdi:home",
@@ -1948,11 +1948,11 @@
       "friendly_name": " Phone"
      }
     },
-    "person.adam": {
+    "person.alex": {
      "state": "home",
      "attributes": {
       "editable": true,
-      "id": "adam",
+      "id": "alex",
       "device_trackers": [
        "device_tracker.phone"
       ],
@@ -1964,7 +1964,7 @@
       "gps_accuracy": 5.0,
       "source": "device_tracker.phone",
       "user_id": "00112233445566778899aabbccddeeff",
-      "friendly_name": "adam"
+      "friendly_name": "alex"
      }
     },
     "zone.home": {
@@ -1975,7 +1975,7 @@
       "radius": 100,
       "passive": false,
       "persons": [
-       "person.adam"
+       "person.alex"
       ],
       "editable": true,
       "icon": "mdi:home",
@@ -1988,11 +1988,11 @@
    "restore_rows": [
     {
      "state": {
-      "entity_id": "person.adam",
+      "entity_id": "person.alex",
       "state": "home",
       "attributes": {
        "editable": true,
-       "id": "adam",
+       "id": "alex",
        "device_trackers": [
         "device_tracker.phone"
        ],
@@ -2004,7 +2004,7 @@
        "gps_accuracy": 5.0,
        "source": "device_tracker.phone",
        "user_id": "00112233445566778899aabbccddeeff",
-       "friendly_name": "adam"
+       "friendly_name": "alex"
       },
       "last_changed": "2026-11-14T19:56:33.184169+00:00",
       "last_reported": "2026-11-14T19:56:33.184169+00:00",

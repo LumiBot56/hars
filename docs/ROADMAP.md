@@ -110,7 +110,9 @@ data: about 20.7k state rows, 1,128 `automation_triggered` and 1,387
    the script that ran HA in `scripts/vectors/` so it can be remade (see its
    README); the sets made before that rule are the backlog item below.
 
-Fixtures are sanitised (no tokens, coordinates rounded) before they are committed.
+Fixtures are sanitised before they are committed: no tokens, and hardware
+ids, addresses, names and coordinates replaced with fake ones
+([the list](../scripts/vectors/README.md#sanitising-a-fixture)).
 
 - [ ] Generators for every legacy vector set and inline HA/Python expectation,
       plus extractors for the compatibility tables without one (sensor units,

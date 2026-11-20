@@ -135,7 +135,7 @@ impl Client {
 fn token(auth: &Auth) -> (String, String) {
     const CLIENT: &str = "http://127.0.0.1:8123/";
     let flow = auth.start_login_flow(CLIENT, None);
-    let user = auth.check_password("adam", "secret").unwrap();
+    let user = auth.check_password("alex", "secret").unwrap();
     let code = auth.finish_login_flow(&flow, CLIENT, &user, None).unwrap();
     let t = auth.exchange_code(Some(CLIENT), Some(&code), None).unwrap();
     (t.access_token, t.refresh_token.unwrap())
@@ -314,7 +314,7 @@ async fn startup_commands_have_has_shapes() {
     }
 
     let me = c.call(json!({"id": 4, "type": "auth/current_user"})).await["result"].clone();
-    assert_eq!(me["name"], "adam");
+    assert_eq!(me["name"], "alex");
     assert_eq!(
         (me["is_owner"].clone(), me["is_admin"].clone()),
         (json!(true), json!(true))
@@ -1600,7 +1600,7 @@ async fn subscribe_entities_include_exclude_filters() {
     let s = server().await;
     for id in [
         "zone.home",
-        "person.adam",
+        "person.alex",
         "sensor.phone_battery_level",
         "sensor.x",
         "binary_sensor.phone_kiosk_mode",
@@ -1625,7 +1625,7 @@ async fn subscribe_entities_include_exclude_filters() {
                      "include": {"domains": ["zone", "person"]}}))
         .await;
     assert_eq!(r["success"], true);
-    assert_eq!(keys(&c.recv().await), ["person.adam", "zone.home"]);
+    assert_eq!(keys(&c.recv().await), ["person.alex", "zone.home"]);
 
     let r = c
         .call(json!({"id": 7, "type": "subscribe_entities", "include": {"domains": "zone"}}))
@@ -1644,7 +1644,7 @@ async fn subscribe_entities_include_exclude_filters() {
         keys(&c.recv().await),
         [
             "binary_sensor.phone_kiosk_mode",
-            "person.adam",
+            "person.alex",
             "sensor.phone_battery_level",
             "zone.home"
         ]
