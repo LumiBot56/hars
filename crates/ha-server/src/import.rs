@@ -6,24 +6,31 @@
 //! `jwt_key`s) arrive unchanged, and the browser and phone sessions logged in
 //! to HA keep working. Everything else is listed in `import-report.json`.
 //!
-//! Which releases: the rule starts from Home Assistant's own for a
-//! downgrade, and is stricter where `hars` could not keep the data. `hars`
-//! behaves like one pinned release ([`PINNED_HA`]) and imports a directory
-//! from 2026.6 or later as long as no store `hars` reads has a newer major
-//! storage version (`helpers/storage.py` raises
-//! `UnsupportedStorageVersionError`; for a store its bootstrap loads, HA
-//! then starts in recovery mode) and no integration `hars` runs has a
-//! config entry of a newer version (`ConfigEntry.async_migrate`:
-//! `migration_error`). Such a directory is
-//! refused whole, with the store and versions named. A newer *minor*
+//! Which releases: `hars` behaves like one pinned release ([`PINNED_HA`])
+//! and reads and writes only that release's storage formats. A store or a
+//! config entry that Home Assistant 2026.8 to 2026.11 writes in a newer
+//! form is first turned back into that form ([`convert`], in the staged
+//! copy; the rules go by storage version). After that the rule starts from
+//! Home Assistant's own for a downgrade, and is stricter where `hars` could
+//! not keep the data: a store `hars` reads with a newer major storage
+//! version (`helpers/storage.py` raises `UnsupportedStorageVersionError`;
+//! for a store its bootstrap loads, HA then starts in recovery mode), or a
+//! config entry of a newer version for an integration `hars` runs
+//! (`ConfigEntry.async_migrate`: `migration_error`), refuses the directory
+//! whole, with the store and versions named. A newer *minor*
 //! version is compatible by HA's rule and is read where `hars`'s own
 //! reader and writer make that safe ([`Minor`] says which stores); the
 //! rest are refused too. `tests/vectors/import/downgrade.json` is what
 //! 2026.6.1's base bootstrap (registries, config entries, restore state)
-//! did with each fixture; [`TESTED_HA`] lists the releases with one.
+//! did with each fixture, unconverted; [`TESTED_HA`] lists the releases
+//! with one.
 //!
 //! The source directory is only read. Give it a consistent copy, taken with
 //! HA stopped (or a backup), not a live directory HA is writing to.
+
+mod convert;
+
+pub use convert::{ConvertedEntry, ConvertedStore, Dropped, ParentDevice, SplitDevice};
 
 use anyhow::{Context, bail};
 use ha_core::storage::Store;
@@ -32,7 +39,7 @@ use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
 /// Bumped whenever what the importer does changes.
-pub const IMPORTER_VERSION: u32 = 3;
+pub const IMPORTER_VERSION: u32 = 4;
 /// The Home Assistant release `hars` behaves like, whichever release the
 /// files come from (docs/ARCHITECTURE.md, "Home Assistant compatibility").
 pub const PINNED_HA: &str = "2026.6.1";
@@ -43,7 +50,14 @@ const OLDEST_HA: (u32, u32) = (2026, 6);
 /// each, `tests/vectors/import/` holds a config directory made by that
 /// release's own code (`scripts/vectors/import_releases.py`). This is the
 /// one place the list lives; the messages and the report read it.
-pub const TESTED_HA: &[(u32, u32)] = &[(2026, 6), (2026, 7)];
+pub const TESTED_HA: &[(u32, u32)] = &[
+    (2026, 6),
+    (2026, 7),
+    (2026, 8),
+    (2026, 9),
+    (2026, 10),
+    (2026, 11),
+];
 const REPORT_FILE: &str = "import-report.json";
 /// Where a commit keeps the destination's previous files until it's done.
 const BACKUP_DIR: &str = ".import-backup";
@@ -138,13 +152,33 @@ pub struct Report {
     /// 2026.6.1 would read them, and written back at `hars_writes`,
     /// without what 2026.6.1 doesn't know, the next time they change.
     pub newer_stores: Vec<NewerStore>,
+    /// Stores Home Assistant 2026.8 or later wrote in a newer form, which
+    /// were put back into the form `hars` reads and writes before they
+    /// were checked and copied.
+    pub converted: Vec<ConvertedStore>,
+    /// Config entries brought back to the version `hars` runs.
+    pub converted_entries: Vec<ConvertedEntry>,
+    /// What the older form has no place for, left out.
+    pub dropped: Vec<Dropped>,
+    /// Devices Home Assistant 2026.8 split by integration, with the files
+    /// that still use the old id.
+    pub split_devices: Vec<SplitDevice>,
+    /// Devices with child devices (2026.9) that a YAML file or dashboard
+    /// names by id: there Home Assistant reaches the children's entities
+    /// through the parent, and `hars` doesn't.
+    pub parent_devices: Vec<ParentDevice>,
+    /// What is still in a newer release's form, there being no way to
+    /// tell what the older form would hold.
+    pub not_converted: Vec<Dropped>,
     pub dry_run: bool,
     /// Stores copied (or that would be, in a dry run).
     pub imported: Vec<String>,
     /// Of those, the ones that replaced a different copy in the destination.
     pub replaced: Vec<String>,
     /// Supported stores the destination had and the source doesn't: removed,
-    /// so the destination matches the source.
+    /// so the destination matches the source. And YAML files (by their
+    /// path) the destination had in a directory the imported configuration
+    /// includes whole (`!include_dir_*`) and the source doesn't.
     pub removed: Vec<String>,
     /// Stores left behind, and why.
     pub skipped: Vec<Skipped>,
@@ -182,10 +216,23 @@ pub struct EntryReport {
 pub fn run(opts: &Options) -> anyhow::Result<Report> {
     let source = std::fs::canonicalize(&opts.source)
         .with_context(|| format!("reading {}", opts.source.display()))?;
-    std::fs::create_dir_all(&opts.dest)?;
-    let dest = std::fs::canonicalize(&opts.dest)?;
-    if dest == source {
-        bail!("the source and destination are the same directory");
+    // Before the destination is made: inside the source it would be
+    // a directory written into the folder the import only reads.
+    // It is then made at that resolved path, not the one given: making
+    // `source/new/../../dest` part by part would make `source/new`.
+    let planned = planned_path(&opts.dest)?;
+    if planned.starts_with(&source) {
+        bail!("the destination is inside the source, or is the source; use a directory outside it");
+    }
+    // And by what the directories are, not only what they are called: one
+    // directory mounted in two places has two paths.
+    if let Some(overlap) = overlap(&source, &planned, file_id) {
+        bail!("{overlap}");
+    }
+    std::fs::create_dir_all(&planned)?;
+    let dest = std::fs::canonicalize(&planned)?;
+    if dest.starts_with(&source) {
+        bail!("the destination is inside the source, or is the source; use a directory outside it");
     }
     // The import stages, backs up and replaces files under the destination.
     if source.starts_with(&dest) {
@@ -215,6 +262,12 @@ pub fn run(opts: &Options) -> anyhow::Result<Report> {
         ha_version,
         behaves_like: PINNED_HA,
         newer_stores: Vec::new(),
+        converted: Vec::new(),
+        converted_entries: Vec::new(),
+        dropped: Vec::new(),
+        split_devices: Vec::new(),
+        parent_devices: Vec::new(),
+        not_converted: Vec::new(),
         dry_run: opts.dry_run,
         imported: Vec::new(),
         replaced: Vec::new(),
@@ -274,11 +327,29 @@ pub fn run(opts: &Options) -> anyhow::Result<Report> {
             bail!("{key} in the source is not a regular file (a symlink?); copy the real file");
         }
         let bytes = std::fs::read(source.join(".storage").join(&key))?;
-        Store::new(&staging.root, key.clone(), 1, 1, private).save_raw(&bytes)?;
+        let mode = if private { 0o600 } else { 0o644 };
+        staging.put(&Path::new(".storage").join(&key), &bytes, mode)?;
     }
 
-    // 1a. Before anything is loaded: a store, or a config entry, from a
-    //     newer Home Assistant than hars can read refuses the whole import.
+    // 1a. Before anything is loaded: what Home Assistant 2026.8 to 2026.11
+    //     store in a newer form goes back to 2026.6.1's, in the staged
+    //     copy. Then a store, or a config entry, still newer than hars can
+    //     read refuses the whole import.
+    let converted = convert::run(&staging.root, &report.ha_version)?;
+    report.converted = converted.stores;
+    report.converted_entries = converted.entries;
+    report.dropped = converted.dropped;
+    report.split_devices = converted.split_devices;
+    report.parent_devices = converted.parent_devices;
+    report.not_converted = converted.not_converted;
+    // An action on a label reaches a labelled device's children from
+    // 2026.10 (`helpers/target.py`; 2026.9 keeps a label to the devices
+    // that have it), so before that there is nothing to say of labels.
+    if release_line(&report.ha_version).is_some_and(|line| line < (2026, 10)) {
+        for parent in &mut report.parent_devices {
+            parent.labels.clear();
+        }
+    }
     report.newer_stores = check_store_versions(&staging, &report.ha_version)?;
     let entries = load_entries(&staging.root)?;
     check_entry_versions(&entries, &report.ha_version)?;
@@ -287,23 +358,29 @@ pub fn run(opts: &Options) -> anyhow::Result<Report> {
     // 1b. The YAML configuration, staged byte for byte with its mode bits
     //     (`secrets.yaml` owner-only).
     let mut secret_values = Vec::new();
+    // The directories an `!include_dir_*` tag reads, whole.
+    let mut include_dirs = Vec::new();
     if source.join("configuration.yaml").is_file() {
-        (report.yaml, secret_values) = yaml_files(&source)?;
+        (report.yaml, secret_values, include_dirs) = yaml_files(&source)?;
         for rel in &report.yaml {
             check_path(&dest, Path::new(rel), false)?;
         }
     }
     for rel in &report.yaml {
-        let to = staging.root.join(rel);
-        if let Some(d) = to.parent() {
-            std::fs::create_dir_all(d)?;
-        }
-        std::fs::copy(source.join(rel), &to)?;
+        let from = source.join(rel);
         #[cfg(unix)]
-        if rel.ends_with("secrets.yaml") {
+        let mode = {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o600))?;
-        }
+            std::fs::metadata(&from)?.permissions().mode() & 0o777
+        };
+        #[cfg(not(unix))]
+        let mode = 0o644;
+        let mode = if rel.ends_with("secrets.yaml") {
+            0o600
+        } else {
+            mode
+        };
+        staging.put(Path::new(rel), &std::fs::read(&from)?, mode)?;
     }
 
     // 2. Validate the staged copy with the loaders the server uses. Auth and
@@ -354,6 +431,29 @@ pub fn run(opts: &Options) -> anyhow::Result<Report> {
                         redact(&e.to_string(), &secret_values)
                     )
                 })?;
+        // The device ids that mean something else in hars than in the
+        // Home Assistant the files come from, and what to say of each.
+        let changed_ids: Vec<(&str, String)> = report
+            .split_devices
+            .iter()
+            .map(|s| {
+                let why = format!(
+                    "it names a device by the id {}, which Home Assistant 2026.8 replaced \
+                     with {}: in hars the id reaches no device",
+                    s.old_id,
+                    s.new_ids.join(" and ")
+                );
+                (s.old_id.as_str(), why)
+            })
+            .chain(report.parent_devices.iter().map(|p| {
+                let why = format!(
+                    "it names the device {}, which has child devices: Home Assistant 2026.9 \
+                     and later reach their entities through it, hars only its own",
+                    p.id
+                );
+                (p.id.as_str(), why)
+            }))
+            .collect();
         for item in ha_automation::from_config(&config) {
             // Secret values never reach the report or the terminal.
             let text = |k: &str| {
@@ -362,14 +462,88 @@ pub fn run(opts: &Options) -> anyhow::Result<Report> {
                     .map(|v| redact(v, &secret_values))
             };
             let parsed = ha_automation::config::parse(&item);
+            // As loaded, so however the YAML spells the id.
+            let loaded = item.to_string();
+            let mut warnings: Vec<&str> = changed_ids
+                .iter()
+                .filter(|(id, _)| loaded.contains(id))
+                .map(|(_, why)| why.as_str())
+                .collect();
+            if excludes(&item) {
+                warnings.push(
+                    "a target in it has `exclude` (Home Assistant 2026.11), which hars doesn't \
+                     have: that action fails when it runs",
+                );
+            }
             report.automations.push(AutomationReport {
                 id: text("id"),
                 alias: text("alias"),
                 status: if parsed.is_ok() { "ok" } else { "unavailable" },
                 reason: parsed.err().map(|e| redact(&e, &secret_values)),
+                warning: (!warnings.is_empty()).then(|| warnings.join("; ")),
             });
         }
+        // Where else such an id is used: each YAML file by its text, and
+        // the configuration as loaded (which reads an id however it is
+        // spelt) when no file's text shows it.
+        let loaded = config.to_json().to_string();
+        let files: Vec<(String, String)> = report
+            .yaml
+            .iter()
+            .filter(|rel| !rel.ends_with("secrets.yaml"))
+            .filter_map(|rel| {
+                let text = std::fs::read_to_string(staging.root.join(rel)).ok()?;
+                Some((rel.clone(), text))
+            })
+            .collect();
+        let yaml_uses = |id: &str| -> Vec<String> {
+            // In a comment only: not a use.
+            if !loaded.contains(id) {
+                return Vec::new();
+            }
+            let mut found: Vec<String> = files
+                .iter()
+                .filter(|(_, text)| text.contains(id))
+                .map(|(rel, _)| rel.clone())
+                .collect();
+            if found.is_empty() {
+                found.push("configuration.yaml or a file it includes".into());
+            }
+            found
+        };
+        for split in &mut report.split_devices {
+            split.used_in = yaml_uses(&split.old_id);
+        }
+        for parent in &mut report.parent_devices {
+            parent.used_in = yaml_uses(&parent.id);
+        }
     }
+    // And the dashboards, as loaded.
+    for key in staging.keys()? {
+        if !ha_api::Lovelace::is_store(&key) {
+            continue;
+        }
+        let store = Store::new(&staging.root, key.clone(), 1, 1, false);
+        let Ok(Some(dashboard)) = store.load::<Value>() else {
+            continue;
+        };
+        let loaded = dashboard.to_string();
+        for split in &mut report.split_devices {
+            if loaded.contains(&split.old_id) {
+                split.used_in.push(format!(".storage/{key}"));
+            }
+        }
+        for parent in &mut report.parent_devices {
+            if loaded.contains(&parent.id) {
+                parent.used_in.push(format!(".storage/{key}"));
+            }
+        }
+    }
+    // A parent nothing names by id, and with no label an action could
+    // name, needs no mention.
+    report
+        .parent_devices
+        .retain(|p| !p.used_in.is_empty() || !p.labels.is_empty());
     for key in staging.keys()? {
         if key == "frontend.system_data" || key.starts_with(USER_DATA_PREFIX) {
             let store = Store::new(&staging.root, key.clone(), 1, 1, false);
@@ -388,6 +562,18 @@ pub fn run(opts: &Options) -> anyhow::Result<Report> {
     //    staged ones. A store the source doesn't have is removed, since a
     //    missing store means defaults (no users, not onboarded).
     let staged = staging.keys()?;
+    // The plan compares names, so first every name it will use must be the
+    // name the destination's file system has for that file: one that is
+    // there under another spelling (`AUTH` for `auth`, where case doesn't
+    // count) would be replaced without being seen as there, or put and
+    // removed in one import.
+    let stores = STORES.iter().map(|(key, ..)| (*key).to_owned());
+    for key in staged.iter().cloned().chain(stores) {
+        exact_name(&dest, &Path::new(".storage").join(key))?;
+    }
+    for rel in &report.yaml {
+        exact_name(&dest, Path::new(rel))?;
+    }
     let mut in_dest: Vec<String> = Vec::new();
     for (key, kind) in storage_keys(&dest)? {
         if supported(&key).is_some() {
@@ -417,6 +603,26 @@ pub fn run(opts: &Options) -> anyhow::Result<Report> {
             report.replaced.push(rel.clone());
         }
     }
+    // A directory the configuration includes whole is loaded whole: a
+    // file the destination has there and the import doesn't bring would
+    // be loaded beside the imported ones at the next start (an old
+    // automation, running again). Like a store the source doesn't have,
+    // it is removed, which needs `--force`.
+    let removed_stores = report.removed.clone();
+    let mut stale_yaml = Vec::new();
+    for dir in &include_dirs {
+        for file in ha_core::yaml::dir_files(&dest.join(dir)) {
+            let Ok(rel) = file.strip_prefix(&dest) else {
+                continue;
+            };
+            let name = rel.to_string_lossy().into_owned();
+            if !report.yaml.contains(&name) && !stale_yaml.contains(&name) {
+                check_path(&dest, rel, false)?;
+                stale_yaml.push(name);
+            }
+        }
+    }
+    report.removed.extend(stale_yaml.iter().cloned());
     report.imported = staged.clone();
     if !opts.force && !opts.dry_run && !(report.replaced.is_empty() && report.removed.is_empty()) {
         let mut changed = report.replaced.clone();
@@ -439,13 +645,26 @@ pub fn run(opts: &Options) -> anyhow::Result<Report> {
         }
     }
     changes.extend(
-        report
-            .removed
+        removed_stores
             .iter()
             .map(|k| Change::Remove(format!(".storage/{k}"))),
     );
+    changes.extend(stale_yaml.iter().cloned().map(Change::Remove));
     for rel in &report.yaml {
-        if std::fs::read(dest.join(rel)).ok() != std::fs::read(staging.root.join(rel)).ok() {
+        // A secrets file is owner-only even when its bytes didn't change:
+        // then too it is replaced by the staged one, in the commit, where
+        // a failure is rolled back. (Not changed in place: the file there
+        // may be a hard link to another, the source's even.)
+        #[cfg(unix)]
+        let loose = rel.ends_with("secrets.yaml")
+            && std::fs::metadata(dest.join(rel)).is_ok_and(|m| {
+                use std::os::unix::fs::PermissionsExt;
+                m.permissions().mode() & 0o777 != 0o600
+            });
+        #[cfg(not(unix))]
+        let loose = false;
+        if loose || std::fs::read(dest.join(rel)).ok() != std::fs::read(staging.root.join(rel)).ok()
+        {
             changes.push(Change::Put(rel.clone()));
         }
     }
@@ -453,26 +672,156 @@ pub fn run(opts: &Options) -> anyhow::Result<Report> {
         std::fs::rename(from, to)
     })?;
 
-    // A secrets file is owner-only even when its bytes didn't change.
-    #[cfg(unix)]
-    for rel in report.yaml.iter().filter(|r| r.ends_with("secrets.yaml")) {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(dest.join(rel), std::fs::Permissions::from_mode(0o600))?;
-    }
     let json = serde_json::to_vec_pretty(&report)?;
     // A new file, made in the staging directory (this run's own) and
     // renamed into place: never a half-written report, and nothing
     // written through, or over, a file that was already there.
     let staged = staging.root.join(REPORT_FILE);
-    std::fs::write(&staged, json)
-        .and_then(|()| std::fs::rename(&staged, dest.join(REPORT_FILE)))
-        .with_context(|| {
+    let written = std::fs::write(&staged, json)
+        .and_then(|()| std::fs::rename(&staged, dest.join(REPORT_FILE)));
+    if let Err(e) = written {
+        // The files are in place and can't be taken back now: what the
+        // report would have said is said here.
+        let said = summary(&report, &dest);
+        let said: Vec<&str> = said
+            .lines()
+            .filter(|l| !l.starts_with("Report: "))
+            .collect();
+        println!("{}", said.join("\n"));
+        return Err(e).with_context(|| {
             format!(
-                "everything was imported, but {REPORT_FILE} could not be written in {}",
+                "everything above was imported, but {REPORT_FILE} could not be written in {}",
                 dest.display()
             )
-        })?;
+        });
+    }
     Ok(report)
+}
+
+/// Whether a `target` anywhere in an automation has `exclude`, which
+/// 2026.11 added (`helpers/target.py`) and 2026.6.1's service schemas
+/// reject.
+fn excludes(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => map.iter().any(|(key, inner)| {
+            (key == "target" && inner.get("exclude").is_some()) || excludes(inner)
+        }),
+        Value::Array(items) => items.iter().any(excludes),
+        _ => false,
+    }
+}
+
+/// Whether the source and the place the destination will be are one
+/// directory, or one is inside the other, going by what each directory is
+/// to its file system (`id`) and not by its path: the same directory
+/// mounted twice (two bind mounts, say) has two paths that share nothing.
+/// Checked before anything is made. The paths are absolute.
+fn overlap<Id: PartialEq>(
+    source: &Path,
+    planned: &Path,
+    id: impl Fn(&Path) -> Option<Id>,
+) -> Option<&'static str> {
+    let source_id = id(source)?;
+    // The destination, or the nearest directory above it that exists, and
+    // every directory above that.
+    if planned.ancestors().filter_map(&id).any(|a| a == source_id) {
+        return Some(
+            "the destination is inside the source, or is the source (the same directory under \
+             another path); use a directory outside it",
+        );
+    }
+    let dest_id = id(planned)?;
+    if source.ancestors().filter_map(&id).any(|a| a == dest_id) {
+        return Some(
+            "the source is inside the destination (the same directory under another path); \
+             copy it somewhere else first",
+        );
+    }
+    None
+}
+
+/// Whether a name is one the file system has under another spelling: it
+/// finds a file by it, and the directory doesn't list it.
+fn is_alias(listed: &[std::ffi::OsString], name: &std::ffi::OsStr, found: bool) -> bool {
+    found && !listed.iter().any(|l| l == name)
+}
+
+/// Each part of `rel` that exists under `root` must be listed there by
+/// exactly that name. Asked of the file system, which alone knows the
+/// names it folds; the import stops at one it would otherwise take for
+/// another file.
+fn exact_name(root: &Path, rel: &Path) -> anyhow::Result<()> {
+    let mut at = root.to_path_buf();
+    for part in rel.components() {
+        let dir = at.clone();
+        at.push(part);
+        let found = std::fs::symlink_metadata(&at).is_ok();
+        if !found {
+            return Ok(());
+        }
+        let listed: Vec<std::ffi::OsString> = std::fs::read_dir(&dir)
+            .with_context(|| format!("listing {}", dir.display()))?
+            .filter_map(|e| Some(e.ok()?.file_name()))
+            .collect();
+        if is_alias(&listed, part.as_os_str(), found) {
+            let theirs = listed
+                .iter()
+                .find(|l| same_file(&dir.join(l), &at))
+                .map_or("a file of another name".into(), |l| {
+                    l.to_string_lossy().into_owned()
+                });
+            bail!(
+                "{theirs} in {} and {}, which the import brings or hars reads, are one file \
+                 there: its file system takes the two names for the same. Rename or remove \
+                 {theirs}, then import again. Nothing was imported",
+                dir.display(),
+                rel.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Whether two paths are the same file or directory to the file system,
+/// whatever they are called: the same device and inode. (Elsewhere than
+/// Unix, the same resolved path.)
+fn same_file(a: &Path, b: &Path) -> bool {
+    file_id(a).is_some_and(|id| Some(id) == file_id(b))
+}
+
+/// What a file is to its file system, links followed: device and inode.
+#[cfg(unix)]
+fn file_id(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.dev(), meta.ino()))
+}
+
+#[cfg(not(unix))]
+fn file_id(path: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(path).ok()
+}
+
+/// Where a path that may not exist yet will be: absolute, each part that
+/// exists resolved (symlinks), and a `..` taken off what is before it, as
+/// the system takes it once the directories are made.
+fn planned_path(path: &Path) -> std::io::Result<PathBuf> {
+    let mut out = PathBuf::new();
+    for part in std::path::absolute(path)?.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            part => {
+                out.push(part);
+                if let Ok(real) = std::fs::canonicalize(&out) {
+                    out = real;
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Whether `hars` reads a store, and whether it is written owner-only.
@@ -527,10 +876,10 @@ fn newest_tested() -> (u32, u32) {
     *TESTED_HA.last().expect("a tested release")
 }
 
-/// `2026.6 and 2026.7`.
+/// `2026.6 to 2026.11`.
 fn importable() -> String {
-    let names: Vec<String> = TESTED_HA.iter().map(|&l| line_name(l)).collect();
-    names.join(" and ")
+    let first = *TESTED_HA.first().expect("a tested release");
+    format!("{} to {}", line_name(first), line_name(newest_tested()))
 }
 
 /// Every staged store's storage version against the one `hars` reads. A
@@ -564,17 +913,7 @@ fn check_store_versions(staging: &Staging, ha_version: &str) -> anyhow::Result<V
         }
         if found.1 < reads.1 {
             if minor == Minor::Exact {
-                bail!(
-                    "{key} is storage version {}.{}, older than the {}.{} hars reads and \
-                     writes: Home Assistant brings it up to date when it starts. Start \
-                     Home Assistant {} on this config directory once, then copy it again. \
-                     Nothing was imported",
-                    found.0,
-                    found.1,
-                    reads.0,
-                    reads.1,
-                    importable().replace(" and ", " or ")
-                );
+                bail!("{}", too_old(&key, found, reads));
             }
             continue;
         }
@@ -594,44 +933,77 @@ fn check_store_versions(staging: &Staging, ha_version: &str) -> anyhow::Result<V
 fn too_new(key: &str, found: (u32, u32), reads: (u32, u32), ha_version: &str) -> String {
     let mut text = format!(
         "{key} is storage version {}.{}, in a config directory of Home Assistant \
-         {ha_version}; hars reads version {}.{}, as Home Assistant {PINNED_HA} does. ",
+         {ha_version}; hars reads version {}.{}, as Home Assistant {PINNED_HA} does",
         found.0, found.1, reads.0, reads.1
     );
-    if key == ha_registry::DEVICE_KEY && found.0 >= 3 {
+    if key == ha_registry::DEVICE_KEY {
         text.push_str(
-            "Home Assistant 2026.8 and later keep each device under one config entry \
-             (storage version 3), which hars can't read yet. ",
+            ", and converts versions 3.2 and 3.4 to it (Home Assistant 2026.8 to 2026.11)",
+        );
+    } else if key == ha_registry::ENTITY_KEY {
+        text.push_str(
+            ", and converts versions 1.23 and 1.24 to it (Home Assistant 2026.8 to 2026.11)",
         );
     }
+    text.push_str(". ");
     text.push_str(&cannot_import());
     text
+}
+
+/// Why a registry or the config entries at an older minor version stop the
+/// import ([`Minor::Exact`]).
+fn too_old(key: &str, found: (u32, u32), reads: (u32, u32)) -> String {
+    format!(
+        "{key} is storage version {}.{}, older than the {}.{} hars reads and writes: Home \
+         Assistant brings it up to date when it starts. Start Home Assistant {} on this \
+         config directory once, then copy it again. Nothing was imported",
+        found.0,
+        found.1,
+        reads.0,
+        reads.1,
+        importable()
+    )
 }
 
 /// What to do about a directory from too new a release.
 fn cannot_import() -> String {
     format!(
-        "hars imports Home Assistant {}: import a copy or backup of this config directory \
-         made before it was updated past {}. Nothing was imported",
-        importable(),
-        line_name(newest_tested())
+        "hars imports Home Assistant {}, and none of those releases writes this: import a \
+         copy or backup of this config directory made while it ran one of them. Nothing was \
+         imported",
+        importable()
     )
 }
 
 /// `ConfigEntry.async_migrate`: an entry of an integration `hars` runs,
-/// written by a newer version of its config flow (2026.10 migrates `lifx`
-/// and 2026.11 `met` to version 2), can't be set up. A disabled or ignored
-/// one is refused as well, which is stricter than HA (it only migrates an
-/// entry it sets up): enabling it later would otherwise run it.
+/// written by a newer version of its config flow, can't be set up. The
+/// ones with a rule (`lifx` and `met` at 2.1, from 2026.10 and 2026.11)
+/// are back at version 1 by now ([`convert`]); any other is refused, and so
+/// is a minor version later than the ones the fixtures hold. A
+/// disabled or ignored one is refused as well, which is stricter than HA
+/// (it only migrates an entry it sets up): enabling it later would
+/// otherwise run it.
 fn check_entry_versions(entries: &[Map<String, Value>], ha_version: &str) -> anyhow::Result<()> {
     for e in entries {
         let domain = e.get("domain").and_then(Value::as_str).unwrap_or_default();
-        if runs(domain) && ha_integrations::entry_too_new(e) {
+        // A newer minor version is compatible by Home Assistant's rule, and
+        // hars runs one. The import takes the ones it has seen (`hue` 1.2,
+        // from 2026.10), not ones no fixture holds.
+        let seen = if domain == ha_integrations::hue::DOMAIN {
+            2
+        } else {
+            1
+        };
+        let minor = e.get("minor_version").and_then(Value::as_u64).unwrap_or(1);
+        if runs(domain) && (ha_integrations::entry_too_new(e) || minor > seen) {
             bail!(
-                "the {domain} integration's config entry {:?} is version {}, in a config \
+                "the {domain} integration's config entry {:?} is version {}.{}, in a config \
                  directory of Home Assistant {ha_version}; hars runs version {} of it, as \
-                 Home Assistant {PINNED_HA} does. {}",
+                 Home Assistant {PINNED_HA} does, and has no rule to bring this one back to \
+                 it. {}",
                 e.get("title").and_then(Value::as_str).unwrap_or_default(),
                 e.get("version").cloned().unwrap_or_default(),
+                e.get("minor_version").and_then(Value::as_u64).unwrap_or(1),
                 ha_integrations::ENTRY_VERSION,
                 cannot_import()
             );
@@ -677,9 +1049,18 @@ fn sanitized(e: &ha_core::storage::StoreError) -> String {
 /// was killed, another one running, or someone's files) is never cleared.
 struct Staging {
     root: PathBuf,
+    /// Every directory and file staged, by the relative path asked for.
+    staged: std::cell::RefCell<std::collections::HashSet<PathBuf>>,
 }
 
+/// The names in a config directory the importer keeps for itself.
+const RESERVED: [&str; 4] = [".storage", ".import-staging", BACKUP_DIR, REPORT_FILE];
+
 impl Staging {
+    /// The staging directory, with every reserved name taken in it: the
+    /// staging directory is on the destination's file system, so what that
+    /// file system takes for one of those names (in another case, or in
+    /// some other spelling it folds) can't be staged beside it.
     fn new(dest: &Path) -> anyhow::Result<Self> {
         let root = dest.join(".import-staging");
         std::fs::create_dir(&root).map_err(|e| match e.kind() {
@@ -690,9 +1071,89 @@ impl Staging {
             ),
             _ => anyhow::Error::from(e).context(format!("making {}", root.display())),
         })?;
-        let staging = Self { root };
-        std::fs::create_dir(staging.root.join(".storage"))?;
+        let staging = Self {
+            root,
+            staged: Default::default(),
+        };
+        for name in RESERVED {
+            if name == REPORT_FILE {
+                std::fs::write(staging.root.join(name), "")?;
+            } else {
+                std::fs::create_dir(staging.root.join(name))?;
+            }
+        }
+        // Stores are staged in it.
+        staging.staged.borrow_mut().insert(".storage".into());
         Ok(staging)
+    }
+
+    /// Stage a file as a new one, each directory on the way as a new one
+    /// too unless it was staged under that same name.
+    ///
+    /// Two names the destination's file system takes for one file (`a.yaml`
+    /// and `A.yaml` where case doesn't count) would otherwise be staged one
+    /// over the other and committed as two changes to one file. They are
+    /// found by making, not by comparing names: only the file system knows
+    /// which names it folds.
+    fn put(&self, rel: &Path, bytes: &[u8], mode: u32) -> anyhow::Result<()> {
+        use std::io::Write;
+        let taken = |at: &Path| {
+            let reserved = RESERVED.iter().any(|name| {
+                at.parent() == Some(Path::new(""))
+                    && same_file(&self.root.join(name), &self.root.join(at))
+            });
+            if reserved {
+                return anyhow::anyhow!("{} is a path hars keeps for itself", rel.display());
+            }
+            let staged = self.staged.borrow();
+            let other = staged
+                .iter()
+                .find(|other| same_file(&self.root.join(other), &self.root.join(at)));
+            anyhow::anyhow!(
+                "{} and {} are one file in the destination, whose file system takes the two \
+                 names for the same: the import can't bring both. Nothing was imported",
+                at.display(),
+                other.map_or("another file the import brings".into(), |o| o
+                    .display()
+                    .to_string())
+            )
+        };
+        let mut dirs: Vec<&Path> = rel.ancestors().skip(1).collect();
+        dirs.reverse();
+        for dir in dirs.into_iter().filter(|d| !d.as_os_str().is_empty()) {
+            if self.staged.borrow().contains(dir) {
+                continue;
+            }
+            match std::fs::create_dir(self.root.join(dir)) {
+                Ok(()) => self.staged.borrow_mut().insert(dir.to_path_buf()),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Err(taken(dir)),
+                Err(e) => return Err(e.into()),
+            };
+        }
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(mode);
+        }
+        let mut file = match options.open(self.root.join(rel)) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Err(taken(rel)),
+            Err(e) => return Err(e.into()),
+        };
+        file.write_all(bytes)?;
+        // The mode asked for, whatever the umask.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(mode))?;
+        }
+        #[cfg(not(unix))]
+        let _ = mode;
+        file.sync_all()?;
+        self.staged.borrow_mut().insert(rel.to_path_buf());
+        Ok(())
     }
 
     fn keys(&self) -> anyhow::Result<Vec<String>> {
@@ -729,6 +1190,9 @@ fn commit(
     let backup = dest.join(BACKUP_DIR);
     // `run` refuses to start while a backup is left over; never delete one.
     std::fs::create_dir(&backup).with_context(|| format!("{} already exists", backup.display()))?;
+    // Made here if it wasn't there, and then taken away again by a
+    // rollback: "nothing changed" means that too.
+    let made_storage = !dest.join(".storage").exists();
     std::fs::create_dir_all(dest.join(".storage"))?;
 
     // What was done, to undo in reverse on failure.
@@ -757,6 +1221,13 @@ fn commit(
             if current.exists() {
                 let saved = backup.join(rel);
                 parent(&saved)?;
+                // The backup is the only copy of what was there: nothing
+                // is moved over a file already in it.
+                if std::fs::symlink_metadata(&saved).is_ok() {
+                    return Err(std::io::Error::other(format!(
+                        "{rel} was already moved aside: two of the files to replace are one file"
+                    )));
+                }
                 rename(&current, &saved)?;
                 moved_out.push(rel.clone());
             }
@@ -785,6 +1256,10 @@ fn commit(
         for d in made.iter().rev().filter(|d| !d.starts_with(&backup)) {
             let _ = std::fs::remove_dir(d);
         }
+        if made_storage {
+            // Only if empty: `remove_dir` takes nothing with it.
+            let _ = std::fs::remove_dir(dest.join(".storage"));
+        }
         if restored {
             let _ = std::fs::remove_dir_all(&backup);
             bail!("import failed and was rolled back; nothing changed: {e}");
@@ -803,8 +1278,9 @@ fn commit(
 /// file its `!include*` tags reach, and each `secrets.yaml` a secret came
 /// from. Relative paths, sorted, and the secret values used. Anything
 /// outside the config directory, through a symlink, or in a path the
-/// importer reserves is refused.
-fn yaml_files(source: &Path) -> anyhow::Result<(Vec<String>, Vec<String>)> {
+/// importer reserves is refused. Last, the directories its
+/// `!include_dir_*` tags read.
+fn yaml_files(source: &Path) -> anyhow::Result<(Vec<String>, Vec<String>, Vec<PathBuf>)> {
     let secrets = ha_core::yaml::Secrets {
         config_dir: source.to_path_buf(),
     };
@@ -828,7 +1304,19 @@ fn yaml_files(source: &Path) -> anyhow::Result<(Vec<String>, Vec<String>)> {
     }
     files.sort();
     files.dedup();
-    Ok((files, trace.secret_values))
+    let mut dirs = Vec::new();
+    for dir in &trace.dirs {
+        let rel = dir.strip_prefix(source).ok().and_then(normalize);
+        dirs.push(rel.ok_or_else(|| {
+            anyhow::anyhow!(
+                "an include reaches {}, outside the config directory",
+                dir.display()
+            )
+        })?);
+    }
+    dirs.sort();
+    dirs.dedup();
+    Ok((files, trace.secret_values, dirs))
 }
 
 /// `a/./b/../c` as `a/c`, or `None` if it leaves the root (or is absolute).
@@ -858,7 +1346,10 @@ fn check_path(root: &Path, rel: &Path, source: bool) -> anyhow::Result<()> {
         .next()
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .unwrap_or_default();
-    if first == ".storage" || first.starts_with(".import") || first == REPORT_FILE {
+    // Whatever its case: on a file system that takes `IMPORT-REPORT.JSON`
+    // and `import-report.json` for one name, the report would replace it.
+    let lower = first.to_lowercase();
+    if lower == ".storage" || lower.starts_with(".import") || lower == REPORT_FILE {
         bail!("{} is a path hars keeps for itself", rel.display());
     }
     let mut at = root.to_path_buf();
@@ -905,6 +1396,10 @@ pub struct AutomationReport {
     pub status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// For one that loads: what it will do differently than in the Home
+    /// Assistant it comes from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -997,8 +1492,9 @@ pub fn summary(report: &Report, dest: &Path) -> String {
     // What someone coming from a newer release should expect.
     if release_line(&report.ha_version).is_some_and(|l| Some(l) != release_line(PINNED_HA)) {
         out.push_str(&format!(
-            "  hars behaves like Home Assistant {PINNED_HA} and serves its frontend: \
-             what Home Assistant added after it is not there\n"
+            "  hars behaves like Home Assistant {PINNED_HA} and shows the {} app: \
+             what Home Assistant added after that is not there\n",
+            line_name(release_line(PINNED_HA).expect("the pin is a release"))
         ));
     }
     if !report.ha_version_tested {
@@ -1015,6 +1511,79 @@ pub fn summary(report: &Report, dest: &Path) -> String {
              {PINNED_HA}, drops what that version doesn't have when it next changes the store\n",
             s.key, s.version, s.hars_writes
         ));
+    }
+    // What was put back into the 2026.6.1 form, one change a line.
+    for c in &report.converted {
+        if c.from == c.to {
+            out.push_str(&format!("  converted {}:\n", c.key));
+        } else {
+            out.push_str(&format!(
+                "  converted {} from storage version {} to {}:\n",
+                c.key, c.from, c.to
+            ));
+        }
+        for change in &c.changes {
+            out.push_str(&format!("    {change}\n"));
+        }
+    }
+    for e in &report.converted_entries {
+        out.push_str(&format!(
+            "  converted the {} entry {:?} from version {} to {}\n",
+            e.domain, e.title, e.from, e.to
+        ));
+        for change in &e.changes {
+            out.push_str(&format!("    {change}\n"));
+        }
+    }
+    for d in &report.dropped {
+        out.push_str(&format!(
+            "  left out of {}: {} ({})\n",
+            d.store, d.what, d.reason
+        ));
+    }
+    for n in &report.not_converted {
+        out.push_str(&format!(
+            "  not converted in {}: {} ({})\n",
+            n.store, n.what, n.reason
+        ));
+    }
+    for s in &report.split_devices {
+        for file in &s.used_in {
+            out.push_str(&format!(
+                "  {file} still uses the id {} of a device that Home Assistant 2026.8 \
+                 replaced with {} ({}): hars finds no device by it; use the new ids {}\n",
+                s.old_id,
+                match s.new_ids.len() {
+                    2 => "two".to_owned(),
+                    n => n.to_string(),
+                },
+                s.name.as_deref().unwrap_or("unnamed"),
+                s.new_ids.join(", ")
+            ));
+        }
+    }
+    for p in &report.parent_devices {
+        let name = p.name.as_deref().unwrap_or("unnamed");
+        if !p.used_in.is_empty() {
+            out.push_str(&format!(
+                "  {} names the device {} ({name}) by id. It has child devices, and Home \
+                 Assistant 2026.9 and later reach their entities through it; hars reaches only \
+                 its own: name the child devices too ({})\n",
+                p.used_in.join(", "),
+                p.id,
+                p.children.join(", ")
+            ));
+        }
+        if !p.labels.is_empty() {
+            out.push_str(&format!(
+                "  the device {} ({name}) has child devices and the label(s) {}. An action on \
+                 such a label reaches the child devices' entities in Home Assistant 2026.10 and \
+                 later; in hars only if they have the label too ({})\n",
+                p.id,
+                p.labels.join(", "),
+                p.children.join(", ")
+            ));
+        }
     }
     if !report.replaced.is_empty() {
         out.push_str(&format!("  replaced: {}\n", report.replaced.join(", ")));
@@ -1046,6 +1615,14 @@ pub fn summary(report: &Report, dest: &Path) -> String {
             a.alias.as_deref().or(a.id.as_deref()).unwrap_or("?"),
             a.reason.as_deref().unwrap_or_default()
         ));
+    }
+    for a in report.automations.iter().filter(|a| a.status == "ok") {
+        if let Some(warning) = &a.warning {
+            out.push_str(&format!(
+                "  automation {} loads, but {warning}\n",
+                a.alias.as_deref().or(a.id.as_deref()).unwrap_or("?")
+            ));
+        }
     }
     let ok = report
         .automations
@@ -1134,6 +1711,211 @@ mod tests {
             "new auth"
         );
         assert!(!storage.join("onboarding").exists());
+        drop(staging);
+        std::fs::remove_dir_all(dest).unwrap();
+    }
+
+    /// What was moved aside is never written over: a second change to a
+    /// file fails and is rolled back to the first's old file, not to the
+    /// new one moved over it.
+    #[test]
+    fn a_backup_is_never_written_over() {
+        let dest = std::env::temp_dir().join(format!("hars-import-backup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dest);
+        std::fs::create_dir_all(dest.join(".storage")).unwrap();
+        std::fs::write(dest.join(".storage/auth"), "old auth").unwrap();
+        let staging = Staging::new(&dest).unwrap();
+        staging
+            .put(Path::new(".storage/auth"), b"new auth", 0o600)
+            .unwrap();
+        let changes = [
+            Change::Put(".storage/auth".into()),
+            Change::Put(".storage/auth".into()),
+        ];
+        let err = commit(&staging, &dest, &changes, |f, t| std::fs::rename(f, t)).unwrap_err();
+        assert!(err.to_string().contains("rolled back"), "{err}");
+        assert!(err.to_string().contains("already moved aside"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(dest.join(".storage/auth")).unwrap(),
+            "old auth"
+        );
+        assert!(!dest.join(".import-backup").exists());
+        drop(staging);
+        std::fs::remove_dir_all(dest).unwrap();
+    }
+
+    /// One directory under two paths, as two bind mounts of it are: the
+    /// paths share nothing, and the directories are the same.
+    #[test]
+    fn the_same_directory_under_two_paths() {
+        // `/mnt/a` and `/mnt/b` are one directory; so then are what is in
+        // them. `/mnt/b/new` isn't there yet.
+        let id = |p: &Path| match p.to_str()? {
+            "/" => Some(1),
+            "/mnt" => Some(2),
+            "/mnt/a" | "/mnt/b" => Some(3),
+            "/mnt/a/ha" | "/mnt/b/ha" => Some(4),
+            "/mnt/a/hars" | "/mnt/b/hars" => Some(5),
+            "/elsewhere" => Some(6),
+            _ => None,
+        };
+        let check =
+            |source: &str, planned: &str| overlap(Path::new(source), Path::new(planned), id);
+        let inside_source =
+            |o: Option<&str>| o.is_some_and(|o| o.starts_with("the destination is"));
+        let inside_dest = |o: Option<&str>| o.is_some_and(|o| o.starts_with("the source is"));
+        // The same folder; a destination in the source, there or not yet.
+        assert!(inside_source(check("/mnt/a", "/mnt/b")));
+        assert!(inside_source(check("/mnt/a", "/mnt/b/hars")));
+        assert!(inside_source(check("/mnt/a", "/mnt/b/new/config")));
+        assert!(inside_source(check("/mnt/a/ha", "/mnt/b/ha")));
+        // The source in the destination.
+        assert!(inside_dest(check("/mnt/a/ha", "/mnt/b")));
+        // Side by side, under either path, and somewhere else altogether.
+        assert_eq!(check("/mnt/a/ha", "/mnt/b/hars"), None);
+        assert_eq!(check("/mnt/a/ha", "/mnt/b/new"), None);
+        assert_eq!(check("/mnt/a", "/elsewhere"), None);
+        assert_eq!(check("/mnt/a", "/elsewhere/new"), None);
+
+        // On the file system: a directory is itself however it is reached.
+        let dir = std::env::temp_dir().join(format!("hars-import-same-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("ha/sub")).unwrap();
+        std::fs::create_dir_all(dir.join("hars")).unwrap();
+        assert!(same_file(&dir.join("ha"), &dir.join("ha/sub/..")));
+        assert!(!same_file(&dir.join("ha"), &dir.join("hars")));
+        assert!(inside_source(overlap(
+            &dir.join("ha"),
+            &dir.join("ha/sub/../new"),
+            file_id
+        )));
+        assert_eq!(overlap(&dir.join("ha"), &dir.join("hars"), file_id), None);
+        #[cfg(unix)]
+        {
+            // A second path to the source, as a mount gives one.
+            std::os::unix::fs::symlink(dir.join("ha"), dir.join("mounted")).unwrap();
+            assert!(inside_source(overlap(
+                &dir.join("ha"),
+                &dir.join("mounted"),
+                file_id
+            )));
+            assert!(inside_dest(overlap(
+                &dir.join("ha/sub"),
+                &dir.join("mounted"),
+                file_id
+            )));
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A name found though not listed is another file's name.
+    #[test]
+    fn aliases() {
+        let listed = ["AUTH".into(), "core.config".into()];
+        let name = |n: &str| std::ffi::OsString::from(n);
+        assert!(is_alias(&listed, &name("auth"), true));
+        assert!(!is_alias(&listed, &name("core.config"), true));
+        // Not there at all: nothing to take it for.
+        assert!(!is_alias(&listed, &name("auth"), false));
+
+        // On the file system: a name as listed passes, and so does one
+        // that isn't there; where names fold, another spelling doesn't.
+        let dir = std::env::temp_dir().join(format!("hars-import-alias-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Parts")).unwrap();
+        std::fs::write(dir.join("Parts/a.yaml"), "").unwrap();
+        exact_name(&dir, Path::new("Parts/a.yaml")).unwrap();
+        exact_name(&dir, Path::new("Parts/b.yaml")).unwrap();
+        exact_name(&dir, Path::new("other/a.yaml")).unwrap();
+        if dir.join("parts").exists() {
+            for rel in ["parts/a.yaml", "Parts/A.yaml", "parts/new.yaml"] {
+                let err = exact_name(&dir, Path::new(rel)).unwrap_err().to_string();
+                assert!(err.contains("are one file there"), "{rel}: {err}");
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A file is staged as a new one. A name the file system already has
+    /// in the staging directory, under whatever spelling, is refused: a
+    /// reserved one, or one staged before. (Here the second name is made
+    /// behind the importer's back, as a file system that folds names
+    /// would make it.)
+    #[test]
+    fn staging_never_writes_over_a_name_already_there() {
+        let dest = std::env::temp_dir().join(format!("hars-import-put-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dest);
+        std::fs::create_dir_all(&dest).unwrap();
+        let staging = Staging::new(&dest).unwrap();
+        staging.put(Path::new("parts/a.yaml"), b"1", 0o644).unwrap();
+        staging.put(Path::new("parts/b.yaml"), b"2", 0o644).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |rel: &str| {
+                std::fs::metadata(staging.root.join(rel))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777
+            };
+            staging.put(Path::new("secrets.yaml"), b"3", 0o600).unwrap();
+            assert_eq!((mode("parts/a.yaml"), mode("secrets.yaml")), (0o644, 0o600));
+        }
+        // The same name again.
+        let err = staging
+            .put(Path::new("parts/a.yaml"), b"x", 0o644)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("are one file in the destination"),
+            "{err}"
+        );
+        assert_eq!(
+            std::fs::read(staging.root.join("parts/a.yaml")).unwrap(),
+            b"1"
+        );
+        // A file and a directory the file system has, though not staged
+        // under those names.
+        std::fs::write(staging.root.join("parts/C.yaml"), "kept").unwrap();
+        std::fs::create_dir(staging.root.join("Other")).unwrap();
+        for rel in ["parts/C.yaml", "Other/d.yaml"] {
+            let err = staging.put(Path::new(rel), b"x", 0o644).unwrap_err();
+            assert!(
+                err.to_string().contains("Nothing was imported"),
+                "{rel}: {err}"
+            );
+        }
+        assert_eq!(
+            std::fs::read(staging.root.join("parts/C.yaml")).unwrap(),
+            b"kept"
+        );
+        // The names the importer keeps for itself.
+        for rel in [
+            REPORT_FILE,
+            ".import-backup/a.yaml",
+            ".import-staging/a.yaml",
+        ] {
+            let err = staging.put(Path::new(rel), b"x", 0o644).unwrap_err();
+            assert!(
+                err.to_string().contains("is a path hars keeps for itself"),
+                "{rel}: {err}"
+            );
+        }
+        // And, where the file system folds them, their other spellings.
+        if staging.root.join("IMPORT-REPORT.JSON").exists() {
+            for rel in ["IMPORT-REPORT.JSON", ".Storage/x", "Parts/a.yaml"] {
+                assert!(staging.put(Path::new(rel), b"x", 0o644).is_err(), "{rel}");
+            }
+        }
+        if staging.root.join("import-report.j\u{17f}on").exists() {
+            let err = staging
+                .put(Path::new("import-report.j\u{17f}on"), b"x", 0o644)
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("is a path hars keeps for itself"),
+                "{err}"
+            );
+        }
         drop(staging);
         std::fs::remove_dir_all(dest).unwrap();
     }

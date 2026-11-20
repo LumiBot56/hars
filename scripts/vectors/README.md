@@ -31,7 +31,7 @@ rule have no script yet; they are listed
 | `yaml_dump.py` | `ha-core/src/yaml/vectors/dump.json` (930 values in the typed form of `yaml/vectors.json`, each with the text HA writes for it: every kind of string as a mapping's value, a list's item and a key, numbers, dates and nesting; and 18 documents loaded with HA's loader and written back, as an editor save does to `automations.yaml`) | HA 2026.6.1's `homeassistant.util.yaml.dump` and `parse_yaml`: annotatedyaml 1.0.2 on PyYAML 6.0.3's `CSafeDumper` and `CSafeLoader` (libyaml 0.2.5) |
 | `automation_editor.py` | `ha-api/src/automation/vectors/editor.json` (19 scenarios: `automations.yaml` at start and, for each `GET`, `POST` and `DELETE` to `/api/config/automation/config/<id>`, the reply's status, content type and body, the file afterwards, and the automations' `state_changed`, `entity_registry_updated` and `automation_reloaded` events that follow; then the registry rows and states) | HA 2026.6.1's core with `http`, `auth`, `api`, `config` (`EditAutomationConfigView`) and `automation`, booted in a temporary directory with an admin and a non-admin user, over real HTTP (aiohttp 3.13.5, annotatedyaml 1.0.2) |
 | `entity_registry_ws.py` | `ha-api/src/ws/vectors/entity_registry.json` (the entity, device and category registries as stored at start, then 44 messages from an admin and a user: `config/entity_registry/list`, `get`, `get_entries` and `update` of the area, labels and categories, and `config/category_registry/list`, each with its reply, the `entity_registry_updated` events and the rows as stored afterwards) | HA 2026.6.1's core with `http`, `auth`, `websocket_api` and `config` (`entity_registry.py`, `category_registry.py`), booted in a temporary directory, over a real WebSocket (aiohttp 3.13.5) |
-| `import_releases.py` | `ha-server/tests/vectors/import/` (one synthetic install as 2026.6.1, 2026.6.4, 2026.7.0, 2026.7.4, 2026.8.3 and 2026.11.2 leave it on disk: every `.storage` file but `http`'s (it holds the run's port) and the YAML; and `downgrade.json`: whether Home Assistant 2026.6.1's `bootstrap.async_load_base_functionality` loads each of those directories, with the error it logs when it doesn't) and `ha-integrations/src/mobile_app/vectors/store_downgrade.json` (2026.7's `mobile_app` store after 2026.6.1 loaded it, and after its next change) | **Each release's own code**, one virtualenv per release: its registries, `Store`s and their migrations (`bootstrap.async_load_base_functionality`), `auth`, `config_entries` (`ConfigEntry.async_migrate`, so `hue`'s, `lifx`'s and `met`'s `async_migrate_entry`), `core_config`, `person`, `zone`, `lovelace`, `frontend` storage, `restore_state` and `mobile_app`'s store. Only `http` (a free loopback port), `person`, `zone` and `labs` are set up; nothing reaches the network. `downgrade.json` is the result of 2026.6.1's base bootstrap alone |
+| `import_releases.py` | `ha-server/tests/vectors/import/` (one synthetic install as 2026.6.1, 2026.6.4, 2026.7.0, 2026.7.4, 2026.8.3, 2026.9.4, 2026.10.4 and 2026.11.2 leave it on disk: every `.storage` file but `http`'s (it holds the run's port) and the YAML; and `downgrade.json`: whether Home Assistant 2026.6.1's `bootstrap.async_load_base_functionality` loads each of those directories, with the error it logs when it doesn't) and `ha-integrations/src/mobile_app/vectors/store_downgrade.json` (2026.7's `mobile_app` store after 2026.6.1 loaded it, and after its next change) | **Each release's own code**, one virtualenv per release: its registries, `Store`s and their migrations (`bootstrap.async_load_base_functionality`), `auth`, `config_entries` (`ConfigEntry.async_migrate`, so `hue`'s, `lifx`'s and `met`'s `async_migrate_entry`), `core_config`, `person`, `zone`, `lovelace`, `frontend` storage, `restore_state` and `mobile_app`'s store. Only `http` (a free loopback port), `person`, `zone` and `labs` are set up; nothing reaches the network. The registry calls `lifx`, `hue` and `met` make at setup are made by the script with the arguments each release's source gives (`register_as_setup_does`), since the integrations themselves need their devices. `downgrade.json` is the result of 2026.6.1's base bootstrap alone |
 | `config_flow.py` | `ha-api/src/config_entries/vectors/flow.json` (13 scenarios of adding SwitchBot Cloud from the UI: each HTTP request to the flow views and each WebSocket message, with the reply, the events `config_entries/subscribe` and `config_entries/flow/subscribe` sent after it, and the entries stored at the end), `ha-integrations/src/switchbot_cloud/vectors/fresh_setup.json` (the device and entity registry rows and the states of the entry the first scenario adds), `two_accounts.json` (the same after a second account lists the same devices), `retry.json` (the entry's changes when a setup that wasn't ready is retried, after 6.5 s of real time), `disabled_account.json` (the entries and registry rows after an account is disabled, and after a second account that lists the same devices is added) and `ha-api/src/ws/vectors/integration_descriptions.json` (`integration/descriptions` for the integrations hars runs) | HA 2026.6.1's core with `http`, `auth`, `websocket_api`, `config` (`config_entries.py`'s views and commands on `helpers/data_entry_flow.py`), `data_entry_flow.py`, `config_entries.py` and `switchbot_cloud` (its `config_flow.py`, setup and platforms) on switchbot-api 2.11.0, voluptuous 0.15.2 and voluptuous-serialize 2.7.0, booted in a temporary directory with an admin and a non-admin user, the library's `_API_HOST` pointed at a server on 127.0.0.1 that answers with the recorded responses in `switchbot_cloud/vectors/` |
 
 `render_template.py` and `template_functions.py` write two crates'
@@ -180,12 +180,12 @@ same way, and to the second.
 
 For `import_releases.py`, one virtualenv per release. Each needs the
 libraries that release's `hue`, `lifx`, `met` and `switchbot_cloud` import,
-as their `manifest.json` `requirements` pin them (shown for 2026.7.4; 2026.11
-has `lifx-async` in place of the `aiolifx` three), and the packages
+as their `manifest.json` `requirements` pin them (shown for 2026.7.4; from
+2026.10 `lifx-async` is in place of the `aiolifx` three), and the packages
 `mobile_app` needs (the list above for `mobile_app_notify.py`) at the
 versions in the release's `homeassistant/package_constraints.txt` (`-c`
-below, from the unpacked wheel). 2026.6.x also needs `pycryptodome` and
-2026.11 `gazetteer-matcher`:
+below, from the unpacked wheel). 2026.6.x also needs `pycryptodome`, and
+2026.9 and later `gazetteer-matcher`:
 
 ```sh
 python3.14 -m venv .venv-2026.7.4  # and one for each other release
@@ -195,7 +195,7 @@ python3.14 -m venv .venv-2026.7.4  # and one for each other release
     ha-ffmpeg mutagen pymicro-vad pyspeex-noise aiohasupervisor securetar cronsim \
     -c package_constraints.txt
 .venv-2026.6.1/bin/python -I scripts/vectors/import_releases.py seed
-for v in 2026.6.4 2026.7.0 2026.7.4 2026.8.3 2026.11.2; do
+for v in 2026.6.4 2026.7.0 2026.7.4 2026.8.3 2026.9.4 2026.10.4 2026.11.2; do
     .venv-$v/bin/python -I scripts/vectors/import_releases.py upgrade
 done
 .venv-2026.6.1/bin/python -I scripts/vectors/import_releases.py downgrade
@@ -205,10 +205,39 @@ cargo test -p ha-server --test import && cargo test -p ha-integrations store_dow
 `seed` makes the install with 2026.6.1; `upgrade` starts each later release
 on it, as an update does, and changes every store through that release;
 `downgrade` records what 2026.6.1 does with each result. To test another
-release, run `upgrade` under it, `downgrade` again, add it to the list in
-`imports_the_directories_home_assistant_2026_6_1_loads`, and, if it
-imports, to `TESTED_HA` in `crates/ha-server/src/import.rs`. Ids, tokens
-and times are replaced by fixed ones so a second run changes nothing.
+release, run `upgrade` under it, `downgrade` again, add it to the lists in
+`imports_every_release` and, if hars converts something in it,
+`a_converted_install_is_the_2026_6_1_install_again`, and, if it imports, to
+`TESTED_HA` in `crates/ha-server/src/import.rs`. Ids, tokens and times are
+replaced by fixed ones, and the sets Home Assistant lists in a changing
+order are sorted, so a second run changes nothing.
+
+The seed install is the start of a round trip: `hars import` must turn
+what each later release makes of it back into it
+(`a_converted_install_is_the_2026_6_1_install_again`). So it holds what
+those releases store differently: a device two integrations share, a
+device of a subentry, a device reached through another, disabled, renamed
+and removed devices; entities named by the user with and without the
+device's name, hidden, disabled, exposed to Assist, with options; config
+entries shaped as each integration's 2026.6.1 config flow makes them; last
+states with and without a registry row.
+
+One more mode checks the other direction by hand. It runs 2026.6.1's base
+bootstrap on a directory `hars import` wrote, and says whether it loads
+and what 2026.6.1's own writers change in the two registries:
+
+```sh
+hars import /path/to/a/2026.11/config   # with HARS_CONFIG=/tmp/converted
+.venv-2026.6.1/bin/python -I scripts/vectors/import_releases.py loads /tmp/converted
+```
+
+For each of the four converted fixtures it answers `"loads": true`, the
+entity registry `"as hars wrote it"`, and the device registry the same
+apart from the fields 2026.6.1 leaves out (`composite_device_id`,
+`composite_primary_config_entry`, `has_composite_identifiers`,
+`parent_device_id`, `split_at`). The comparison is of the data, with
+`modified_at` and the order of every list left aside (Home Assistant
+lists a set in any order), so it does not show a changed order.
 
 `template_functions.py` stops HA's clock (`homeassistant.util.dt.now` and
 `utcnow`) at the home's `now` and sets the process's `TZ`, which Python

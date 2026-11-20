@@ -46,8 +46,8 @@ An integration reaches hars in one of four ways:
   start Home Assistant 2026.6 or 2026.7 once on that folder, so that it
   updates its files, and
   [import the folder again](INSTALL.md#which-home-assistant-releases).
-- **Import.** Set the integration up in Home Assistant 2026.6 or 2026.7
-  ([newer releases can't be imported yet](INSTALL.md#which-home-assistant-releases)), then
+- **Import.** Set the integration up in Home Assistant 2026.6 to 2026.11
+  ([which releases](INSTALL.md#which-home-assistant-releases)), then
   [move the install to hars](../README.md#move-from-home-assistant). The
   import brings the integration's settings and credentials, its devices, and
   its entity ids. `hars/config/import-report.json` says whether hars has
