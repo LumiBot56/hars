@@ -648,8 +648,51 @@ ids, addresses, names and coordinates replaced with fake ones
       exists is taken off its devices, a device left with none and no
       entities is removed, and entities follow their device), so rows
       left behind by a crash between two store writes don't stay
-- [ ] Config flows: Hue (find the bridge or type its host, press the
-      link button) and LIFX (type a host or pick a found bulb);
+- [x] Config flow: Philips Hue. The bridges Philips' discovery service
+      lists (aiohue's `discover_nupnp`, in HA's 5 s) or a host typed in,
+      then the link button; the entry is set up before the reply and is
+      removed with no restart. Its devices, areas, entities and entity
+      ids are a fresh HA's for the recorded bridge, which has lights,
+      rooms as lights, scenes, motion and grouped motion, light level
+      and grouped light level, temperature, battery, zigbee connectivity,
+      the motion and light sensors' switches and an automation's switch,
+      on a metric install and (the sensors) on a US customary one. The
+      other kinds `hars` runs (smart scenes, contact, tamper, camera
+      motion, entertainment areas, zones) get their rows from the same
+      code, written from HA's source, with no vector from HA yet.
+      Buttons, dials and doorbells get no rows, and a device gone from
+      the bridge is not taken out of the registry at set-up as HA takes
+      it. A start of `hars` on the files HA left of an install that was
+      used (`scripts/vectors/hue_rows.py`: rows of each of those kinds
+      disabled, hidden, renamed, moved, never run or with nothing behind
+      them, and removed rows) leaves them byte for byte, and rows the
+      user removed come back as in HA. Nothing is registered when the
+      registry files can't be written.
+      An ignored entry is never set up, and a flow's entry for the same
+      thing replaces it (SwitchBot's too).
+      All 9 scenarios of `scripts/vectors/hue_flow.py` match HA 2026.6.1
+      with aiohue 4.8.1 for the recorded bridge: every reply, every
+      request the flow makes of the bridge and of discovery (set-up's
+      first read of the resources too; `hars` reads them again when its
+      event stream connects), the entry, the rows and the states; in Chromium with the
+      pinned frontend a bridge is added against a stand-in, a light
+      switched, and the entry deleted. `hars` differs on purpose: a
+      bridge with only the v1 API ends the flow (`not_v2_bridge`) where
+      HA makes a v1 entry; flows HA starts itself (zeroconf, SSDP,
+      HomeKit, the link flow after a refused key) don't exist, since
+      `hars` listens for no announcements; the application's name on the
+      bridge is slugified by `hars`'s rule; an entry whose bridge another
+      entry already runs is not started (HA removes it); the key is not
+      sent on when a bridge redirects to another origin (aiohttp sends
+      it); the v2 probe waits for the whole reply where aiohue reads its
+      status
+- [ ] Config flows: LIFX (type a host or pick a found bulb);
+      Hue's options flow, its link flow after a bridge refuses its key,
+      and its entities taking a device's new name (so a Hue device can be
+      named in the dialog's last step, where today only its area can be
+      set); registry rows for Hue resources that appear after set-up, and
+      for Hue's button and dial events; taking a device that is gone from
+      the bridge out of the registry at set-up;
       options, reauth, reconfigure, discovery
       and import flows; `single_config_entry`; a stop hook for the other
       integrations; taking a removed phone's tracker out of its person

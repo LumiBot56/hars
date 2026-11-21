@@ -30,6 +30,8 @@ sends its steps over real HTTP and a real WebSocket. It writes
   waits 6.5 s of real time for HA's retry; disabled_account.json: the
   entries and registry rows as stored after an account is disabled, and
   after a second account that lists the same devices is added;
+  us_customary.json: the sensors' rows and states after the first
+  scenario on an install set to US customary units;
 - crates/ha-api/src/ws/vectors/integration_descriptions.json:
   `integration/descriptions`' entries for the integrations in `KNOWN`
   (looked up inside their brand), and the reply's other keys.
@@ -41,7 +43,8 @@ registry ids `<id>`, the webhook id HA adds to the entry's data
 name a device by its placeholder. Registry rows
 are sorted (HA sets the platforms up side by side, in an order that changes
 from run to run), and so are the fields of a refused form's `errors`, the
-handler lists and a device's `config_entries` (sets in HA). Nothing reaches the network. Run it twice: the output
+handler lists and a device's `config_entries`, `identifiers` and
+`connections` (sets in HA). Nothing reaches the network. Run it twice: the output
 must not change.
 """
 
@@ -438,8 +441,9 @@ class Ids:
             return {self.text(k): self.plain(v, k) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
             items = [self.plain(v) for v in value]
-            # A device's entries are a set in HA.
-            return sorted(items) if key == "config_entries" else items
+            # A device's entries, identifiers and connections are sets in HA.
+            sets = ("config_entries", "identifiers", "connections")
+            return sorted(items) if key in sets else items
         if isinstance(value, float) and key in ("created_at", "modified_at"):
             return "<ts>"
         if isinstance(value, str):
@@ -464,7 +468,38 @@ def event_of(message):
     return {"event_type": event["event_type"], "data": data}
 
 
-async def run(subscriptions, steps):
+class SwitchBot:
+    """What `run` talks to instead of SwitchBot's cloud: `FakeApi`, which
+    the library is pointed at. Another integration's generator passes its
+    own (`hue_flow.py`): `domain`, whose devices get `<device:…>` names,
+    `start`, `stop`, `set(mode)` for an `api` step, and `take()`, the
+    requests it got since the last step (or `None` to record none)."""
+
+    domain = "switchbot_cloud"
+
+    def __init__(self):
+        self.fake = FakeApi()
+
+    async def start(self):
+        await self.fake.start()
+        self.set("ok")
+
+    async def stop(self):
+        await self.fake.stop()
+
+    def set(self, mode):
+        import switchbot_api
+
+        self.fake.mode = mode
+        switchbot_api._API_HOST = self.fake.host()  # noqa: SLF001
+
+    def take(self):
+        return None
+
+
+async def run(subscriptions, steps, backend=None, units=None):
+    """`units`: "us_customary" for an install set to US customary units
+    (HA's default is metric)."""
     from homeassistant import bootstrap, core, loader
     from homeassistant.auth import auth_manager_from_config
     from homeassistant.config_entries import ConfigEntries
@@ -472,17 +507,19 @@ async def run(subscriptions, steps):
                                        entity_registry as er)
     from homeassistant.setup import async_setup_component
     import aiohttp
-    import switchbot_api
 
-    fake = FakeApi()
+    fake = backend or SwitchBot()
     await fake.start()
-    switchbot_api._API_HOST = fake.host()  # noqa: SLF001
     tmp = pathlib.Path(tempfile.mkdtemp())
     ids = Ids()
     try:
         hass = core.HomeAssistant(str(tmp))
         hass.config.skip_pip = True
         await hass.config.async_load()
+        if units == "us_customary":
+            from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
+
+            hass.config.units = US_CUSTOMARY_SYSTEM
         loader.async_setup(hass)
         hass.config_entries = ConfigEntries(hass, {})
         await hass.config_entries.async_initialize()
@@ -557,11 +594,16 @@ async def run(subscriptions, steps):
                         ids.learn(m)
                         got.append({"sub": name, "event": event_of(m)})
                 # The devices there are now, for the steps that name one.
-                for device in dr.async_get(hass).devices.values():
-                    for domain, ident in device.identifiers:
-                        if domain == "switchbot_cloud":
-                            ids.devices[device.id] = f"<device:{ident}>"
+                name_devices()
                 return got
+
+            def name_devices():
+                """A device's registry id as `<device:IDENTIFIER>` (the
+                first of its identifiers, sorted: a set in HA)."""
+                for device in dr.async_get(hass).devices.values():
+                    idents = sorted(i for d, i in device.identifiers if d == fake.domain)
+                    if idents:
+                        ids.devices[device.id] = f"<device:{idents[0]}>"
 
             from homeassistant.helpers.json import json_dumps as dumps
 
@@ -572,7 +614,7 @@ async def run(subscriptions, steps):
                 return {
                     "entries": stored(hass.config_entries)["entries"],
                     "devices": sorted(stored(dr.async_get(hass))["devices"],
-                                      key=lambda d: json.dumps(d["identifiers"])),
+                                      key=lambda d: json.dumps(sorted(d["identifiers"]))),
                     "entities": sorted(stored(er.async_get(hass))["entities"],
                                        key=lambda e: e["entity_id"]),
                 }
@@ -596,8 +638,7 @@ async def run(subscriptions, steps):
                     snapshots[step["snapshot"]] = stores()
                     continue
                 if "api" in step:
-                    fake.mode = step["api"]
-                    switchbot_api._API_HOST = fake.host()  # noqa: SLF001
+                    fake.set(step["api"])
                     out.append(step)
                     continue
                 if "wait" in step:
@@ -660,6 +701,9 @@ async def run(subscriptions, steps):
                         result["known"] = sorted(set(listed) & set(KNOWN))
                         result["has_more"] = len(listed) > len(KNOWN)
                 result["events"] = await drain()
+                requests = fake.take()
+                if requests is not None:
+                    result["requests"] = requests
                 out.append(result)
             for sock in [*sockets.values(), *(s for _, s, _ in subs)]:
                 await sock.close()
@@ -673,10 +717,7 @@ async def run(subscriptions, steps):
 
         devices = dr.async_get(hass)
         entities = er.async_get(hass)
-        for device in devices.devices.values():
-            for domain, ident in device.identifiers:
-                if domain == "switchbot_cloud":
-                    ids.devices[device.id] = f"<device:{ident}>"
+        name_devices()
         states = {
             s.entity_id: {"state": s.state, "attributes": dict(s.attributes)}
             for s in sorted(hass.states.async_all(), key=lambda s: s.entity_id)
@@ -688,7 +729,7 @@ async def run(subscriptions, steps):
             "steps": out,
             "entries": stored(hass.config_entries)["entries"],
             "devices": sorted(stored(devices)["devices"],
-                              key=lambda d: json.dumps(d["identifiers"])),
+                              key=lambda d: json.dumps(sorted(d["identifiers"]))),
             "entities": sorted(stored(entities)["entities"], key=lambda e: e["entity_id"]),
             "states": json.loads(json_dumps(states)),
             "areas": stored(ar.async_get(hass))["areas"],
@@ -746,6 +787,18 @@ async def main():
         result.pop("areas")
         if name == "add":
             write(SWITCHBOT / "fresh_setup.json", rows)
+            # The same on an install set to US customary units: what its
+            # sensors' rows and states are then.
+            us = await run([], json.loads(json.dumps(steps)), units="us_customary")
+            sensors = {
+                "doc": "The Hub 2's and the Bot's sensors after the `add` scenario on an"
+                       " install set to US customary units: their rows and states.",
+                "entities": [e for e in us["entities"]
+                             if e["entity_id"].startswith("sensor.")],
+                "states": {k: v for k, v in us["states"].items()
+                           if k.startswith("sensor.")},
+            }
+            write(SWITCHBOT / "us_customary.json", sensors)
         if name == "duplicate":
             # Two accounts that list the same devices.
             write(SWITCHBOT / "two_accounts.json", rows)

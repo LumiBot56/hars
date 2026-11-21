@@ -27,9 +27,16 @@ pub enum ApiError {
         reason: String,
         url: String,
     },
-    /// Connecting or reading failed, or the body wasn't JSON.
+    /// Connecting or reading failed.
     #[error("{0}")]
     Connection(String),
+    /// The body wasn't JSON (a decoding error in aiohue, which HA's set-up
+    /// does not retry).
+    #[error("{0}")]
+    Decode(String),
+    /// The bridge's entry was removed ([`Api::stop`]): nothing is sent.
+    #[error("the Hue bridge's entry was removed")]
+    Stopped,
 }
 
 impl ApiError {
@@ -41,7 +48,7 @@ impl ApiError {
             Self::Unauthorized | Self::Busy | Self::Bridge(_) => {
                 Some(format!("Request failed: {self}"))
             }
-            Self::Status { .. } | Self::Connection(_) => {
+            Self::Status { .. } | Self::Connection(_) | Self::Decode(_) | Self::Stopped => {
                 Some(format!("Request failed due connection error: {self}"))
             }
         }
@@ -53,19 +60,25 @@ pub struct Api {
     /// `https://<host>`.
     base: String,
     key: String,
+    /// True once the entry is stopped: see [`Api::stop`].
+    stopped: tokio::sync::watch::Sender<bool>,
 }
 
 impl Api {
-    pub fn new(host: &str, key: &str) -> Result<Self, ha_http::Error> {
+    /// The bridge at `base` (`https://<host>`: [`super::base`]).
+    pub fn new(base: &str, key: &str) -> Result<Self, ha_http::Error> {
         let client = ha_http::Client::builder(crate::USER_AGENT)
             .danger_accept_any_certificate()
+            // The key goes to the bridge and nowhere a redirect points.
+            .credential_header(HeaderName::from_static("hue-application-key"))
             .max_connections(3)
             .tcp_keepalive()
             .build()?;
         Ok(Self {
             client,
-            base: format!("https://{host}"),
+            base: base.to_owned(),
             key: key.to_owned(),
+            stopped: tokio::sync::watch::Sender::new(false),
         })
     }
 
@@ -79,6 +92,38 @@ impl Api {
                 .unwrap(),
             base: base.to_owned(),
             key: key.to_owned(),
+            stopped: tokio::sync::watch::Sender::new(false),
+        }
+    }
+
+    /// The bridge's entry is stopped: a request that is on its way, or
+    /// waiting to be tried again, ends now with [`ApiError::Stopped`]
+    /// (its connection and its timer are dropped), and none is sent
+    /// after. A service call that still holds the bridge when its entry
+    /// is removed then can't reach the bridge any more.
+    pub fn stop(&self) {
+        self.stopped.send_replace(true);
+    }
+
+    /// `work`, unless the entry is stopped before it is done.
+    async fn unless_stopped<T>(
+        &self,
+        work: impl Future<Output = Result<T, ApiError>>,
+    ) -> Result<T, ApiError> {
+        let mut stopped = self.stopped.subscribe();
+        tokio::select! {
+            biased;
+            _ = stopped.wait_for(|stopped| *stopped) => Err(ApiError::Stopped),
+            done = work => done,
+        }
+    }
+
+    /// Text that came from the bridge or names a URL, without the key:
+    /// such text ends up in a log line or a service's error.
+    pub(super) fn scrub(&self, text: String) -> String {
+        match self.key.is_empty() || !text.contains(&self.key) {
+            true => text,
+            false => text.replace(&self.key, "***"),
         }
     }
 
@@ -94,8 +139,13 @@ impl Api {
     }
 
     /// aiohue's `request`: retry 429/503 (sleeping 0.25·n s before attempt
-    /// n), then map errors; returns the `data`.
+    /// n), then map errors; returns the `data`. Ends when the entry is
+    /// stopped.
     async fn request(&self, path: &str, body: Option<&Value>) -> Result<Value, ApiError> {
+        self.unless_stopped(self.request_now(path, body)).await
+    }
+
+    async fn request_now(&self, path: &str, body: Option<&Value>) -> Result<Value, ApiError> {
         let url = self.url(path);
         for attempt in 1..=MAX_RETRIES {
             if attempt > 1 {
@@ -105,7 +155,7 @@ impl Api {
                 Some(b) => self.client.put_json(&url, &self.headers(), b).await,
                 None => self.client.get(&url, &self.headers()).await,
             }
-            .map_err(|e| ApiError::Connection(e.to_string()))?;
+            .map_err(|e| ApiError::Connection(self.scrub(e.to_string())))?;
             match res.status {
                 StatusCode::SERVICE_UNAVAILABLE | StatusCode::TOO_MANY_REQUESTS => continue,
                 StatusCode::FORBIDDEN => return Err(ApiError::Unauthorized),
@@ -113,16 +163,25 @@ impl Api {
                     return Err(ApiError::Status {
                         status: s.as_u16(),
                         reason: s.canonical_reason().unwrap_or_default().to_owned(),
-                        url,
+                        // The path can name a resource by an id the
+                        // bridge gave.
+                        url: self.scrub(url),
                     });
                 }
                 _ => {}
             }
+            // `resp.json()`: anything but JSON by its content type is
+            // aiohttp's `ContentTypeError`, which HA's set-up retries.
+            if !super::config_flow::is_json(&res) {
+                return Err(ApiError::Connection(
+                    "the bridge's answer is not of type application/json".into(),
+                ));
+            }
             let mut json: Value = serde_json::from_slice(&res.body)
-                .map_err(|e| ApiError::Connection(format!("invalid JSON from the bridge: {e}")))?;
+                .map_err(|e| ApiError::Decode(format!("invalid JSON from the bridge: {e}")))?;
             if let Some(first) = json["errors"].as_array().and_then(|e| e.first()) {
                 let d = first["description"].as_str().unwrap_or_default();
-                return Err(ApiError::Bridge(d.to_owned()));
+                return Err(ApiError::Bridge(self.scrub(d.to_owned())));
             }
             // Any JSON may come back; only an object's `data` counts.
             return Ok(json.get_mut("data").map(Value::take).unwrap_or_default());
@@ -146,8 +205,9 @@ impl Api {
     }
 
     /// The event stream, resuming after `last_event_id` if there is one.
-    /// As aiohue, its status isn't checked.
-    pub async fn events(&self, last_event_id: Option<&str>) -> Result<EventStream, ha_http::Error> {
+    /// As aiohue, its status isn't checked. An error's text is without
+    /// the key (a redirect the client refuses names where it led).
+    pub async fn events(&self, last_event_id: Option<&str>) -> Result<EventStream, ApiError> {
         let mut headers = self.headers();
         headers.push((ha_http::header::ACCEPT, "text/event-stream".into()));
         headers.push((ha_http::header::CACHE_CONTROL, "no-cache".into()));
@@ -157,8 +217,11 @@ impl Api {
                 id.trim().to_owned(),
             ));
         }
-        self.client
-            .stream(&self.url("eventstream/clip/v2"), &headers)
-            .await
+        let url = self.url("eventstream/clip/v2");
+        let stream = async {
+            let stream = self.client.stream(&url, &headers).await;
+            stream.map_err(|e| ApiError::Connection(self.scrub(e.to_string())))
+        };
+        self.unless_stopped(stream).await
     }
 }

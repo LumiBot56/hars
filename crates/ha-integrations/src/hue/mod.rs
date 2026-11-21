@@ -8,12 +8,19 @@
 //! - After every (re)connect it fetches the full state and applies the
 //!   difference, removals included; aiohue does so only after a long
 //!   outage and never applies removals.
-//! - New resources get entity ids but no registry entries (the registries
-//!   are read-only here); disabled registry entries get no state, as in HA.
+//! - A resource that appears after set-up gets an entity id but no
+//!   registry entry until the next set-up; disabled registry entries get
+//!   no state, as in HA.
+//! - A v1 bridge isn't run, and its flow ends before an entry is made
+//!   (`config_flow`).
+//! - A bridge that refuses its key fails its set-up, as in HA, but no new
+//!   linking flow is started for it.
 
 mod api;
+pub mod config_flow;
 mod entities;
 mod light;
+mod register;
 mod store;
 
 use crate::light::Lights;
@@ -32,6 +39,20 @@ use store::{Change, Store};
 
 pub const DOMAIN: &str = "hue";
 
+/// A bridge's base URL: `<scheme>://<host>`, or under `stand_in` (a base
+/// URL on 127.0.0.1 for tests and a debug build's browser run:
+/// [`crate::Endpoints::hue_bridge`]) as `<stand_in>/<scheme>/<host>`, so
+/// that the stand-in knows which request it got.
+pub(crate) fn base(stand_in: Option<&str>, scheme: &str, host: &str) -> String {
+    match stand_in {
+        Some(stand_in) => format!("{stand_in}/{scheme}/{host}"),
+        None => format!("{scheme}://{host}"),
+    }
+}
+
+/// What a running entry adds to `get_config`'s `components`.
+pub const COMPONENTS: &[&str] = &["hue", "light", "sensor", "binary_sensor", "switch", "scene"];
+
 /// One bridge: its API, resources and entities.
 pub struct Bridge {
     hass: Hass,
@@ -45,6 +66,11 @@ pub struct Bridge {
     /// Sensors, binary sensors, switches and scenes, in HA's platform order.
     others: RwLock<Vec<Arc<HueEntity>>>,
     platforms: Arc<Platforms>,
+    /// False once the entry is stopped ([`run`] ended): nothing of it
+    /// writes a state after (a command still in flight when its entry is
+    /// removed must not bring one back). Held for every state write, and
+    /// while an entity is marked as gone: the one guard for both.
+    alive: parking_lot::Mutex<bool>,
 }
 
 /// What a deleted device takes with it.
@@ -116,7 +142,8 @@ impl Bridge {
     }
 
     /// `friendly_name`: the registry's name if the user set one, else the
-    /// device's name joined with the entity's.
+    /// device's name joined with the entity's. And the icon the user gave
+    /// the entity, if any.
     fn tail(
         &self,
         a: &mut Map<String, Value>,
@@ -124,12 +151,12 @@ impl Bridge {
         device: Option<&Value>,
         name: Option<&str>,
     ) {
-        let user = self
-            .registries
-            .entities
-            .iter()
-            .find(|e| e.entity_id == id.as_str())
-            .and_then(|e| e.name.clone());
+        let mut rows = self.registries.entities.iter();
+        let row = rows.find(|e| e.entity_id == id.as_str());
+        if let Some(icon) = row.and_then(|e| e.icon.as_ref()) {
+            a.insert("icon".into(), json!(icon));
+        }
+        let user = row.and_then(|e| e.name.clone());
         let friendly = user.or_else(|| {
             let device = device.and_then(|d| self.device_name(d));
             match (device, name) {
@@ -306,10 +333,58 @@ impl Bridge {
         }
     }
 
+    /// The entry is stopped (HA's unload of its platforms): every entity
+    /// the bridge runs goes, with its state and its place as a service
+    /// target, including those made for resources that appeared after
+    /// set-up and have no registry row; the bridge is no longer one
+    /// `hue.hue_activate_scene` can reach; nothing writes after.
+    ///
+    /// Writing ends first, and waits for a write that is being made: a
+    /// service call that still holds an entity (a scene writes the time
+    /// it was activated) then can't put back a state taken away here.
+    fn stop(self: &Arc<Self>) {
+        // A command on its way, or waiting to be sent again, ends; none
+        // is sent after.
+        self.api.stop();
+        *self.alive.lock() = false;
+        self.platforms
+            .bridges
+            .write()
+            .retain(|b| !std::ptr::eq(b.as_ptr(), Arc::as_ptr(self)));
+        let gone = Gone {
+            lights: self.lights.read().clone(),
+            others: self.others.read().clone(),
+        };
+        self.remove(&gone);
+        let groups: Vec<Arc<GroupLight>> = self.groups.write().drain(..).collect();
+        for g in groups {
+            self.platforms.lights.remove(&g.entity_id);
+            self.hass.remove_state(&g.entity_id);
+        }
+    }
+
+    /// Write a state, unless the entry was stopped.
+    fn write(&self, entity_id: &EntityId, state: String, attrs: Map<String, Value>) {
+        let alive = self.alive.lock();
+        if *alive {
+            self.hass.set_state(entity_id.clone(), state, attrs);
+        }
+    }
+
+    /// Write an entity's state, unless the entry was stopped or the
+    /// entity removed since the state was made: a service call renders a
+    /// scene's activation on its own task, and the event stream may take
+    /// the scene away in between. A scene that came after set-up has no
+    /// registry row, so nothing else would ever remove that state.
     fn write_entity(&self, e: &HueEntity) {
         let rendered = e.render(self, &self.store.read());
+        #[cfg(test)]
+        tests::after_render();
         if let Some((state, attrs)) = rendered {
-            self.hass.set_state(e.entity_id.clone(), state, attrs);
+            let alive = self.alive.lock();
+            if *alive && !e.gone.load(std::sync::atomic::Ordering::Relaxed) {
+                self.hass.set_state(e.entity_id.clone(), state, attrs);
+            }
         }
     }
 
@@ -362,6 +437,13 @@ impl Bridge {
 
     /// Drop entities: their states, and their place as service targets.
     fn remove(&self, gone: &Gone) {
+        {
+            // A write that is being made ends first; none comes after.
+            let _writes = self.alive.lock();
+            for e in &gone.others {
+                e.gone.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
         self.lights
             .write()
             .retain(|l| !gone.lights.iter().any(|g| g.rid == l.rid));
@@ -389,7 +471,7 @@ impl Bridge {
     fn write_light(&self, l: &HueLight) {
         let rendered = l.render(self, &self.store.read());
         if let Some((state, attrs)) = rendered {
-            self.hass.set_state(l.entity_id.clone(), state, attrs);
+            self.write(&l.entity_id, state, attrs);
         }
     }
 
@@ -399,7 +481,7 @@ impl Bridge {
         let rendered = g.render(self, &store);
         drop(store);
         if let Some((state, attrs)) = rendered {
-            self.hass.set_state(g.entity_id.clone(), state, attrs);
+            self.write(&g.entity_id, state, attrs);
         }
     }
 
@@ -662,6 +744,7 @@ impl Bridge {
                             },
                             Ok(None) => break,
                             Err(e) => {
+                                let e = self.api.scrub(e.to_string());
                                 tracing::debug!("hue: event stream: {e}");
                                 break;
                             }
@@ -685,7 +768,8 @@ impl Bridge {
 /// `scene`, `hue.*`) and the bridges, for `hue.hue_activate_scene`.
 pub struct Platforms {
     hass: Hass,
-    registries: Arc<Registries>,
+    /// The registries as they are now, for a service call's targets.
+    registries: ha_registry::Lookup,
     pub lights: Arc<Lights>,
     pub switches: Arc<Switches>,
     pub scenes: Arc<Scenes>,
@@ -709,7 +793,7 @@ impl Platforms {
     pub fn new(components: &crate::components::Components) -> Arc<Self> {
         let p = Arc::new(Self {
             hass: components.hass().clone(),
-            registries: components.registries(),
+            registries: components.lookup(),
             lights: components.lights(),
             switches: components.switches(),
             scenes: components.scenes(),
@@ -752,7 +836,7 @@ impl Platforms {
                 let p = p.clone();
                 async move {
                     let target = call.entity_ids()?;
-                    let indirect = p.registries.target_entities(&call.data);
+                    let indirect = p.registries.get().target_entities(&call.data);
                     let d = &call.data;
                     let dynamic = d.get("dynamic").is_some_and(truthy);
                     let (speed, brightness) = (
@@ -888,37 +972,59 @@ fn entry_settings(entry: &Map<String, Value>) -> Option<(String, String, Vec<Str
 }
 
 /// Run a `hue` config entry until the task is dropped: set up (retrying as
-/// HA's `ConfigEntryNotReady` does), make the entities, then follow the
-/// event stream.
-/// `ready` is done after the first connection attempt.
-pub async fn run(platforms: Arc<Platforms>, entry: Map<String, Value>, ready: ha_core::SetupGuard) {
+/// HA's `ConfigEntryNotReady` does), make the registry rows and the
+/// entities, then follow the event stream.
+/// `ready` is done after the first connection attempt; `status` hears
+/// where the set-up is (`ConfigEntryState`). `base` is where the bridge is
+/// instead of at its host ([`crate::Endpoints::hue_bridge`]).
+pub async fn run(
+    components: Arc<crate::components::Components>,
+    entry: Map<String, Value>,
+    base: Option<String>,
+    ready: ha_core::SetupGuard,
+    status: crate::config_entries::Status,
+) {
+    use crate::config_entries::EntryState;
     let mut ready = Some(ready);
-    let (hass, registries) = (platforms.hass.clone(), platforms.registries.clone());
+    let platforms = components.hue();
+    let hass = platforms.hass.clone();
     let Some((host, key, ignore)) = entry_settings(&entry) else {
+        status.set(EntryState::SetupError, None);
         return;
     };
-    let api = match Api::new(&host, &key) {
+    let api = match Api::new(&self::base(base.as_deref(), "https", &host), &key) {
         Ok(api) => api,
         Err(e) => {
             tracing::error!("hue: {e}");
+            status.set(EntryState::SetupError, None);
             return;
         }
     };
     let mut tries = 0u32;
     let resources = loop {
+        if tries > 0 {
+            // `async_setup` again: each attempt starts in progress.
+            status.set(EntryState::SetupInProgress, None);
+        }
         let err = match tokio::time::timeout(Duration::from_secs(10), api.fetch_all()).await {
             Ok(Ok(r)) => break r,
             Ok(Err(e)) => e,
             Err(_) => ApiError::Connection("timed out".into()),
         };
         match err {
+            // HA also starts a new linking flow for the bridge; `hars`
+            // leaves that to the user (remove the entry and add it again).
             ApiError::Unauthorized => {
                 tracing::error!(
                     "hue: the bridge at {host} refused the app key; it needs pairing again"
                 );
+                status.set(EntryState::SetupError, None);
                 return;
             }
+            // `ConfigEntryNotReady`: its message is the entry's `reason`.
             ApiError::Connection(_) | ApiError::Busy => {
+                let why = format!("Error connecting to the Hue bridge at {host}");
+                status.set(EntryState::SetupRetry, Some(why));
                 if let Some(r) = ready.take() {
                     r.done();
                 }
@@ -931,26 +1037,96 @@ pub async fn run(platforms: Arc<Platforms>, entry: Map<String, Value>, ready: ha
             }
             other => {
                 tracing::error!("Unknown error connecting to Hue bridge: {other}");
+                status.set(EntryState::SetupError, None);
                 return;
             }
         }
     };
-    let bridge = Arc::new(Bridge {
-        hass,
-        registries,
-        api,
-        store: RwLock::new(Store::new(resources)),
-        ignore_availability: ignore,
-        lights: RwLock::default(),
-        groups: RwLock::default(),
-        others: RwLock::default(),
-        platforms: platforms.clone(),
-    });
-    platforms.bridges.write().push(Arc::downgrade(&bridge));
-    bridge.add_entities();
-    bridge.write_all();
+    let store = Store::new(resources);
+    // aiohue can't work with resources that name no bridge (HA's "Unknown
+    // error connecting to Hue bridge", and a failed set-up).
+    let bridge_id = store
+        .of_type("bridge")
+        .next()
+        .and_then(|b| b["bridge_id"].as_str())
+        .filter(|_| store.bridge_device().is_some())
+        .map(config_flow::normalize_bridge_id);
+    let Some(bridge_id) = bridge_id else {
+        tracing::error!("Unknown error connecting to Hue bridge: its resources name no bridge");
+        status.set(EntryState::SetupError, None);
+        return;
+    };
+    // `async_setup_entry`: an entry with no unique id, or a stale one (an
+    // old import), takes the bridge's. But if another entry is this
+    // bridge's already, this one must not run: both would own the same
+    // rows and entities. Looked up and taken in one step, so of two
+    // entries for one bridge that get here together only one goes on.
+    // (HA removes such an entry; `hars` only doesn't start it.)
+    if let Some((entries, entry_id)) = status.entry()
+        && !entries.claim_unique_id(DOMAIN, entry_id, &bridge_id)
+    {
+        tracing::error!(
+            "hue: another entry is already set up for the bridge at {host}; this one isn't started"
+        );
+        status.set(EntryState::SetupError, None);
+        return;
+    }
+    let bridge = {
+        // No other entry is set up or removed, and no registry edit made,
+        // while this one's rows, entities and states are.
+        let _one = crate::switchbot_cloud::SETUP.lock();
+        if let (Some(registry), Some(entry_id)) = (
+            components.registry(),
+            entry.get("entry_id").and_then(Value::as_str),
+        ) {
+            let disable_new = entry
+                .get("pref_disable_new_entities")
+                .and_then(Value::as_bool)
+                == Some(true);
+            register::register(&hass, registry, entry_id, &store, disable_new);
+        }
+        let bridge = Arc::new(Bridge {
+            hass,
+            // As they are now, with this entry's rows.
+            registries: components.registries(),
+            api,
+            store: RwLock::new(store),
+            ignore_availability: ignore,
+            lights: RwLock::default(),
+            groups: RwLock::default(),
+            others: RwLock::default(),
+            platforms: platforms.clone(),
+            alive: parking_lot::Mutex::new(true),
+        });
+        platforms.bridges.write().push(Arc::downgrade(&bridge));
+        bridge.add_entities();
+        bridge.write_all();
+        bridge
+    };
+    // When this task ends (its entry was removed), everything the bridge
+    // runs goes with it: whoever stops the task waits for that.
+    struct Stopped(Arc<Bridge>);
+    impl Drop for Stopped {
+        fn drop(&mut self) {
+            self.0.stop();
+        }
+    }
+    let _stopped = Stopped(bridge.clone());
+    status.set(EntryState::Loaded, None);
     drop(ready);
     bridge.listen().await;
+}
+
+/// What set-up does about the registries once it has read a bridge's
+/// `resources`: for `benches/hue_register.rs`.
+#[doc(hidden)]
+pub fn register_rows(
+    hass: &Hass,
+    registry: &ha_registry::Registry,
+    entry_id: &str,
+    resources: Vec<Value>,
+) {
+    register::register(hass, registry, entry_id, &Store::new(resources), false);
 }
 
 #[cfg(test)]
