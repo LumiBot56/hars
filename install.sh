@@ -1,7 +1,7 @@
 #!/bin/sh
 # Install or upgrade hars on Linux or macOS with one command:
 #
-#   curl -fsSL https://raw.githubusercontent.com/adamt94/homeassistant-rust/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/adamt94/hars/main/install.sh | sh
 #
 # It checks for Docker (and offers to install it), downloads hars, starts it
 # in a container named `hars` that starts again after a reboot, waits until it
@@ -11,8 +11,8 @@
 # Settings, as environment variables (put them before `sh`):
 #   HARS_DIR    where hars keeps its data (default: ~/hars)
 #   HARS_PORT   the web port (default: 8123, or the next free one)
-#   HARS_IMPORT a copy of a Home Assistant 2026.6 config folder to bring over
-#               before hars starts (see the README)
+#   HARS_IMPORT a copy of a Home Assistant 2026.6 to 2026.11 config folder to
+#               bring over before hars starts (see the README)
 #   HARS_YES=1  answer yes to every question (unattended installs)
 #   HARS_IMAGE  the image to run (default: the published one)
 #
@@ -21,7 +21,7 @@
 set -eu
 
 main() {
-	IMAGE=${HARS_IMAGE:-ghcr.io/adamt94/homeassistant-rust:latest}
+	IMAGE=${HARS_IMAGE:-ghcr.io/adamt94/hars:latest}
 	DIR=${HARS_DIR:-$HOME/hars}
 	IMPORT=${HARS_IMPORT:-}
 	OS=$(uname -s)
@@ -177,7 +177,13 @@ dk() {
 }
 
 as_root() {
-	if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi
+	if [ "$(id -u)" = 0 ]; then
+		"$@"
+	elif command -v sudo >/dev/null 2>&1; then
+		sudo "$@"
+	else
+		die "sudo isn't installed. Run this as root, or install Docker first and run this again."
+	fi
 }
 
 tty_ok() { (: </dev/tty) 2>/dev/null; }
@@ -220,20 +226,40 @@ wait_for_docker() {
 }
 
 need_docker() {
-	# Docker Desktop's command lives here before it is first started.
-	[ "$OS" = Darwin ] && PATH=$PATH:/usr/local/bin:$HOME/.docker/bin
+	# Docker Desktop's command and Homebrew on Apple Silicon may not be on PATH yet.
+	[ "$OS" = Darwin ] && PATH=$PATH:/opt/homebrew/bin:/usr/local/bin:$HOME/.docker/bin:/Applications/Docker.app/Contents/Resources/bin
 	docker_ready && return 0
 
 	if [ "$OS" = Darwin ]; then
-		if [ ! -d /Applications/Docker.app ] && command -v brew >/dev/null 2>&1 &&
-			ask "hars runs in Docker, which isn't installed. Install Docker Desktop with Homebrew now?"; then
-			brew install --cask docker-desktop || brew install --cask docker ||
-				die "Homebrew couldn't install Docker Desktop."
+		if command -v docker >/dev/null 2>&1; then
+			ctx=$(docker context show 2>/dev/null || true)
+			case $ctx in
+			orbstack)
+				if [ -d /Applications/OrbStack.app ]; then
+					say "Starting OrbStack (this can take a moment)"
+					open -a OrbStack
+					wait_for_docker 60 && return 0
+					die "OrbStack didn't start. Open it from Applications, wait until it says it's running, then run this again."
+				fi
+				die "Docker isn't running (active context: orbstack). Start OrbStack, then run this again."
+				;;
+			"" | default | desktop-linux) ;;
+			*)
+				die "Docker isn't running (active context: $ctx). Start it, then run this again."
+				;;
+			esac
 		fi
 		if [ ! -d /Applications/Docker.app ]; then
 			command -v docker >/dev/null 2>&1 &&
 				die "Docker isn't running. Start it (Docker Desktop, OrbStack, colima...), then run this again."
-			die "hars runs in Docker. Install Docker Desktop from https://www.docker.com/products/docker-desktop/ then run this again."
+			if command -v brew >/dev/null 2>&1 &&
+				ask "hars runs in Docker, which isn't installed. Install Docker Desktop with Homebrew now?"; then
+				brew install --cask docker-desktop || brew install --cask docker ||
+					die "Homebrew couldn't install Docker Desktop."
+			fi
+		fi
+		if [ ! -d /Applications/Docker.app ]; then
+			die "hars runs in Docker. Install Docker Desktop (https://www.docker.com/products/docker-desktop/) or OrbStack (https://orbstack.dev/), start it, then run this again."
 		fi
 		say "Starting Docker Desktop (accept its terms if it asks; this can take a minute)"
 		open -a Docker
@@ -278,7 +304,10 @@ free_port() {
 
 lan_ip() {
 	if [ "$OS" = Darwin ]; then
-		ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true
+		iface=$(route get default 2>/dev/null | awk '/interface:/{print $2; exit}')
+		{ [ -n "$iface" ] && ipconfig getifaddr "$iface" 2>/dev/null; } ||
+			ipconfig getifaddr en0 2>/dev/null ||
+			ipconfig getifaddr en1 2>/dev/null || true
 	else
 		hostname -I 2>/dev/null | awk '{print $1}' || true
 	fi

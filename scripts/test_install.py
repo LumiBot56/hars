@@ -106,7 +106,7 @@ class InstallTests(unittest.TestCase):
         self.assertIn("--network host", run)
         self.assertIn(f"-v {self.data()}/config:/config", run)
         self.assertIn(f"--env-file {self.data()}/hars.env", run)
-        self.assertTrue(run.endswith("ghcr.io/adamt94/homeassistant-rust:latest"))
+        self.assertTrue(run.endswith("ghcr.io/adamt94/hars:latest"))
         self.assertIn("HARS_BIND=0.0.0.0:8123\n",
                       (self.data() / "hars.env").read_text())
         self.assertIn("http://localhost:8123", result.stdout)
@@ -161,7 +161,7 @@ class InstallTests(unittest.TestCase):
         (ha / ".storage").mkdir(parents=True)
         result, calls = self.install(HARS_IMPORT=str(ha))
         self.assertEqual(result.returncode, 0, result.stderr)
-        image = "ghcr.io/adamt94/homeassistant-rust:latest"
+        image = "ghcr.io/adamt94/hars:latest"
         imp = (f"run --rm -v {self.data()}/config:/config "
                f"-v {ha.resolve()}:/ha:ro {image} import /ha")
         self.assertLess(calls.index(imp), calls.index(self.run_call(calls)))
@@ -227,6 +227,18 @@ class InstallTests(unittest.TestCase):
         result, calls = self.install(docker=False)
         self.assertEqual(result.returncode, 1)
         self.assertIn("get.docker.com", result.stderr)
+        self.assertEqual(calls, [])
+
+    def test_macos_other_docker_context_does_not_open_or_install_docker_desktop(self):
+        # Simulates colima/Rancher/etc. selected as the active Docker context
+        # but stopped. Even with brew present and HARS_YES=1 (or Docker.app on
+        # the host), install.sh must not launch or install Docker Desktop.
+        self.fake("docker", "#!/bin/sh\n[ \"$1\" = context ] && echo colima && exit 0\nexit 1\n")
+        self.fake("brew", "#!/bin/sh\necho brew >> \"$FAKE/calls\"\nexit 0\n")
+        self.fake("open", "#!/bin/sh\necho \"open $*\" >> \"$FAKE/calls\"\nexit 0\n")
+        result, calls = self.install(system="Darwin", docker=False, HARS_YES="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("active context: colima", result.stderr)
         self.assertEqual(calls, [])
 
 

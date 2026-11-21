@@ -11,9 +11,11 @@ install another way.
 
 1. Check for Docker. If it's missing, ask, then install it: Docker's
    official script on Linux, Docker Desktop through Homebrew (macOS) or
-   winget (Windows). If Docker Desktop is installed but stopped, start it.
-   On Linux, if your user can't use Docker, use `sudo`.
-2. Download the hars image, `ghcr.io/adamt94/homeassistant-rust:latest`.
+   winget (Windows). On macOS, if Docker Desktop or OrbStack is installed and
+   selected but stopped, start it; for another stopped runtime (such as
+   colima), tell you to start it instead of installing Docker Desktop. On
+   Linux, if your user can't use Docker directly, use `sudo`.
+2. Download the hars image, `ghcr.io/adamt94/hars:latest`.
    [A workflow](../.github/workflows/publish.yml) publishes it from every
    commit to `main`, for x86-64 and ARM64.
 3. Make the `hars` folder (`hars/config` holds the data) and `hars/hars.env`
@@ -25,7 +27,7 @@ install another way.
 5. Start the container: named `hars`, restarted by Docker after a crash or a
    reboot, given a minute to save when stopped. On Linux it shares the
    host's network (`--network host`), so hars can find devices on your LAN.
-   Docker Desktop can't, so on macOS and Windows the port is published
+   Docker on macOS and Windows runs in a Linux VM, so the port is published
    instead (`-p 8123:8123`). hars still reaches devices at the addresses
    they were set up with, but network broadcasts don't get out, so it can't
    find a LIFX bulb that moved to a new IP address.
@@ -82,7 +84,7 @@ Docker Compose:
 
 ```sh
 mkdir hars && cd hars
-curl -fsSLO https://raw.githubusercontent.com/adamt94/homeassistant-rust/main/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/adamt94/hars/main/compose.yaml
 docker compose up -d
 ```
 
@@ -122,7 +124,7 @@ the installer, set `HARS_YES=1`, run it, then:
 
 ```sh
 docker stop hars
-docker run --rm -v ~/hars/config:/config ghcr.io/adamt94/homeassistant-rust auth add YOUR_NAME YOUR_PASSWORD
+docker run --rm -v ~/hars/config:/config ghcr.io/adamt94/hars auth add YOUR_NAME YOUR_PASSWORD
 docker start hars
 ```
 
@@ -161,8 +163,8 @@ across, or to import into an install that is already set up:
 
 ```sh
 docker stop hars
-docker run --rm -v ~/hars/config:/config -v /path/to/ha-copy:/ha:ro ghcr.io/adamt94/homeassistant-rust import /ha --dry-run
-docker run --rm -v ~/hars/config:/config -v /path/to/ha-copy:/ha:ro ghcr.io/adamt94/homeassistant-rust import /ha
+docker run --rm -v ~/hars/config:/config -v /path/to/ha-copy:/ha:ro ghcr.io/adamt94/hars import /ha --dry-run
+docker run --rm -v ~/hars/config:/config -v /path/to/ha-copy:/ha:ro ghcr.io/adamt94/hars import /ha
 docker start hars
 ```
 
@@ -373,10 +375,28 @@ them up to date, and copy it again.
 
 ## Just the binary, or from source
 
-- **The binary:** the image's `/hars` is a static Linux binary:
-  `docker cp "$(docker create ghcr.io/adamt94/homeassistant-rust)":/hars .`
-  It reads `HARS_CONFIG` (default `./config`), `HARS_BIND` and
-  `HARS_FRONTEND` (an unpacked `hass_frontend` folder; without it only the
-  API is served).
-- **From source:** `cargo build --release`; see
-  [CONTRIBUTING.md](../CONTRIBUTING.md).
+- **The Linux binary:** the image's `/hars` is a static Linux binary:
+
+  ```sh
+  id=$(docker create ghcr.io/adamt94/hars)
+  docker cp "$id":/hars ./hars
+  docker cp "$id":/frontend ./frontend
+  docker rm "$id"
+  HARS_CONFIG=./config HARS_FRONTEND=./frontend ./hars
+  ```
+
+  It reads `HARS_CONFIG` (default `./config`), `HARS_BIND` (default
+  `0.0.0.0:8123`), and `HARS_FRONTEND` (an unpacked `hass_frontend` folder;
+  without it only the API is served).
+- **From source (Linux or macOS):** install Rust through
+  [rustup](https://rustup.rs), clone the repository, and build:
+
+  ```sh
+  cargo build --release --locked
+  HARS_CONFIG=./config ./target/release/hars
+  ```
+
+  Add `HARS_FRONTEND=./frontend` (copied from the image above) to serve the
+  Home Assistant web UI as well. Running natively on macOS talks directly to
+  your Mac's network, without Docker's VM limit. See
+  [CONTRIBUTING.md](../CONTRIBUTING.md) for development commands and tests.

@@ -56,7 +56,7 @@ pub fn entry_too_new(entry: &Map<String, Value>) -> bool {
 pub const USER_AGENT: &str = concat!(
     "hars/",
     env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/adamt94/homeassistant-rust)"
+    " (+https://github.com/adamt94/hars)"
 );
 
 /// Where the integrations' services are: the real hosts, or stand-ins on

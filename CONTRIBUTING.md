@@ -40,7 +40,7 @@ Without `HARS_FRONTEND`, only the API is served. To get the UI, copy the
 pinned frontend out of the image and point at it:
 
 ```sh
-docker cp "$(docker create ghcr.io/adamt94/homeassistant-rust)":/frontend ./frontend
+docker cp "$(docker create ghcr.io/adamt94/hars)":/frontend ./frontend
 HARS_FRONTEND=./frontend HARS_CONFIG=./config cargo run --release
 ```
 

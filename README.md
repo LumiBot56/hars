@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/adamt94/homeassistant-rust/actions/workflows/ci.yml"><img src="https://github.com/adamt94/homeassistant-rust/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://github.com/adamt94/hars/actions/workflows/ci.yml"><img src="https://github.com/adamt94/hars/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
   <a href="docs/ARCHITECTURE.md#home-assistant-compatibility"><img src="https://img.shields.io/badge/matches-Home%20Assistant%202026.6.1-eb6834" alt="Matches Home Assistant 2026.6.1"></a>
 </p>
@@ -24,9 +24,8 @@ phone app. hars stores its data in Home Assistant's own file
 formats, so you can bring an existing install with you.
 
 > [!NOTE]
-> hars is early software. It supports a few integrations so far, and you
-> can't add a device from the UI yet. Read
-> [what works today](#what-works-today) before you switch.
+> hars is early software and supports a small set of integrations so far.
+> Read [what works today](#what-works-today) before you switch.
 
 ## Why use hars
 
@@ -69,25 +68,64 @@ describe how each number was measured.
 
 ## Get started
 
-You need a computer that stays on and about five minutes.
+You need a computer that stays on and about five minutes. A Raspberry Pi 4
+or 5 (64-bit), a mini PC, a NAS, or any Linux machine is ideal; macOS and
+Windows work too.
 
-1. Open a terminal. On a Mac or on Linux, open the **Terminal** app. On
-   Windows, open **PowerShell** from the Start menu.
-2. Paste the command for your computer and press Enter.
+### Linux
 
-   Mac or Linux:
+Open **Terminal** and run:
 
-   ```sh
-   curl -fsSL https://raw.githubusercontent.com/adamt94/homeassistant-rust/main/install.sh | sh
-   ```
+```sh
+curl -fsSL https://raw.githubusercontent.com/adamt94/hars/main/install.sh | sh
+```
 
-   Windows:
+- If Docker is missing, the installer offers to install it with Docker's
+  official script.
+- If your user can't run Docker directly, the installer uses `sudo` and tells
+  you.
+- hars shares the host's network (`--network host`), so local device
+  discovery works (such as finding LIFX bulbs automatically), and restarts
+  itself after a reboot.
 
-   ```powershell
-   irm https://raw.githubusercontent.com/adamt94/homeassistant-rust/main/install.ps1 | iex
-   ```
+### macOS
 
-3. Wait for this message:
+hars runs in Docker on macOS (Apple Silicon or Intel), using
+[Docker Desktop](https://www.docker.com/products/docker-desktop/),
+[OrbStack](https://orbstack.dev/), or another Docker runtime. If none is
+installed and you use Homebrew, the installer offers to install Docker
+Desktop (which may ask you to accept its terms once). Otherwise install and
+start Docker Desktop or OrbStack first.
+
+Open **Terminal** and run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/adamt94/hars/main/install.sh | sh
+```
+
+One limit on macOS: Docker runs in a Linux VM and publishes port `8123`
+instead of sharing the Mac's network directly. Everything works, except local
+broadcast search can't reach your LAN. When you add a LIFX bulb, type its IP
+address, and give your LIFX bulbs a fixed address in your router's settings
+so hars keeps finding them. Home Assistant in Docker Desktop has the same
+limit.
+
+### Windows
+
+Open **PowerShell** from the Start menu and run:
+
+```powershell
+irm https://raw.githubusercontent.com/adamt94/hars/main/install.ps1 | iex
+```
+
+If Docker Desktop is missing, the installer offers to install it with
+`winget`, which may ask you to accept its terms or restart once; run the
+command again after that. Docker Desktop on Windows has the same LIFX network
+limit as macOS.
+
+### First-time setup
+
+1. Wait for this message:
 
    ```
    hars is running.
@@ -96,40 +134,23 @@ You need a computer that stays on and about five minutes.
      and create your account.
    ```
 
-4. Open that address in a browser. Any phone or laptop on the same Wi-Fi
-   can open it too.
-5. Create your login and set your home's location. The dashboard opens with
+2. Open that address in a browser. Any phone or laptop on the same Wi-Fi
+   can open the address with numbers too.
+3. Create your login and set your home's location. The dashboard opens with
    a weather forecast for your home.
-
-To add your phone, install the Home Assistant app on your iPhone and give it
-the same address.
+4. Add your devices in **Settings > Devices & services > Add integration**
+   (Philips Hue, LIFX, and SwitchBot Cloud). To add your phone, install the
+   Home Assistant app on your iPhone and give it the same address.
 
 **Do you already run Home Assistant?** Follow
-[Move from Home Assistant](#move-from-home-assistant) instead. A Philips Hue
-bridge, a LIFX bulb and SwitchBot Cloud can also be added in **Settings >
-Devices & services > Add integration**.
+[Move from Home Assistant](#move-from-home-assistant) instead.
 
-### What the command does
-
-hars runs inside [Docker](https://www.docker.com/). If Docker is missing, the
-command offers to install it. On a Mac or on Windows, the command installs
-Docker Desktop, which may ask you to accept its terms or to restart once.
-Paste the command again after that.
-
-hars keeps everything in a `hars` folder in your home folder. To see each
-step before you run the command, read [install.sh](install.sh) or
-[install.ps1](install.ps1).
-
-### Which computer to use
-
-Use a computer that stays on. A Raspberry Pi 4 or 5 (64-bit), a mini PC, a
-NAS, or any Linux server is ideal.
-
-A Mac or a Windows PC works too, with one limit. The way the installer runs
-hars in Docker Desktop, hars can't search your network. To add a LIFX bulb
-there, type its IP address. If a LIFX bulb gets a new IP address, hars won't
-find the bulb again. Give your bulbs a fixed address in your router's
-settings. Home Assistant in Docker Desktop has the same limit.
+hars keeps all of its data and settings in a `hars` folder in your home
+folder (`~/hars/config`). To inspect every step before you run the command,
+read [install.sh](install.sh) or [install.ps1](install.ps1). For Docker
+Compose, running natively from source on Linux or macOS, or customising the
+port and data folder, see
+[Installing hars: the details](docs/INSTALL.md).
 
 ## What works today
 
@@ -201,13 +222,13 @@ can't find everything, so look your home over afterwards.
    Mac or Linux:
 
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/adamt94/homeassistant-rust/main/install.sh | HARS_IMPORT=/path/to/ha-copy sh
+   curl -fsSL https://raw.githubusercontent.com/adamt94/hars/main/install.sh | HARS_IMPORT=/path/to/ha-copy sh
    ```
 
    Windows:
 
    ```powershell
-   $env:HARS_IMPORT = 'C:\path\to\ha-copy'; irm https://raw.githubusercontent.com/adamt94/homeassistant-rust/main/install.ps1 | iex; Remove-Item Env:HARS_IMPORT
+   $env:HARS_IMPORT = 'C:\path\to\ha-copy'; irm https://raw.githubusercontent.com/adamt94/hars/main/install.ps1 | iex; Remove-Item Env:HARS_IMPORT
    ```
 
 3. Log in as you did on Home Assistant. If hars has the address that Home
@@ -247,9 +268,9 @@ commands.
 
 ## Troubleshooting
 
-- **The command says Docker isn't running.** Open Docker Desktop (Mac or
-  Windows) and wait until it says that it is running. Paste the command
-  again.
+- **The command says Docker isn't running.** Open your Docker app (Docker
+  Desktop, OrbStack, or colima on a Mac; Docker Desktop on Windows) and wait
+  until it says that it is running. Paste the command again.
 - **The page doesn't load from another device.** Use the address with
   numbers that the installer printed, not `localhost`. Check that both
   devices are on the same network. On Windows, allow Docker Desktop through
@@ -267,7 +288,7 @@ commands.
   message and the log name the file. Start Home Assistant 2026.6 or 2026.7
   once on the folder, then
   [import it again](docs/INSTALL.md#which-home-assistant-releases).
-- **You found a bug.** [Open an issue](https://github.com/adamt94/homeassistant-rust/issues/new/choose).
+- **You found a bug.** [Open an issue](https://github.com/adamt94/hars/issues/new/choose).
   Report a security problem privately, as the
   [security policy](SECURITY.md) describes.
 

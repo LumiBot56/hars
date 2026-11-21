@@ -56,7 +56,7 @@ HA's: both would write `.storage`.
    stopped) and import it:
 
    ```sh
-   IMAGE=ghcr.io/adamt94/homeassistant-rust
+   IMAGE=ghcr.io/adamt94/hars
    docker run --rm -v "$PWD/shadow-config:/config" -v /path/to/ha-config-copy:/ha:ro $IMAGE import /ha --dry-run
    docker run --rm -v "$PWD/shadow-config:/config" -v /path/to/ha-config-copy:/ha:ro $IMAGE import /ha
    ```

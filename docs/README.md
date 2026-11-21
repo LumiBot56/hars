@@ -76,8 +76,8 @@ a public image. Before announcing hars, in this order:
 
    ```sh
    docker logout ghcr.io
-   docker buildx imagetools inspect ghcr.io/adamt94/homeassistant-rust:latest
-   docker pull ghcr.io/adamt94/homeassistant-rust:latest
+   docker buildx imagetools inspect ghcr.io/adamt94/hars:latest
+   docker pull ghcr.io/adamt94/hars:latest
    ```
 
 7. Paste the README's install command, outside any clone, on Linux, macOS

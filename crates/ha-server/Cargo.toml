@@ -1,6 +1,6 @@
 [package]
 name = "ha-server"
-description = "homeassistant-rust server binary"
+description = "hars server binary"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

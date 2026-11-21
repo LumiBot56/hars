@@ -3,7 +3,7 @@
 ## Supported versions
 
 hars has no releases yet. Only the latest commit on `main`, and the
-`ghcr.io/adamt94/homeassistant-rust:latest` image built from it, get fixes.
+`ghcr.io/adamt94/hars:latest` image built from it, get fixes.
 
 ## Reporting a vulnerability
 

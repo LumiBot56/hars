@@ -1,4 +1,4 @@
-//! `hars` — the homeassistant-rust server.
+//! The `hars` server binary.
 
 use ha_core::Hass;
 

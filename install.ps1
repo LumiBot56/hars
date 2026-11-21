@@ -1,6 +1,6 @@
 # Install or upgrade hars on Windows with one command, in PowerShell:
 #
-#   irm https://raw.githubusercontent.com/adamt94/homeassistant-rust/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/adamt94/hars/main/install.ps1 | iex
 #
 # It checks for Docker Desktop (and offers to install it), downloads hars,
 # starts it in a container named `hars` that starts again after a reboot,
@@ -10,8 +10,8 @@
 # Settings, as environment variables set before running it:
 #   $env:HARS_DIR    where hars keeps its data (default: $HOME\hars)
 #   $env:HARS_PORT   the web port (default: 8123, or the next free one)
-#   $env:HARS_IMPORT a copy of a Home Assistant 2026.6 config folder to
-#                    bring over before hars starts (see the README)
+#   $env:HARS_IMPORT a copy of a Home Assistant 2026.6 to 2026.11 config
+#                    folder to bring over before hars starts (see the README)
 #   $env:HARS_YES=1  answer yes to every question
 #   $env:HARS_IMAGE  the image to run (default: the published one)
 #
@@ -19,7 +19,7 @@
 
 function Install-Hars {
     $ErrorActionPreference = 'Continue'
-    $image = if ($env:HARS_IMAGE) { $env:HARS_IMAGE } else { 'ghcr.io/adamt94/homeassistant-rust:latest' }
+    $image = if ($env:HARS_IMAGE) { $env:HARS_IMAGE } else { 'ghcr.io/adamt94/hars:latest' }
     $dir = if ($env:HARS_DIR) { $env:HARS_DIR } else { Join-Path $HOME 'hars' }
     $import = $env:HARS_IMPORT
     if ($env:HARS_PORT -and $env:HARS_PORT -notmatch '^\d+$') { Fail "HARS_PORT must be a number, not '$($env:HARS_PORT)'"; return }

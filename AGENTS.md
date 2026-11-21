@@ -1,6 +1,6 @@
 # AGENTS.md
 
-hars (homeassistant-rust) is a Rust rebuild of Home Assistant's core. **The
+hars is a Rust rebuild of Home Assistant's core. **The
 #1 goal is minimal resource use** (RAM, CPU, allocations, idle wakeups,
 binary size) while behaving exactly like the pinned Home Assistant release.
 

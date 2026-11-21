@@ -283,7 +283,7 @@ shows how.
 ## Planned
 
 The roadmap sets no dates and no order for the items below. To show that you
-need one, [open an integration request](https://github.com/adamt94/homeassistant-rust/issues/new?template=integration_request.yml),
+need one, [open an integration request](https://github.com/adamt94/hars/issues/new?template=integration_request.yml),
 or add a 👍 to a request that exists.
 
 Work left on the integrations above:
@@ -312,7 +312,7 @@ don't carry its code in memory
 
 ## Ask for an integration
 
-[Open an integration request](https://github.com/adamt94/homeassistant-rust/issues/new?template=integration_request.yml).
+[Open an integration request](https://github.com/adamt94/hars/issues/new?template=integration_request.yml).
 Say which devices you have and which entities and services you use. That
 detail decides how much of the integration must be ported first.
 

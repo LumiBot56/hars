@@ -49,7 +49,6 @@
       <circle cx="32" cy="39" r="4.2" fill="#f0763a"/>
     </g>
     <text x="156" y="113" font-size="76" font-weight="700" fill="#ffffff" letter-spacing="-2">hars</text>
-    <text x="330" y="113" font-size="17" fill="#b9a99b" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">homeassistant-rust</text>
 
     <!-- What it is. -->
     <text x="58" y="168" font-size="25" font-weight="600" fill="#ffffff">Home Assistant's core, rebuilt in Rust.</text>

@@ -1,4 +1,4 @@
-//! Core runtime for homeassistant-rust.
+//! Core runtime for `hars`.
 //!
 //! Mirrors the three pillars of Home Assistant's `core.py`:
 //! - [`EventBus`]: typed pub/sub for everything that happens in the system.
