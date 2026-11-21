@@ -142,12 +142,30 @@ enum Ctl {
 }
 
 struct ButtonInfo {
-    entity_id: EntityId,
-    friendly: String,
-    /// The icon the user gave it.
-    icon: Option<String>,
     class: &'static str,
     last: Mutex<Option<String>>,
+}
+
+/// An entity's id, friendly name and the icon the user gave it: what the
+/// registry says of it, taken again when the registry changes
+/// ([`Bulb::follow`]).
+#[derive(PartialEq)]
+struct Ident {
+    entity_id: EntityId,
+    friendly: String,
+    icon: Option<String>,
+}
+
+/// What the bulb's entities write under, held for every state write.
+struct Now {
+    /// False once the entry is stopped: nothing of it writes a state after.
+    alive: bool,
+    light: Option<Ident>,
+    /// The buttons', in [`Bulb::buttons`]' order.
+    buttons: Vec<Ident>,
+    /// The device's own name and the user's, when the entities last
+    /// took them.
+    device: (Option<String>, Option<String>),
 }
 
 /// One bulb: its connection, cached state and entities.
@@ -162,13 +180,13 @@ pub struct Bulb {
     ctl: mpsc::UnboundedSender<Ctl>,
     timing: Timing,
     model: light::Model,
-    light: Option<(EntityId, String)>,
-    /// The icon the user gave the light.
-    light_icon: Option<String>,
+    /// The serial (the device's identifier and the entities' unique ids)
+    /// and the label (the device's own name).
+    serial: String,
+    label: String,
+    /// The restart and identify buttons that run (their rows are enabled).
     buttons: Vec<ButtonInfo>,
-    /// False once the entry is stopped: nothing of it writes a state after.
-    /// Held for every state write.
-    alive: Mutex<bool>,
+    now: Mutex<Now>,
     components: Arc<Components>,
 }
 
@@ -178,33 +196,18 @@ impl Bulb {
         light::state(self.model, c.power, c.color, None)
     }
 
-    /// Write a state, unless the entry was stopped.
-    fn write(
-        &self,
-        id: &EntityId,
-        state: &str,
-        a: Map<String, Value>,
-        context: Option<ha_core::Context>,
-    ) {
-        let alive = self.alive.lock();
-        if *alive {
-            self.hass
-                .set_state_with_context(id.clone(), state, a, context);
-        }
-    }
-
     /// The entry is stopped (HA's unload): its commands end, nothing is
     /// sent to the bulb or written after, and its entities go with their
     /// states and their place as service targets.
     pub fn stop(&self) {
         self.conn.stop();
-        let mut alive = self.alive.lock();
-        *alive = false;
-        if let Some((id, _)) = &self.light {
-            self.components.lights().remove(id);
-            self.hass.remove_state(id);
+        let mut now = self.now.lock();
+        now.alive = false;
+        if let Some(l) = &now.light {
+            self.components.lights().remove(&l.entity_id);
+            self.hass.remove_state(&l.entity_id);
         }
-        for b in &self.buttons {
+        for b in &now.buttons {
             self.components.buttons().remove(&b.entity_id);
             self.hass
                 .restore()
@@ -213,45 +216,81 @@ impl Bulb {
         }
     }
 
+    /// The light's id now, if it runs.
+    fn light_id(&self) -> Option<EntityId> {
+        let now = self.now.lock();
+        now.light.as_ref().map(|l| l.entity_id.clone())
+    }
+
     fn write_light(&self) {
-        let Some((id, friendly)) = &self.light else {
+        let now = self.now.lock();
+        if now.alive {
+            self.put_light(&now);
+        }
+    }
+
+    /// Write the light's state where it is now.
+    fn put_light(&self, now: &Now) {
+        let Some(l) = &now.light else {
             return;
         };
         let ok = self.ok.load(Ordering::Relaxed);
         let s = self.light_state();
         let mut a = crate::light::attributes(&light::capabilities(self.model), &s, ok);
-        if let Some(icon) = &self.light_icon {
+        if let Some(icon) = &l.icon {
             a.insert("icon".into(), json!(icon));
         }
-        a.insert("friendly_name".into(), json!(friendly));
+        a.insert("friendly_name".into(), json!(l.friendly));
         a.insert("supported_features".into(), json!(light::FEATURES));
         let state = match (ok, s.on) {
             (false, _) => "unavailable",
             (true, true) => "on",
             (true, false) => "off",
         };
-        self.write(id, state, a, None);
+        self.hass
+            .set_state_with_context(l.entity_id.clone(), state, a, None);
     }
 
-    fn write_button(&self, b: &ButtonInfo, context: Option<ha_core::Context>) {
+    /// Button `i` pressed at `at`: taken and written under the write
+    /// guard, so a move ([`Bulb::follow`]) comes before both or after both
+    /// (it neither restores over the press nor writes it without its
+    /// context).
+    fn pressed(&self, i: usize, at: String, context: &ha_core::Context) {
+        let now = self.now.lock();
+        *self.buttons[i].last.lock() = Some(at);
+        #[cfg(test)]
+        crate::components::hooks::at("lifx_pressed");
+        if now.alive {
+            self.put_button(&now, i, Some(context.clone()));
+        }
+    }
+
+    /// Write button `i`'s state where it is now.
+    fn put_button(&self, now: &Now, i: usize, context: Option<ha_core::Context>) {
+        let (b, ident) = (&self.buttons[i], &now.buttons[i]);
         let state = match self.ok.load(Ordering::Relaxed) {
             true => b.last.lock().clone().unwrap_or_else(|| "unknown".into()),
             false => "unavailable".into(),
         };
         let mut a = Map::new();
         a.insert("device_class".into(), json!(b.class));
-        if let Some(icon) = &b.icon {
+        if let Some(icon) = &ident.icon {
             a.insert("icon".into(), json!(icon));
         }
-        a.insert("friendly_name".into(), json!(b.friendly));
-        self.write(&b.entity_id, &state, a, context);
+        a.insert("friendly_name".into(), json!(ident.friendly));
+        self.hass
+            .set_state_with_context(ident.entity_id.clone(), state, a, context);
     }
 
     /// The coordinator's listeners: every entity.
     fn write_all(&self) {
-        self.write_light();
-        for b in &self.buttons {
-            self.write_button(b, None);
+        let now = self.now.lock();
+        if !now.alive {
+            return;
+        }
+        self.put_light(&now);
+        for i in 0..self.buttons.len() {
+            self.put_button(&now, i, None);
         }
     }
 
@@ -323,9 +362,8 @@ impl Bulb {
         self.send_ctl(Ctl::Updated);
         self.write_all();
         if let Some(effect) = &p.effect {
-            let (id, _) = self
-                .light
-                .as_ref()
+            let id = self
+                .light_id()
                 .ok_or(ServiceError::Unknown(String::new()))?;
             let mut data = Map::new();
             data.insert("entity_id".into(), json!(id.as_str()));
@@ -599,40 +637,20 @@ pub fn bulb(
     let serial = proto::mac(&found.serial);
     let label = found.cached.label.clone();
     let model = light::Model::of(features(found.product));
-    let light = names.entity("light", &serial, &serial, &label, None);
-    // The icon the user gave an entity is in its state.
-    let icon = |domain: &str, unique_id: &str| {
-        registries
-            .entities
-            .iter()
-            .find(|e| {
-                e.platform == DOMAIN
-                    && e.entity_id.split('.').next() == Some(domain)
-                    && e.unique_id.as_ref().and_then(Value::as_str) == Some(unique_id)
-            })
-            .and_then(|e| e.icon.clone())
-    };
-    let light_icon = icon("light", &serial);
-    let buttons = [("restart", "Restart"), ("identify", "Identify")]
-        .into_iter()
-        .filter_map(|(class, name)| {
-            let (entity_id, friendly) = names.entity(
-                "button",
-                &format!("{serial}_{class}"),
-                &serial,
-                &label,
-                Some(name),
-            )?;
-            let last = crate::button::restore(hass, &entity_id);
-            Some(ButtonInfo {
-                entity_id,
-                friendly,
-                icon: icon("button", &format!("{serial}_{class}")),
-                class,
+    let light = ident(&names, &registries, &serial, &label, None);
+    let mut buttons = Vec::new();
+    let mut idents = Vec::new();
+    for button in BUTTONS {
+        if let Some(ident) = ident(&names, &registries, &serial, &label, Some(button)) {
+            let last = crate::button::restore(hass, &ident.entity_id);
+            buttons.push(ButtonInfo {
+                class: button.0,
                 last: Mutex::new(last),
-            })
-        })
-        .collect();
+            });
+            idents.push(ident);
+        }
+    }
+    let device = device_names(&registries, &serial);
     let (tx, rx) = mpsc::unbounded_channel();
     let b = Arc::new(Bulb {
         hass: hass.clone(),
@@ -643,24 +661,192 @@ pub fn bulb(
         ctl: tx,
         timing,
         model,
-        light,
-        light_icon,
+        serial,
+        label,
         buttons,
-        alive: Mutex::new(true),
+        now: Mutex::new(Now {
+            alive: true,
+            light,
+            buttons: idents,
+            device,
+        }),
         components: components.clone(),
     });
     // HA's coordinator refreshes on its interval only while an entity
     // listens: an entry whose entities are all disabled isn't polled.
-    let listened = b.light.is_some() || !b.buttons.is_empty();
+    let light = b.light_id();
+    let listened = light.is_some() || !b.buttons.is_empty();
     let coordinator = tokio::spawn(coordinate(b.clone(), rx, polling && listened));
-    if b.light.is_some() {
-        components.lights().add(Arc::new(LifxLight(b.clone())));
+    if let Some(id) = light {
+        components.lights().add(Arc::new(LifxLight(b.clone(), id)));
     }
-    for i in 0..b.buttons.len() {
-        components.buttons().add(Arc::new(LifxButton(b.clone(), i)));
+    let ids: Vec<EntityId> = b
+        .now
+        .lock()
+        .buttons
+        .iter()
+        .map(|i| i.entity_id.clone())
+        .collect();
+    for (i, id) in ids.into_iter().enumerate() {
+        components
+            .buttons()
+            .add(Arc::new(LifxButton(b.clone(), i, id)));
     }
     b.write_all();
     (b, coordinator)
+}
+
+/// The restart and identify buttons: device class (and unique id suffix)
+/// and name.
+const BUTTONS: [(&str, &str); 2] = [("restart", "Restart"), ("identify", "Identify")];
+
+/// The id, friendly name and icon the registry gives the bulb's light
+/// (`button: None`) or one of its [`BUTTONS`]; `None` if its row is
+/// disabled.
+fn ident(
+    names: &crate::naming::Names<'_>,
+    registries: &ha_registry::Registries,
+    serial: &str,
+    label: &str,
+    button: Option<(&str, &str)>,
+) -> Option<Ident> {
+    let (domain, unique_id, name) = match button {
+        None => ("light", serial.to_owned(), None),
+        Some((class, name)) => ("button", format!("{serial}_{class}"), Some(name)),
+    };
+    let (entity_id, friendly) = names.entity(domain, &unique_id, serial, label, name)?;
+    // The icon the user gave an entity is in its state.
+    let icon = row(registries, domain, &unique_id).and_then(|e| e.icon.clone());
+    Some(Ident {
+        entity_id,
+        friendly,
+        icon,
+    })
+}
+
+/// What `Components` holds for a bulb: not the bulb, which goes with its
+/// entry's task.
+struct Follow(std::sync::Weak<Bulb>);
+
+impl crate::components::Follower for Follow {
+    fn registry_changed(&self, components: &Components) {
+        if let Some(bulb) = self.0.upgrade() {
+            bulb.follow(components);
+        }
+    }
+}
+
+impl Bulb {
+    /// `Entity._async_registry_updated` and
+    /// `_async_device_registry_updated` for the bulb's entities: one whose
+    /// id or friendly name (its device was named) or icon changed writes
+    /// its state again; one whose id changed is removed (its state too, a
+    /// button's last press kept for a restore) and added under the new id,
+    /// where it writes what it had (a button takes a last press kept under
+    /// that id, as its restore does). A row that is gone or disabled
+    /// changes nothing: its entity runs on until its entry is set up
+    /// again. All under the write guard.
+    fn follow(self: &Arc<Self>, components: &Components) {
+        let registries = components.registries();
+        let names = crate::naming::Names::new(&self.hass, &registries, DOMAIN);
+        let mut now = self.now.lock();
+        if !now.alive {
+            return;
+        }
+        // `_async_device_registry_updated`: a new name for the device has
+        // each entity write, its friendly name changed or not.
+        let device = device_names(&registries, &self.serial);
+        let named = device != now.device;
+        now.device = device;
+        // Only an entity with a row takes what it says: one that runs with
+        // none keeps the id it was given.
+        let fresh = |button: Option<(&str, &str)>| {
+            let unique_id = match button {
+                None => self.serial.clone(),
+                Some((class, _)) => format!("{}_{class}", self.serial),
+            };
+            let domain = if button.is_some() { "button" } else { "light" };
+            row(&registries, domain, &unique_id)?;
+            ident(&names, &registries, &self.serial, &self.label, button)
+        };
+        let mut writes = Vec::new();
+        if let Some(l) = &now.light {
+            let mut changed = false;
+            if let Some(fresh) = fresh(None)
+                && fresh != *l
+            {
+                if fresh.entity_id != l.entity_id {
+                    components.lights().remove(&l.entity_id);
+                    self.hass.remove_state(&l.entity_id);
+                    let light = LifxLight(self.clone(), fresh.entity_id.clone());
+                    components.lights().add(Arc::new(light));
+                }
+                now.light = Some(fresh);
+                changed = true;
+            }
+            if changed || named {
+                writes.push(None);
+            }
+        }
+        for (i, b) in self.buttons.iter().enumerate() {
+            let button = BUTTONS.into_iter().find(|(class, _)| *class == b.class);
+            let old = &now.buttons[i];
+            let fresh = fresh(button).filter(|fresh| fresh != old);
+            if let Some(fresh) = fresh {
+                if fresh.entity_id != old.entity_id {
+                    components.buttons().remove(&old.entity_id);
+                    // `async_remove`: its last press is kept for a restore,
+                    // then its state goes.
+                    self.hass
+                        .restore()
+                        .unregister(&self.hass, old.entity_id.as_str());
+                    self.hass.remove_state(&old.entity_id);
+                    // `async_internal_added_to_hass` again, for the new id.
+                    if let Some(last) = crate::button::restored(&self.hass, &fresh.entity_id) {
+                        *b.last.lock() = last;
+                    }
+                    let button = LifxButton(self.clone(), i, fresh.entity_id.clone());
+                    components.buttons().add(Arc::new(button));
+                }
+                now.buttons[i] = fresh;
+            } else if !named {
+                continue;
+            }
+            writes.push(Some(i));
+        }
+        for write in writes {
+            match write {
+                None => self.put_light(&now),
+                Some(i) => self.put_button(&now, i, None),
+            }
+        }
+    }
+}
+
+/// The bulb's device's own name and the user's, as the registry has them.
+fn device_names(
+    registries: &ha_registry::Registries,
+    serial: &str,
+) -> (Option<String>, Option<String>) {
+    let device = registries.devices.iter().find(|d| {
+        d.identifiers
+            .iter()
+            .any(|i| i[0] == DOMAIN && i[1] == serial)
+    });
+    device.map_or((None, None), |d| (d.name.clone(), d.name_by_user.clone()))
+}
+
+/// The row of the bulb's entity in `domain` with `unique_id`.
+fn row<'a>(
+    registries: &'a ha_registry::Registries,
+    domain: &str,
+    unique_id: &str,
+) -> Option<&'a Arc<ha_registry::Entity>> {
+    registries.entities.iter().find(|e| {
+        e.platform == DOMAIN
+            && e.entity_id.split('.').next() == Some(domain)
+            && e.unique_id.as_ref().and_then(Value::as_str) == Some(unique_id)
+    })
 }
 
 /// Where bulbs are reached: at their own address, or at stand-ins on
@@ -906,6 +1092,8 @@ pub async fn run(
                 );
             }
             let (b, coordinator) = bulb(&components, &title, &host, found, polling, at.timing);
+            let follower = Arc::new(Follow(Arc::downgrade(&b)));
+            components.follow(&entry_id, follower);
             Stopped(b, coordinator)
         };
         if !loaded {
@@ -1012,11 +1200,13 @@ pub(crate) async fn scan(
     bulbs
 }
 
-struct LifxLight(Arc<Bulb>);
+/// The light, as the light component knows it: by the id it had when it
+/// was handed over (one whose id changes is handed over again).
+struct LifxLight(Arc<Bulb>, EntityId);
 
 impl crate::light::Light for LifxLight {
     fn entity_id(&self) -> &EntityId {
-        &self.0.light.as_ref().unwrap_or_else(|| unreachable!()).0
+        &self.1
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -1044,12 +1234,13 @@ impl crate::light::Light for LifxLight {
     }
 }
 
-/// The restart (`0`) or identify (`1`) button.
-struct LifxButton(Arc<Bulb>, usize);
+/// One of the bulb's buttons, by its place in [`Bulb::buttons`], as the
+/// button component knows it ([`LifxLight`]).
+struct LifxButton(Arc<Bulb>, usize, EntityId);
 
 impl Button for LifxButton {
     fn entity_id(&self) -> &EntityId {
-        &self.0.buttons[self.1].entity_id
+        &self.2
     }
 
     fn available(&self) -> bool {
@@ -1057,9 +1248,7 @@ impl Button for LifxButton {
     }
 
     fn pressed(&self, at: String, context: &ha_core::Context) {
-        let b = &self.0.buttons[self.1];
-        *b.last.lock() = Some(at);
-        self.0.write_button(b, Some(context.clone()));
+        self.0.pressed(self.1, at, context);
     }
 
     fn press(&self) -> BoxFuture<'_> {

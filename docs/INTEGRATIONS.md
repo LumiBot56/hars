@@ -36,11 +36,11 @@ An integration reaches hars in one of four ways:
   Hue, LIFX and SwitchBot Cloud. hars checks what you type before it saves
   anything, starts the integration at once, and shows the devices that it
   found. In that last step you can give each device an area, or make a new
-  area there. You can also give a SwitchBot Cloud device a name there. A
-  Philips Hue or LIFX device can't be named in hars yet: only its area can
-  be set. A device that you
+  area there, and give it a name. A device that you
   name gets entity ids to match, as in Home Assistant: a Bot called
-  "Coffee machine" in the Kitchen has `button.kitchen_coffee_machine`.
+  "Coffee machine" in the Kitchen has `button.kitchen_coffee_machine`, and
+  a Hue lamp called "Reading lamp" in the Study has
+  `light.study_reading_lamp`.
   History that was recorded under the old id stays under it. To undo the
   integration, open it and delete its entry.
 
@@ -49,9 +49,12 @@ An integration reaches hars in one of four ways:
 
   The same name, area and labels can be changed later on the device's page.
   Two limits apply there today. hars refuses a new name for a device that
-  has an entity of another integration than SwitchBot Cloud, because that
-  entity would keep the old name until the next start. (A device with no
-  entities, or with SwitchBot Cloud's only, takes a new name.) And a
+  has an entity of another integration than SwitchBot Cloud, Philips Hue or
+  LIFX, because that entity would keep the old name until the next start.
+  It also refuses one for a device with an entity whose own name starts
+  with the device's and that you haven't named, because Home Assistant
+  would rewrite that entity's name. (A device with no entities, or with
+  entities of those three only and none like that, takes a new name.) And a
   device can't be disabled or enabled. Moving a device to another area and
   labelling it work for every device.
 
@@ -92,10 +95,10 @@ everything listed above, hars then makes the same devices, areas,
 entities and entity ids as a fresh Home Assistant 2026.6 would, and the
 lights work at once. (Home Assistant also lists buttons, dials and
 doorbells; hars has no entities for those yet.) In the dialog's last
-step you can put each device in an area. To remove the bridge, open the
+step you can put each device in an area and give it a name. To remove the bridge, open the
 integration and delete its entry: no restart is needed.
 
-Three limits of adding from the UI:
+Two limits of adding from the UI:
 
 - hars does not listen for bridges that announce themselves on the network
   (zeroconf, SSDP, HomeKit), because listening would wake it while idle.
@@ -103,8 +106,6 @@ Three limits of adding from the UI:
 - A first-generation (round) bridge, which only has the old v1 API, can't
   be added. hars says so and makes nothing, where Home Assistant would set
   it up over v1.
-- A Hue device can't be renamed from hars yet (see
-  [the UI](#how-you-add-an-integration)). Rename it in the Hue app instead.
 
 The key that the bridge hands out when you press its button is saved in
 `.storage/core.config_entries`, as in Home Assistant. hars does not write

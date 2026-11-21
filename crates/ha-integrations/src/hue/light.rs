@@ -11,7 +11,7 @@ use crate::light::{
 use ha_core::{EntityId, ServiceError};
 use parking_lot::Mutex;
 use serde_json::{Map, Value, json};
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 const FALLBACK_MIN_MIREDS: i64 = 153;
 const FALLBACK_MAX_MIREDS: i64 = 500;
@@ -101,13 +101,32 @@ pub struct HueLight {
     /// Fixed when the entity is made, as HA's.
     caps: Capabilities,
     /// Brightness to restore after a fading turn-off (`_last_brightness`).
-    last_brightness: Mutex<Option<f64>>,
+    /// What a command keeps is shared with the light under another id
+    /// ([`HueLight::moved`]): a command that began under the old id keeps
+    /// it for the entity.
+    pub(super) last_brightness: Arc<Mutex<Option<f64>>>,
     /// Whether HA's last turn-on set a colour temperature (uncertified
     /// lights only).
-    color_temp_active: Mutex<bool>,
+    color_temp_active: Arc<Mutex<bool>>,
+    /// Removed, or moved to another id: writes nothing more.
+    pub(super) gone: std::sync::atomic::AtomicBool,
 }
 
 impl HueLight {
+    /// The same light under another id, with what it keeps between
+    /// commands: HA's entity, added again after its id changed.
+    pub(super) fn moved(&self, entity_id: EntityId) -> Self {
+        Self {
+            bridge: self.bridge.clone(),
+            rid: self.rid.clone(),
+            entity_id,
+            caps: self.caps.clone(),
+            last_brightness: self.last_brightness.clone(),
+            color_temp_active: self.color_temp_active.clone(),
+            gone: Default::default(),
+        }
+    }
+
     pub fn new(bridge: Weak<Bridge>, resource: &Value, entity_id: EntityId) -> Self {
         let mut features = 0;
         if resource["alert"]["action_values"]
@@ -170,8 +189,9 @@ impl HueLight {
                 features,
                 effect_list,
             },
-            last_brightness: Mutex::new(None),
-            color_temp_active: Mutex::new(false),
+            last_brightness: Default::default(),
+            color_temp_active: Default::default(),
+            gone: Default::default(),
         }
     }
 
@@ -482,13 +502,29 @@ pub struct GroupLight {
     /// The room or zone.
     pub(super) group: String,
     pub(super) entity_id: EntityId,
-    values: Mutex<GroupValues>,
-    restore_brightness: Mutex<Option<f64>>,
+    /// Shared with the group under another id, as [`HueLight`]'s.
+    values: Arc<Mutex<GroupValues>>,
+    pub(super) restore_brightness: Arc<Mutex<Option<f64>>>,
+    /// Moved to another id: writes nothing more.
+    pub(super) gone: std::sync::atomic::AtomicBool,
 }
 
 const GROUP_FEATURES: u32 = FEATURE_FLASH | FEATURE_TRANSITION;
 
 impl GroupLight {
+    /// The same group under another id ([`HueLight::moved`]).
+    pub(super) fn moved(&self, entity_id: EntityId) -> Self {
+        Self {
+            bridge: self.bridge.clone(),
+            rid: self.rid.clone(),
+            group: self.group.clone(),
+            entity_id,
+            values: self.values.clone(),
+            restore_brightness: self.restore_brightness.clone(),
+            gone: Default::default(),
+        }
+    }
+
     pub fn new(
         bridge: Weak<Bridge>,
         rid: &str,
@@ -501,7 +537,7 @@ impl GroupLight {
             rid: rid.to_owned(),
             group: group.to_owned(),
             entity_id,
-            values: Mutex::new(GroupValues {
+            values: Arc::new(Mutex::new(GroupValues {
                 modes: Modes::new([ColorMode::Onoff]),
                 mode: ColorMode::Onoff,
                 brightness: None,
@@ -511,8 +547,9 @@ impl GroupLight {
                 max_kelvin: 6535,
                 xy: None,
                 dynamics: false,
-            }),
-            restore_brightness: Mutex::new(None),
+            })),
+            restore_brightness: Default::default(),
+            gone: Default::default(),
         };
         g.update_values(store);
         g

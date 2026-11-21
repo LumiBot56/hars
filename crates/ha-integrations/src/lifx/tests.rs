@@ -548,7 +548,7 @@ async fn a_command_ends_when_its_entry_is_removed() {
     let coordinator_polls = || f.got.lock().iter().filter(|g| g.0 == ty::LIGHT_GET).count();
     assert!(state(&hass, LIGHT) != Value::Null);
     f.silent.store(true, Ordering::Relaxed);
-    let light = LifxLight(b.clone());
+    let light = LifxLight(b.clone(), b.light_id().unwrap());
     let call = tokio::spawn(async move {
         use crate::light::Light;
         light.turn_off(Default::default()).await
@@ -578,7 +578,8 @@ async fn a_command_ends_when_its_entry_is_removed() {
     assert_eq!(f.got.lock().len(), sent);
     drop(components);
     // A press of a button it still holds reaches nothing either.
-    LifxButton(b.clone(), 0).press().await.unwrap();
+    let id = b.now.lock().buttons[0].entity_id.clone();
+    LifxButton(b.clone(), 0, id).press().await.unwrap();
     assert_eq!(f.got.lock().len(), sent);
     // And its socket is closed, though the bulb is still held: its port
     // is free again.
@@ -882,4 +883,146 @@ async fn the_entry_that_claims_a_bulb_sets_it_up_before_another() {
     }
     first.abort();
     second.abort();
+}
+
+/// Components on `registries`, as a registry edit leaves them.
+fn edited(hass: &Hass, edit: impl Fn(&mut Registries)) -> Arc<Components> {
+    let mut r = registries();
+    edit(&mut r);
+    Components::new(hass, Arc::new(r), Profiles::default())
+}
+
+/// A bulb running with no rows (its entities were given ids at set-up)
+/// keeps those ids whatever the registry does: an edit elsewhere doesn't
+/// move them, though the state under the id they would get now is theirs.
+#[tokio::test]
+async fn entities_with_no_row_keep_their_ids() {
+    let f = fake_bulb(65535, [0, 0, 39321, 2700]).await;
+    let hass = Hass::new();
+    let components = Components::new(&hass, Arc::new(Registries::default()), Profiles::default());
+    let t = timing(false);
+    let found = connect("127.0.0.1", ("127.0.0.1", f.port), UID, t)
+        .await
+        .unwrap();
+    let (b, _) = bulb(&components, "Kitchen Light", "127.0.0.1", found, true, t);
+    let light = b.light_id().unwrap();
+    for _ in 0..2 {
+        b.follow(&components);
+        assert_eq!(b.light_id(), Some(light.clone()));
+    }
+    assert!(hass.states().get(&light).is_some());
+}
+
+/// A button given an id under which `unknown` was kept takes it, as HA's
+/// restore does, over the press it had.
+#[tokio::test]
+async fn a_moved_button_takes_what_was_kept_under_its_new_id() {
+    let f = fake_bulb(65535, [0, 0, 39321, 2700]).await;
+    let (hass, b, _) = setup(&f, timing(false)).await;
+    let new = EntityId::parse("button.desk_restart").unwrap();
+    hass.set_state(new.clone(), "unknown", Default::default());
+    hass.restore().register(new.as_str(), None);
+    hass.restore().unregister(&hass, new.as_str());
+    hass.remove_state(&new);
+    *b.buttons[0].last.lock() = Some("2026-01-01T00:00:00+00:00".into());
+    b.write_all();
+    let moved = edited(&hass, |r| {
+        for e in &mut r.entities {
+            if e.entity_id == "button.kitchen_kitchen_light_restart" {
+                let mut row = (**e).clone();
+                row.entity_id = new.to_string();
+                *e = Arc::new(row);
+            }
+        }
+    });
+    b.follow(&moved);
+    assert_eq!(
+        state(&hass, "button.kitchen_kitchen_light_restart"),
+        Value::Null
+    );
+    assert_eq!(state(&hass, new.as_str())["state"], "unknown");
+}
+
+/// The device given the name it has already (its own, as the user's)
+/// changes no friendly name, but each entity writes, as HA's do.
+#[tokio::test]
+async fn a_device_named_as_it_was_has_its_entities_write() {
+    let f = fake_bulb(65535, [0, 0, 39321, 2700]).await;
+    let (hass, b, _) = setup(&f, timing(false)).await;
+    let reported = || {
+        hass.states()
+            .get(&EntityId::parse(LIGHT).unwrap())
+            .unwrap()
+            .last_reported
+            .get()
+    };
+    let before = reported();
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let named = edited(&hass, |r| {
+        let mut d = (*r.devices[0]).clone();
+        d.name_by_user = Some("Kitchen Light".into());
+        r.devices[0] = Arc::new(d);
+    });
+    b.follow(&named);
+    assert_eq!(
+        state(&hass, LIGHT)["attributes"]["friendly_name"],
+        "Kitchen Light"
+    );
+    assert!(reported() > before, "the light did not write");
+}
+
+/// A press while a rename moves the button to an id under which `unknown`
+/// was kept: the two come one after the other, never one inside the
+/// other. The rename is tried once the press is taken: if the press holds
+/// the write guard it waits until the press is written. Either way the
+/// end is one of the two orders: renamed then pressed (the press under
+/// the new id, with the caller's context), or pressed then renamed (the
+/// press kept for the old id, and the new id restoring `unknown`).
+#[tokio::test]
+async fn a_press_while_its_button_moves_is_written_whole_under_the_new_id() {
+    let f = fake_bulb(65535, [0, 0, 39321, 2700]).await;
+    let (hass, b, _) = setup(&f, timing(false)).await;
+    let old = EntityId::parse("button.kitchen_kitchen_light_restart").unwrap();
+    let new = EntityId::parse("button.desk_restart").unwrap();
+    hass.set_state(new.clone(), "unknown", Default::default());
+    hass.restore().register(new.as_str(), None);
+    hass.restore().unregister(&hass, new.as_str());
+    hass.remove_state(&new);
+    let moved = edited(&hass, |r| {
+        for e in &mut r.entities {
+            if e.entity_id == old.as_str() {
+                let mut row = (**e).clone();
+                row.entity_id = new.to_string();
+                *e = Arc::new(row);
+            }
+        }
+    });
+    let later = Arc::new(Mutex::new(None));
+    let (bulb, deferred) = (b.clone(), later.clone());
+    crate::components::hooks::set("lifx_pressed", move || {
+        let free = bulb.now.try_lock().is_some();
+        match free {
+            true => bulb.follow(&moved),
+            false => *deferred.lock() = Some(moved),
+        }
+    });
+    let context = ha_core::Context::new();
+    let at = "2026-01-01T00:00:00+00:00".to_owned();
+    LifxButton(b.clone(), 0, old.clone()).pressed(at.clone(), &context);
+    assert!(!crate::components::hooks::pending("lifx_pressed"));
+    let pressed_first = later.lock().is_some();
+    if let Some(moved) = later.lock().take() {
+        b.follow(&moved);
+    }
+    assert!(hass.states().get(&old).is_none());
+    let state = hass.states().get(&new).unwrap();
+    if pressed_first {
+        let kept = hass.restore().last_state(old.as_str()).unwrap();
+        assert_eq!(kept["state"], at.as_str());
+        assert_eq!(state.state.as_str(), "unknown");
+        assert_ne!(state.context.id, context.id);
+    } else {
+        assert_eq!(state.state.as_str(), at);
+        assert_eq!(state.context.id, context.id);
+    }
 }

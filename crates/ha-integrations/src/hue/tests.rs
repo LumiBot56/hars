@@ -64,7 +64,8 @@ fn bridge(api: Api) -> Arc<Bridge> {
     let resources = fixture("resource")["data"].as_array().unwrap().clone();
     let bridge = Arc::new(Bridge {
         hass,
-        registries,
+        registries: RwLock::new(registries),
+        names: Default::default(),
         api,
         store: RwLock::new(Store::new(resources)),
         ignore_availability: Vec::new(),
@@ -76,7 +77,6 @@ fn bridge(api: Api) -> Arc<Bridge> {
     });
     platforms.bridges.write().push(Arc::downgrade(&bridge));
     bridge.add_entities();
-    bridge.write_all();
     bridge
 }
 
@@ -695,12 +695,825 @@ async fn a_scene_deleted_while_it_is_activated_leaves_no_state() {
     assert!(b.others.read().iter().all(|e| e.entity_id.as_str() != id));
 }
 
+/// The registries `b` has, with `change` made to a copy of each row.
+fn changed(
+    b: &Bridge,
+    device: impl Fn(&mut ha_registry::Device),
+    entity: impl Fn(&mut ha_registry::Entity),
+) -> Arc<Registries> {
+    let mut r = (*b.rows()).clone();
+    for d in &mut r.devices {
+        let mut row = (**d).clone();
+        device(&mut row);
+        *d = Arc::new(row);
+    }
+    for e in &mut r.entities {
+        let mut row = (**e).clone();
+        entity(&mut row);
+        *e = Arc::new(row);
+    }
+    Arc::new(r)
+}
+
+/// The scene `id` and the Hue id of its room.
+fn scene_and_room(b: &Bridge, id: &str) -> (Arc<HueEntity>, String) {
+    let scene = b
+        .others
+        .read()
+        .iter()
+        .find(|e| e.entity_id.as_str() == id)
+        .cloned();
+    let scene = scene.unwrap();
+    let store = b.store.read();
+    let r = store.get(&scene.rid).unwrap();
+    let room = HueEntity::device(scene.kind, &scene.rid, r, &store).unwrap();
+    let room = room["id"].as_str().unwrap().to_owned();
+    (scene.clone(), room)
+}
+
+/// A state made before the user names the device is made again with the
+/// new name before it's written: a scene activated (its state made on the
+/// service call's task) while its room is named shows the room's new name,
+/// not the old one written over the follow's.
+#[tokio::test]
+async fn a_state_made_before_a_device_is_named_takes_the_new_name() {
+    let b = bridge(offline());
+    let id = "scene.bedroom_bedroom_dimmed";
+    let (scene, room) = scene_and_room(&b, id);
+    let named = changed(
+        &b,
+        |d| {
+            if d.identifiers.iter().any(|i| i[1] == room.as_str()) {
+                d.name_by_user = Some("Main bedroom".into());
+            }
+        },
+        |_| {},
+    );
+    let follower = b.clone();
+    AFTER_RENDER.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || follower.follow(named)));
+    });
+    let _ = scene.activate(None, false, None, None).await;
+    assert!(
+        AFTER_RENDER.with(|hook| hook.borrow().is_none()),
+        "not reached"
+    );
+    let (_, attributes) = state_json(&b.hass, id).unwrap();
+    assert_eq!(attributes["friendly_name"], "Main bedroom Dimmed");
+}
+
+/// An entity given another id while a state of it is being made writes
+/// that state nowhere: its old id has none, and the entity runs under the
+/// new one, where it writes.
+#[tokio::test]
+async fn an_entity_moved_while_its_state_is_made_writes_only_under_its_new_id() {
+    let b = bridge(offline());
+    let (old, new) = ("scene.bedroom_bedroom_dimmed", "scene.bedroom_dimmed");
+    let (scene, _) = scene_and_room(&b, old);
+    let moved = changed(
+        &b,
+        |_| {},
+        |e| {
+            if e.entity_id == old {
+                e.entity_id = new.into();
+            }
+        },
+    );
+    let follower = b.clone();
+    AFTER_RENDER.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || follower.follow(moved)));
+    });
+    let _ = scene.activate(None, false, None, None).await;
+    assert!(
+        AFTER_RENDER.with(|hook| hook.borrow().is_none()),
+        "not reached"
+    );
+    assert_eq!(state_json(&b.hass, old), None);
+    let (_, attributes) = state_json(&b.hass, new).unwrap();
+    assert_eq!(attributes["friendly_name"], "Bedroom Dimmed");
+    let running = b.others.read().iter().any(|e| e.entity_id.as_str() == new);
+    assert!(running);
+    // What still holds the entity under its old id writes nothing more.
+    assert!(scene.gone.load(std::sync::atomic::Ordering::Relaxed));
+    b.write_entity(&scene);
+    assert_eq!(state_json(&b.hass, old), None);
+}
+
+/// A device deleted on the bridge while one of its lights is given another
+/// id (the delete found the light under its old id): the light goes from
+/// where it is now, its new id, with nothing left under either.
+#[tokio::test]
+async fn a_device_deleted_while_its_light_moves_leaves_nothing() {
+    let b = bridge(offline());
+    let light = b.lights.read()[0].clone();
+    let (old, new) = (light.entity_id.to_string(), "light.moved_away");
+    let device = {
+        let store = b.store.read();
+        let device = store.device_of(&light.rid).unwrap();
+        device["id"].as_str().unwrap().to_owned()
+    };
+    let gone = b.on_device(&device);
+    assert!(gone.lights.iter().any(|l| Arc::ptr_eq(l, &light)));
+    let moved = changed(
+        &b,
+        |_| {},
+        |e| {
+            if e.entity_id == old {
+                e.entity_id = new.into();
+            }
+        },
+    );
+    b.follow(moved);
+    assert!(state_json(&b.hass, new).is_some());
+    b.remove(&gone);
+    assert_eq!(state_json(&b.hass, &old), None);
+    assert_eq!(state_json(&b.hass, new), None);
+    assert!(b.lights.read().iter().all(|l| l.rid != light.rid));
+}
+
+/// A scene a service call picked under its old id, activated once it has
+/// another: the activation is the entity's, written under its new id.
+#[tokio::test]
+async fn a_scene_activated_under_its_old_id_shows_it_under_the_new() {
+    let b = bridge(offline());
+    let (old, new) = ("scene.bedroom_bedroom_dimmed", "scene.bedroom_dimmed");
+    let (scene, _) = scene_and_room(&b, old);
+    assert_eq!(state_json(&b.hass, old).unwrap().0, "unknown");
+    let moved = changed(
+        &b,
+        |_| {},
+        |e| {
+            if e.entity_id == old {
+                e.entity_id = new.into();
+            }
+        },
+    );
+    b.follow(moved);
+    let _ = scene.activate(None, false, None, None).await;
+    assert_eq!(state_json(&b.hass, old), None);
+    let (state, _) = state_json(&b.hass, new).unwrap();
+    assert_ne!(state, "unknown", "the activation was lost");
+}
+
+/// What a light command keeps (the brightness a fading turn-off restores)
+/// is the entity's: one that began under the old id is there under the
+/// new one.
+#[tokio::test]
+async fn what_a_command_keeps_follows_a_light_to_its_new_id() {
+    let b = bridge(offline());
+    let light = b.lights.read()[0].clone();
+    let old = light.entity_id.to_string();
+    let moved = changed(
+        &b,
+        |_| {},
+        |e| {
+            if e.entity_id == old {
+                e.entity_id = "light.moved_away".into();
+            }
+        },
+    );
+    b.follow(moved);
+    let now = b
+        .lights
+        .read()
+        .iter()
+        .find(|l| l.rid == light.rid)
+        .cloned()
+        .unwrap();
+    assert_eq!(now.entity_id.as_str(), "light.moved_away");
+    *light.last_brightness.lock() = Some(42.0);
+    assert_eq!(*now.last_brightness.lock(), Some(42.0));
+}
+
+/// A scene activated while a rename moves it to an id under which
+/// `unknown` was kept: the move's restore comes before the activation,
+/// not over it.
+#[tokio::test]
+async fn an_activation_is_not_restored_over_by_a_move() {
+    let b = bridge(offline());
+    let (old, new) = ("scene.bedroom_bedroom_dimmed", "scene.bedroom_dimmed");
+    let kept = EntityId::parse(new).unwrap();
+    b.hass
+        .set_state(kept.clone(), "unknown", Default::default());
+    b.hass.restore().register(new, None);
+    b.hass.restore().unregister(&b.hass, new);
+    b.hass.remove_state(&kept);
+    let (scene, _) = scene_and_room(&b, old);
+    let moved = changed(
+        &b,
+        |_| {},
+        |e| {
+            if e.entity_id == old {
+                e.entity_id = new.into();
+            }
+        },
+    );
+    let follower = b.clone();
+    AFTER_RENDER.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || follower.follow(moved)));
+    });
+    let _ = scene.activate(None, false, None, None).await;
+    assert!(
+        AFTER_RENDER.with(|hook| hook.borrow().is_none()),
+        "not reached"
+    );
+    let (state, _) = state_json(&b.hass, new).unwrap();
+    assert_ne!(state, "unknown", "the move restored over the activation");
+}
+
+/// How many lights the light component serves under `id`.
+fn routed(b: &Bridge, id: &str) -> usize {
+    b.platforms
+        .lights
+        .ids()
+        .iter()
+        .filter(|i| i.as_str() == id)
+        .count()
+}
+
+/// `change` for the row now under `old`: the registries with it at `new`.
+fn moved_to(b: &Bridge, old: &str, new: &'static str) -> Arc<Registries> {
+    let old = old.to_owned();
+    changed(
+        b,
+        |_| {},
+        move |e| {
+            if e.entity_id == old {
+                e.entity_id = new.into();
+            }
+        },
+    )
+}
+
+/// Run `rename` at `point` if the write guard is free there (the code
+/// doesn't hold it), else once the step that reached it is done
+/// (`finish`).
+fn rename_at(b: &Arc<Bridge>, point: &'static str, moved: Arc<Registries>) -> impl FnOnce() {
+    let later = Arc::new(parking_lot::Mutex::new(None));
+    let (bridge, deferred, fresh) = (b.clone(), later.clone(), moved);
+    crate::components::hooks::set(point, move || {
+        let free = bridge.alive.try_lock().is_some();
+        match free {
+            true => bridge.follow(fresh),
+            false => *deferred.lock() = Some(fresh),
+        }
+    });
+    let bridge = b.clone();
+    move || {
+        assert!(
+            !crate::components::hooks::pending(point),
+            "{point} not reached"
+        );
+        if let Some(fresh) = later.lock().take() {
+            bridge.follow(fresh);
+        }
+    }
+}
+
+/// A light group deleted on the bridge while a rename is moving it (the
+/// rename has put the group in the bridge's list under its new id, and
+/// not yet handed it to the light component): the deletion waits for the
+/// rename, then drops the group where it is, so neither id serves it or
+/// has a state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_group_deleted_while_it_moves_leaves_nothing() {
+    let b = bridge(offline());
+    let g = b.groups.read()[0].clone();
+    let (old, new) = (g.entity_id.to_string(), "light.moved_group");
+    let moved = moved_to(&b, &old, new);
+    let deleted = json!([{"creationtime": "2026-01-01T00:00:00Z", "id": "gone", "type": "delete",
+                          "data": [{"id": g.rid, "type": "grouped_light"}]}])
+    .to_string();
+    // The rename, paused between the list and the component.
+    let (paused_tx, paused) = std::sync::mpsc::channel();
+    let (resume, resume_rx) = std::sync::mpsc::channel::<()>();
+    let renamer = b.clone();
+    let rename = std::thread::spawn(move || {
+        crate::components::hooks::set("group_swapped", move || {
+            let _ = paused_tx.send(());
+            let _ = resume_rx.recv();
+        });
+        renamer.follow(moved);
+    });
+    paused.recv().unwrap();
+    // The deletion, on its own thread: it goes on once it waits for the
+    // write guard, or is done.
+    let (said_tx, said) = std::sync::mpsc::channel();
+    let deleter = b.clone();
+    let waits = said_tx.clone();
+    let delete = std::thread::spawn(move || {
+        crate::components::hooks::set("alive_waits", move || {
+            let _ = waits.send("waits");
+        });
+        deleter.handle_data(&deleted);
+        let _ = said_tx.send("done");
+    });
+    said.recv().unwrap();
+    resume.send(()).unwrap();
+    rename.join().unwrap();
+    delete.join().unwrap();
+    assert_eq!((routed(&b, &old), routed(&b, new)), (0, 0));
+    assert_eq!(state_json(&b.hass, &old), None);
+    assert_eq!(state_json(&b.hass, new), None);
+}
+
+/// A scene reported again as a smart scene (the same resource id) while
+/// the scene runs: as HA's platform does with an entity whose unique id is
+/// taken, the new one is not made, and one entity serves the id.
+#[tokio::test]
+async fn a_resource_back_as_another_type_makes_no_second_entity() {
+    let b = bridge(offline());
+    let id = "scene.bedroom_bedroom_dimmed";
+    let (scene, _) = scene_and_room(&b, id);
+    let mut smart = b.store.read().get(&scene.rid).unwrap().clone();
+    smart["type"] = json!("smart_scene");
+    let added = json!([{"creationtime": "2026-01-01T00:00:00Z", "id": "again", "type": "add",
+                        "data": [smart]}]);
+    b.handle_data(&added.to_string());
+    let running: Vec<String> = b
+        .others
+        .read()
+        .iter()
+        .filter(|e| e.rid == scene.rid)
+        .map(|e| e.entity_id.to_string())
+        .collect();
+    assert_eq!(running, [id]);
+    let served = b
+        .platforms
+        .scenes
+        .ids()
+        .iter()
+        .filter(|s| s.as_str() == id)
+        .count();
+    assert_eq!(served, 1);
+}
+
+/// A scene renamed while its room is away (it can't be written then, so
+/// it has no state under its new id) has its state again when the room
+/// comes back.
+#[tokio::test]
+async fn a_scene_renamed_while_its_room_is_away_is_written_when_it_returns() {
+    let b = bridge(offline());
+    let (old, new) = ("scene.bedroom_bedroom_dimmed", "scene.bedroom_dimmed");
+    let (_, room) = scene_and_room(&b, old);
+    let resource = b.store.read().get(&room).unwrap().clone();
+    let ty = resource["type"].as_str().unwrap().to_owned();
+    let deleted = json!([{"creationtime": "2026-01-01T00:00:00Z", "id": "gone", "type": "delete",
+                          "data": [{"id": room, "type": ty}]}]);
+    b.handle_data(&deleted.to_string());
+    b.follow(moved_to(&b, old, new));
+    assert_eq!(state_json(&b.hass, new), None);
+    let added = json!([{"creationtime": "2026-01-01T00:00:00Z", "id": "back", "type": "add",
+                        "data": [resource]}]);
+    b.handle_data(&added.to_string());
+    assert!(
+        state_json(&b.hass, new).is_some(),
+        "no state when its room came back"
+    );
+}
+
+/// A light group that comes back while a rename gives its row another id
+/// is served once, under the new id.
+#[tokio::test]
+async fn a_group_added_while_it_moves_is_served_once_under_its_new_id() {
+    let b = bridge(offline());
+    let g = b.groups.read()[0].clone();
+    let (old, new) = (g.entity_id.to_string(), "light.moved_group");
+    let resource = b.store.read().get(&g.rid).unwrap().clone();
+    let moved = moved_to(&b, &old, new);
+    let deleted = json!([{"creationtime": "2026-01-01T00:00:00Z", "id": "gone", "type": "delete",
+                          "data": [{"id": g.rid, "type": "grouped_light"}]}]);
+    b.handle_data(&deleted.to_string());
+    assert_eq!(routed(&b, &old), 0);
+    let finish = rename_at(&b, "hue_added", moved);
+    let added = json!([{"creationtime": "2026-01-01T00:00:00Z", "id": "back", "type": "add",
+                        "data": [resource]}]);
+    b.handle_data(&added.to_string());
+    finish();
+    assert_eq!((routed(&b, &old), routed(&b, new)), (0, 1));
+    assert_eq!(state_json(&b.hass, &old), None);
+    assert!(state_json(&b.hass, new).is_some());
+}
+
+/// A scene picked for activation, then deleted and added again on the
+/// bridge (the same resource id) before the activation is taken: the new
+/// scene is another entity and keeps its own state.
+#[tokio::test]
+async fn an_activation_does_not_reach_a_scene_made_since() {
+    let b = bridge(offline());
+    let id = "scene.bedroom_bedroom_dimmed";
+    let (scene, _) = scene_and_room(&b, id);
+    let resource = b.store.read().get(&scene.rid).unwrap().clone();
+    let stream = b.clone();
+    let rid = scene.rid.clone();
+    AFTER_RENDER.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            let deleted = json!([{"creationtime": "2026-01-01T00:00:00Z", "id": "gone",
+                                  "type": "delete", "data": [{"id": rid, "type": "scene"}]}]);
+            stream.handle_data(&deleted.to_string());
+            let added = json!([{"creationtime": "2026-01-01T00:00:00Z", "id": "back",
+                                "type": "add", "data": [resource]}]);
+            stream.handle_data(&added.to_string());
+        }));
+    });
+    let _ = scene.activate(None, false, None, None).await;
+    assert!(
+        AFTER_RENDER.with(|hook| hook.borrow().is_none()),
+        "not reached"
+    );
+    let replacement = b
+        .others
+        .read()
+        .iter()
+        .any(|e| e.rid == scene.rid && !Arc::ptr_eq(e, &scene));
+    assert!(replacement);
+    assert_eq!(state_json(&b.hass, id).unwrap().0, "unknown");
+}
+
+/// A bridge on a live registry (in memory), following it as a set-up
+/// one does, with its entities made and written. Run inside a runtime.
+fn live_bridge() -> (
+    Arc<Bridge>,
+    Arc<ha_registry::Registry>,
+    Arc<crate::components::Components>,
+) {
+    let hass = Hass::new();
+    let registry = ha_registry::Registry::in_memory(&hass, registries());
+    let components =
+        crate::components::Components::new(&hass, registry.clone(), Profiles::default());
+    let resources = fixture("resource")["data"].as_array().unwrap().clone();
+    let b = Arc::new(Bridge {
+        hass,
+        registries: RwLock::new(components.registries()),
+        names: Default::default(),
+        api: offline(),
+        store: RwLock::new(Store::new(resources)),
+        ignore_availability: Vec::new(),
+        lights: RwLock::default(),
+        groups: RwLock::default(),
+        others: RwLock::default(),
+        platforms: components.hue(),
+        alive: parking_lot::Mutex::new(true),
+    });
+    b.add_entities();
+    components.follow("entry", Arc::new(follow::Follow(Arc::downgrade(&b))));
+    (b, registry, components)
+}
+
+/// Rename the entity `old` to `new` as the WebSocket command does.
+fn rename(
+    registry: &ha_registry::Registry,
+    components: &crate::components::Components,
+    old: &str,
+    new: &str,
+) -> Result<Arc<ha_registry::Entity>, ha_registry::RenameRefusal> {
+    let follows = &crate::components::follows;
+    components.registry_edit(|| registry.rename_entity(old, new, &Default::default(), follows))
+}
+
+/// A new resource like `like`, with id `id` and `fields` replaced.
+fn like(b: &Bridge, like: &str, id: &str, fields: Value) -> Value {
+    let mut r = b.store.read().get(like).unwrap().clone();
+    r["id"] = json!(id);
+    for (k, v) in fields.as_object().unwrap() {
+        r[k] = v.clone();
+    }
+    r
+}
+
+/// A Hue light the bridge reports while a rename gives another light the
+/// id it would take (the registry has the new row, the running entities
+/// have not followed yet), by the event stream or in a reconnect's
+/// snapshot: it waits for them, and takes another id. One light is served
+/// under the rename's id.
+#[test]
+fn a_new_light_does_not_take_an_id_a_rename_is_giving() {
+    for snapshot in [false, true] {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let _rt = rt.enter();
+        new_light_during_a_rename(snapshot);
+    }
+}
+
+fn new_light_during_a_rename(snapshot: bool) {
+    let (b, registry, components) = live_bridge();
+    let light = b.lights.read()[0].clone();
+    let old = light.entity_id.to_string();
+    let wanted = "light.review_desk";
+    // A new device with one light, named so its light takes `wanted`.
+    let (device_id, light_id) = (
+        "00000000-0000-4000-8000-0000000000d1",
+        "00000000-0000-4000-8000-0000000000d2",
+    );
+    let device = b.store.read().device_of(&light.rid).unwrap()["id"].clone();
+    let device = like(
+        &b,
+        device.as_str().unwrap(),
+        device_id,
+        json!({
+            "metadata": {"name": "Review Desk", "archetype": "classic_bulb"},
+            "services": [{"rid": light_id, "rtype": "light"}],
+        }),
+    );
+    let resource = like(
+        &b,
+        &light.rid,
+        light_id,
+        json!({
+            "owner": {"rid": device_id, "rtype": "device"},
+        }),
+    );
+    let mut fresh = fixture("resource")["data"].as_array().unwrap().clone();
+    fresh.extend([device.clone(), resource.clone()]);
+    let added = json!([{"creationtime": "2026-01-01T00:00:00Z", "id": "new", "type": "add",
+                        "data": [device, resource]}])
+    .to_string();
+    // Between the registry's change and the entities following it, the
+    // bridge reports the new light, on a thread of its own as the stream
+    // does. The rename goes on once that thread either waits for the
+    // set-up lock or is done.
+    let stream = b.clone();
+    let reported: Arc<parking_lot::Mutex<Option<std::thread::JoinHandle<()>>>> = Arc::default();
+    let handle = reported.clone();
+    crate::components::hooks::set("edited", move || {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let waits = tx.clone();
+        let t = std::thread::spawn(move || {
+            crate::components::hooks::set("setup_waits", move || {
+                let _ = waits.send("waits");
+            });
+            match snapshot {
+                true => stream.apply_snapshot(fresh),
+                false => stream.handle_data(&added),
+            }
+            let _ = tx.send("done");
+        });
+        let _ = rx.recv();
+        *handle.lock() = Some(t);
+    });
+    let renamed = rename(&registry, &components, &old, wanted);
+    assert!(renamed.is_ok(), "{renamed:?}");
+    reported.lock().take().expect("not reached").join().unwrap();
+    let lights = b.lights.read().clone();
+    let under: Vec<&str> = lights
+        .iter()
+        .filter(|l| l.entity_id.as_str() == wanted)
+        .map(|l| l.rid.as_str())
+        .collect();
+    assert_eq!(under, [light.rid.as_str()], "snapshot: {snapshot}");
+    assert!(
+        lights
+            .iter()
+            .any(|l| l.rid == light_id && l.entity_id.as_str() != wanted)
+    );
+    assert_eq!(routed(&b, wanted), 1, "snapshot: {snapshot}");
+}
+
+/// A scene the bridge reports before its room is made when the room comes,
+/// with its state written then: a rename to its id after that is refused
+/// (the id is taken), and one scene is served under it.
+#[tokio::test]
+async fn a_scene_made_when_its_room_comes_has_its_state_at_once() {
+    let (b, registry, components) = live_bridge();
+    let (scene, room) = scene_and_room(&b, "scene.bedroom_bedroom_dimmed");
+    let (room_id, scene_id) = (
+        "00000000-0000-4000-8000-0000000000e1",
+        "00000000-0000-4000-8000-0000000000e2",
+    );
+    let new_room = like(
+        &b,
+        &room,
+        room_id,
+        json!({
+            "metadata": {"name": "Review Desk", "archetype": "office"},
+            "children": [], "services": [],
+        }),
+    );
+    let new_scene = like(
+        &b,
+        &scene.rid,
+        scene_id,
+        json!({
+            "group": {"rid": room_id, "rtype": "room"},
+        }),
+    );
+    let add = |r: &Value| {
+        json!([{"creationtime": "2026-01-01T00:00:00Z", "id": "new", "type": "add",
+                "data": [r]}])
+        .to_string()
+    };
+    b.handle_data(&add(&new_scene));
+    assert!(
+        b.others.read().iter().all(|e| e.rid != scene_id),
+        "made before its room"
+    );
+    b.handle_data(&add(&new_room));
+    let made = b.others.read().iter().find(|e| e.rid == scene_id).cloned();
+    let made = made.expect("not made when its room came");
+    let id = made.entity_id.to_string();
+    assert!(state_json(&b.hass, &id).is_some(), "{id} has no state");
+    let renamed = rename(&registry, &components, scene.entity_id.as_str(), &id);
+    assert_eq!(renamed.err(), Some(ha_registry::RenameRefusal::Registered));
+    let served = b
+        .platforms
+        .scenes
+        .ids()
+        .iter()
+        .filter(|s| s.as_str() == id)
+        .count();
+    assert_eq!(served, 1);
+}
+
+/// A reconnect's snapshot with an update before an addition: the update
+/// is written without the set-up lock held (only the addition takes it),
+/// so a registry edit or a set-up elsewhere doesn't wait for the whole
+/// batch.
+#[tokio::test]
+async fn a_reconnects_updates_wait_for_no_lock() {
+    let b = bridge(offline());
+    let mut fresh = fixture("resource")["data"].as_array().unwrap().clone();
+    let first_light = fresh.iter().position(|r| r["type"] == "light").unwrap();
+    fresh[first_light]["on"]["on"] = json!(!fresh[first_light]["on"]["on"].as_bool().unwrap());
+    let (device_id, light_id) = (
+        "00000000-0000-4000-8000-0000000000f0",
+        "00000000-0000-4000-8000-0000000000f1",
+    );
+    let device = like(
+        &b,
+        LAMP_DEVICE,
+        device_id,
+        json!({
+            "metadata": {"name": "Late lamp", "archetype": "classic_bulb"},
+            "services": [{"rid": light_id, "rtype": "light"}],
+        }),
+    );
+    let light = like(
+        &b,
+        LAMP,
+        light_id,
+        json!({"owner": {"rid": device_id, "rtype": "device"}}),
+    );
+    fresh.extend([device, light]);
+    let free = Arc::new(parking_lot::Mutex::new(None));
+    let seen = free.clone();
+    AFTER_RENDER.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            *seen.lock() = Some(!crate::switchbot_cloud::SETUP.held_here());
+        }));
+    });
+    b.apply_snapshot(fresh);
+    assert_eq!(
+        *free.lock(),
+        Some(true),
+        "the update waited for the set-up lock"
+    );
+    assert!(
+        b.lights
+            .read()
+            .iter()
+            .any(|l| l.rid == "00000000-0000-4000-8000-0000000000f1")
+    );
+}
+
+/// The ids `state_changed` fired for, in order.
+fn changed_ids(rx: &mut tokio::sync::broadcast::Receiver<Arc<ha_core::Event>>) -> Vec<String> {
+    let mut out = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        if let ha_core::EventKind::StateChanged { entity_id, .. } = &e.kind {
+            out.push(entity_id.to_string());
+        }
+    }
+    out
+}
+
+/// A reconnect's snapshot is written in its own order: a device the
+/// bridge adds, then a change to the lamp, then the device's light. The
+/// lamp's change is written before the new light, as the events would be.
+#[tokio::test]
+async fn a_reconnect_writes_in_the_snapshots_order() {
+    let b = bridge(offline());
+    let mut fresh = fixture("resource")["data"].as_array().unwrap().clone();
+    let lamp = fresh.iter().position(|r| r["id"] == LAMP).unwrap();
+    fresh[lamp]["on"]["on"] = json!(!fresh[lamp]["on"]["on"].as_bool().unwrap());
+    let (device_id, light_id) = (
+        "00000000-0000-4000-8000-0000000000c0",
+        "00000000-0000-4000-8000-0000000000c1",
+    );
+    let device = like(
+        &b,
+        LAMP_DEVICE,
+        device_id,
+        json!({
+            "metadata": {"name": "Late lamp", "archetype": "classic_bulb"},
+            "services": [{"rid": light_id, "rtype": "light"}],
+        }),
+    );
+    let light = like(
+        &b,
+        LAMP,
+        light_id,
+        json!({"owner": {"rid": device_id, "rtype": "device"}}),
+    );
+    fresh.insert(lamp + 1, light);
+    fresh.insert(lamp, device);
+    let lamp_id = b
+        .lights
+        .read()
+        .iter()
+        .find(|l| l.rid == LAMP)
+        .unwrap()
+        .entity_id
+        .to_string();
+    let mut rx = b.hass.bus().subscribe();
+    b.apply_snapshot(fresh);
+    let new_id = b
+        .lights
+        .read()
+        .iter()
+        .find(|l| l.rid == light_id)
+        .unwrap()
+        .entity_id
+        .to_string();
+    let order = changed_ids(&mut rx);
+    let at = |id: &str| order.iter().position(|o| o == id);
+    assert!(
+        at(&lamp_id) < at(&new_id) && at(&lamp_id).is_some(),
+        "{order:?}"
+    );
+}
+
+/// A light the bridge reports after another entry made a row (disabled,
+/// so it has no state) under the id the light would take: the light takes
+/// another id, and calls to that one reach no Hue light.
+#[tokio::test]
+async fn a_new_light_does_not_take_an_id_another_entry_has() {
+    let (b, registry, _components) = live_bridge();
+    let patch = ha_registry::EntityPatch {
+        has_entity_name: Some(false),
+        original_name: Some(Some("Reserved Name".into())),
+        ..Default::default()
+    };
+    let made =
+        registry.get_or_create_entity("light", "lifx", "reserved", Some("user".into()), patch);
+    // As that entry's user named it; not an edit this bridge follows.
+    let reserved = registry.rename_entity(
+        &made.entity_id,
+        "light.reserved_name",
+        &Default::default(),
+        &|_| true,
+    );
+    assert!(reserved.is_ok(), "{reserved:?}");
+    let lamp = b
+        .lights
+        .read()
+        .iter()
+        .find(|l| l.rid == LAMP)
+        .cloned()
+        .unwrap();
+    let (device_id, light_id) = (
+        "00000000-0000-4000-8000-0000000000b0",
+        "00000000-0000-4000-8000-0000000000b1",
+    );
+    let device = like(
+        &b,
+        LAMP_DEVICE,
+        device_id,
+        json!({
+            "metadata": {"name": "Reserved Name", "archetype": "classic_bulb"},
+            "services": [{"rid": light_id, "rtype": "light"}],
+        }),
+    );
+    let light = like(
+        &b,
+        &lamp.rid,
+        light_id,
+        json!({"owner": {"rid": device_id, "rtype": "device"}}),
+    );
+    let added = json!([{"creationtime": "2026-01-01T00:00:00Z", "id": "new", "type": "add",
+                        "data": [device, light]}]);
+    b.handle_data(&added.to_string());
+    let new = b
+        .lights
+        .read()
+        .iter()
+        .find(|l| l.rid == light_id)
+        .cloned()
+        .unwrap();
+    assert_ne!(new.entity_id.as_str(), "light.reserved_name");
+    assert_eq!(routed(&b, "light.reserved_name"), 0);
+}
+
 /// A second bridge, sharing the first's hass and services.
 fn second_bridge(first: &Arc<Bridge>, api: Api) -> Arc<Bridge> {
     let resources = fixture("resource")["data"].as_array().unwrap().clone();
     let b = Arc::new(Bridge {
         hass: first.hass.clone(),
-        registries: first.registries.clone(),
+        registries: RwLock::new(first.rows()),
+        names: Default::default(),
         api,
         store: RwLock::new(Store::new(resources)),
         ignore_availability: Vec::new(),
@@ -868,7 +1681,8 @@ async fn scenes_restore_their_last_activation() {
     ));
     let b = Arc::new(Bridge {
         hass: hass.clone(),
-        registries,
+        registries: RwLock::new(registries),
+        names: Default::default(),
         api: offline(),
         store: RwLock::new(Store::new(
             fixture("resource")["data"].as_array().unwrap().clone(),
@@ -881,7 +1695,6 @@ async fn scenes_restore_their_last_activation() {
         alive: parking_lot::Mutex::new(true),
     });
     b.add_entities();
-    b.write_all();
     assert_eq!(
         state_json(&hass, "scene.bedroom_bedroom_dimmed").unwrap().0,
         "2026-11-13T20:00:00.123456+00:00"

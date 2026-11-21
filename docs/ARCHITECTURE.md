@@ -215,8 +215,11 @@ that id). The edit and the entities' move happen under the lock that
 entries are set up and removed under, so neither a set-up nor a removal
 sees rows the entities have not caught up with, and an entity writes its
 state under the lock its id is changed under, so no write lands on an id
-it has just left. `components::follows` lists the integrations that do
-this (today `switchbot_cloud`); the registry refuses a change the others'
+it has just left. A Hue state is made before the lock is taken, so it is
+made again under the lock if the bridge took the registries again in
+between, and an entity moved to another id writes nothing more.
+`components::follows` lists the integrations that do this (today
+`switchbot_cloud`, `hue` and `lifx`); the registry refuses a change the others'
 entities would not follow (`ha_registry::DeviceRefusal`,
 `RenameRefusal`), and one whose store it would not write
 (`Registry::unwritable`: a version refusal, known before the change; a
@@ -224,6 +227,26 @@ write that fails later is logged, as for every store). No task or timer
 of its own is involved (the registries' saves are delayed as before): a
 follower is a reference kept from an entry's set-up until the entry is
 removed, in a list that is empty on an install with no such entry.
+
+One rule keeps a Hue bridge's entities and renames apart: every entity
+the bridge exposes to services comes to be in one place,
+`hue::Bridge::expose`. Under one hold of the set-up lock (then the
+bridge's write guard), `expose` gives the entity its id, puts it in the
+bridge's list and its component, and writes its first state. Set-up, an
+event-stream addition, each addition in a reconnect's snapshot, and a
+room that releases the scenes waiting for it all go through it. A
+registry edit holds the same lock until the running entities have
+followed it. So a new entity never takes an id a rename is giving or
+one another entry's row has (ids are checked against the live
+registry), and a rename that comes after finds the entity in its list,
+in its component and with a state (its id is taken). A resource the
+bridge reports again as another type, while an entity of the same
+domain runs for its id, makes no second entity, as HA's platform
+refuses a unique id that is taken. A reconnect's snapshot is taken one
+resource at a time, in its order, each followed by its writes, as the
+events it stands for: an addition makes only what that resource lets
+be made. What existing entities write after a change waits for no
+lock: a reconnect's updates don't hold up a set-up or a registry edit.
 
 ### Storage and restore
 

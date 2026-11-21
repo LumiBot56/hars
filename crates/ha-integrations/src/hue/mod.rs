@@ -19,6 +19,7 @@
 mod api;
 pub mod config_flow;
 mod entities;
+mod follow;
 mod light;
 mod register;
 mod store;
@@ -56,7 +57,12 @@ pub const COMPONENTS: &[&str] = &["hue", "light", "sensor", "binary_sensor", "sw
 /// One bridge: its API, resources and entities.
 pub struct Bridge {
     hass: Hass,
-    registries: Arc<Registries>,
+    /// The registries as the entities last took them: at set-up, then
+    /// after each registry edit ([`follow`]).
+    registries: RwLock<Arc<Registries>>,
+    /// Bumped, with the write guard held, whenever `registries` is taken
+    /// again: a state made before that is made again before it's written.
+    names: std::sync::atomic::AtomicU64,
     api: Api,
     store: RwLock<Store>,
     /// Device ids whose lights are always available (`options`).
@@ -73,11 +79,77 @@ pub struct Bridge {
     alive: parking_lot::Mutex<bool>,
 }
 
+/// The entities [`Bridge::expose`] made.
+#[derive(Default)]
+struct Made {
+    lights: Vec<Arc<HueLight>>,
+    groups: Vec<Arc<GroupLight>>,
+    others: Vec<Arc<HueEntity>>,
+}
+
+impl Made {
+    fn light(&self, l: &Arc<HueLight>) -> bool {
+        self.lights.iter().any(|m| Arc::ptr_eq(m, l))
+    }
+
+    fn group(&self, g: &Arc<GroupLight>) -> bool {
+        self.groups.iter().any(|m| Arc::ptr_eq(m, g))
+    }
+
+    fn other(&self, e: &Arc<HueEntity>) -> bool {
+        self.others.iter().any(|m| Arc::ptr_eq(m, e))
+    }
+}
+
+/// The set-up lock, for [`Bridge::expose`]. A test learns that it had to
+/// wait (`setup_waits`): another holds it.
+fn hold_setup() -> crate::switchbot_cloud::SetupGuard {
+    #[cfg(test)]
+    match crate::switchbot_cloud::SETUP.try_lock() {
+        Some(one) => return one,
+        None => crate::components::hooks::at("setup_waits"),
+    }
+    crate::switchbot_cloud::SETUP.lock()
+}
+
 /// What a deleted device takes with it.
 #[derive(Default, Clone)]
 struct Gone {
     lights: Vec<Arc<HueLight>>,
     others: Vec<Arc<HueEntity>>,
+}
+
+/// The row of a resource's entity in `domain`.
+fn registry_entity<'a>(
+    r: &'a Registries,
+    domain: &str,
+    unique_id: &str,
+) -> Option<&'a Arc<ha_registry::Entity>> {
+    r.entities.iter().find(|e| {
+        e.platform == DOMAIN
+            && e.entity_id.split('.').next() == Some(domain)
+            && e.unique_id.as_ref().and_then(Value::as_str) == Some(unique_id)
+    })
+}
+
+/// The registry device for a Hue resource id (`("hue", id)`).
+fn registry_device<'a>(r: &'a Registries, hue_id: &str) -> Option<&'a Arc<ha_registry::Device>> {
+    r.devices.iter().find(|d| {
+        d.identifiers
+            .iter()
+            .any(|i| i[0] == DOMAIN && i[1] == hue_id)
+    })
+}
+
+/// A Hue device's (or room's) display name: the user's name for it, else
+/// the bridge's.
+fn device_name<'a>(r: &'a Registries, device: &'a Value) -> Option<&'a str> {
+    let id = device["id"].as_str()?;
+    // `name_by_user or name`: an empty name of the user's doesn't count.
+    registry_device(r, id)
+        .and_then(|d| d.name_by_user.as_deref())
+        .filter(|name| !name.is_empty())
+        .or_else(|| device["metadata"]["name"].as_str())
 }
 
 impl Bridge {
@@ -101,44 +173,14 @@ impl Bridge {
         }
     }
 
-    fn registry_entity(&self, domain: &str, unique_id: &str) -> Option<&ha_registry::Entity> {
-        self.registries
-            .entities
-            .iter()
-            .find(|e| {
-                e.platform == DOMAIN
-                    && e.entity_id.split('.').next() == Some(domain)
-                    && e.unique_id.as_ref().and_then(Value::as_str) == Some(unique_id)
-            })
-            .map(|v| &**v)
+    /// The registries as the entities have them now.
+    fn rows(&self) -> Arc<Registries> {
+        self.registries.read().clone()
     }
 
     /// The registered entity id for a resource (any state or none).
     fn registered_id(&self, domain: &str, unique_id: &str) -> Option<String> {
-        self.registry_entity(domain, unique_id)
-            .map(|e| e.entity_id.clone())
-    }
-
-    /// The registry device for a Hue resource id (`("hue", id)`).
-    fn registry_device(&self, hue_id: &str) -> Option<&ha_registry::Device> {
-        self.registries
-            .devices
-            .iter()
-            .find(|d| {
-                d.identifiers
-                    .iter()
-                    .any(|i| i[0] == DOMAIN && i[1] == hue_id)
-            })
-            .map(|v| &**v)
-    }
-
-    /// A Hue device's (or room's) display name: the user's name for it,
-    /// else the bridge's.
-    fn device_name<'a>(&'a self, device: &'a Value) -> Option<&'a str> {
-        let id = device["id"].as_str()?;
-        self.registry_device(id)
-            .and_then(|d| d.name_by_user.as_deref())
-            .or_else(|| device["metadata"]["name"].as_str())
+        registry_entity(&self.rows(), domain, unique_id).map(|e| e.entity_id.clone())
     }
 
     /// `friendly_name`: the registry's name if the user set one, else the
@@ -151,15 +193,18 @@ impl Bridge {
         device: Option<&Value>,
         name: Option<&str>,
     ) {
-        let mut rows = self.registries.entities.iter();
-        let row = rows.find(|e| e.entity_id == id.as_str());
+        let r = self.rows();
+        let row = r.entities.iter().find(|e| e.entity_id == id.as_str());
         if let Some(icon) = row.and_then(|e| e.icon.as_ref()) {
             a.insert("icon".into(), json!(icon));
         }
         let user = row.and_then(|e| e.name.clone());
         let friendly = user.or_else(|| {
-            let device = device.and_then(|d| self.device_name(d));
-            match (device, name) {
+            // `_async_get_full_entity_name`: the parts that aren't empty.
+            let device = device
+                .and_then(|d| device_name(&r, d))
+                .filter(|d| !d.is_empty());
+            match (device, name.filter(|n| !n.is_empty())) {
                 (Some(d), Some(n)) => Some(format!("{d} {n}")),
                 (Some(d), None) => Some(d.to_owned()),
                 (None, n) => n.map(str::to_owned),
@@ -180,7 +225,8 @@ impl Bridge {
         device: Option<&Value>,
         name: Option<&str>,
     ) {
-        let device_name = device.and_then(|d| self.device_name(d));
+        let rows = self.rows();
+        let device_name = device.and_then(|d| device_name(&rows, d));
         let unprefixed = match (name, device_name) {
             (Some(n), Some(d)) => ha_registry::strip_prefix(n, d),
             _ => None,
@@ -199,7 +245,8 @@ impl Bridge {
         name: Option<&str>,
         enabled_default: bool,
     ) -> Option<EntityId> {
-        if let Some(e) = self.registry_entity(domain, unique_id) {
+        let r = self.rows();
+        if let Some(e) = registry_entity(&r, domain, unique_id) {
             if e.disabled_by.is_some() {
                 return None;
             }
@@ -211,19 +258,24 @@ impl Bridge {
         }
         let area = device
             .and_then(|d| d["id"].as_str())
-            .and_then(|id| self.registry_device(id))
+            .and_then(|id| registry_device(&r, id))
             .and_then(|d| d.area_id.as_deref())
-            .and_then(|a| self.registries.areas.iter().find(|x| x.id == a))
+            .and_then(|a| r.areas.iter().find(|x| x.id == a))
             .map(|a| a.name.as_str());
-        let parts: Vec<&str> = [area, device.and_then(|d| self.device_name(d)), name]
+        let parts: Vec<&str> = [area, device.and_then(|d| device_name(&r, d)), name]
             .into_iter()
             .flatten()
             .collect();
         let base = format!("{domain}.{}", ha_components::slugify(&parts.join(" ")));
-        // Ids in the registry, in the state machine, or given to an entity
-        // not yet written: each new entity gets its own.
+        // Ids in the registry as it is now (another entry's rows, made
+        // since this bridge last took the registries, among them: no edit
+        // is under way, [`Bridge::expose`] holds the set-up lock), in the
+        // state machine, or given to an entity not yet written: each new
+        // entity gets its own.
+        let live = self.platforms.registries.get();
         let taken = |id: &str| {
-            self.registries.entities.iter().any(|e| e.entity_id == id)
+            r.entities.iter().any(|e| e.entity_id == id)
+                || live.entities.iter().any(|e| e.entity_id == id)
                 || EntityId::parse(id).is_ok_and(|i| self.hass.states().get(&i).is_some())
                 || self
                     .lights
@@ -250,10 +302,43 @@ impl Bridge {
         EntityId::parse(&id).ok()
     }
 
-    /// Make entities for resources that have none yet.
-    fn add_entities(self: &Arc<Self>) {
+    /// The write guard. A test learns that it had to wait (`alive_waits`):
+    /// another holds it.
+    fn hold_alive(&self) -> parking_lot::MutexGuard<'_, bool> {
+        #[cfg(test)]
+        match self.alive.try_lock() {
+            Some(alive) => return alive,
+            None => crate::components::hooks::at("alive_waits"),
+        }
+        self.alive.lock()
+    }
+
+    /// Make entities for resources that have none yet: [`Bridge::expose`]
+    /// under the set-up lock. Every entity the bridge makes after set-up
+    /// (an event-stream addition, a reconnect's snapshot, a room that
+    /// comes after its scenes) is made here.
+    fn add_entities(self: &Arc<Self>) -> Made {
+        let _one = hold_setup();
+        self.expose()
+    }
+
+    /// The one place an entity of the bridge comes to be. With the set-up
+    /// lock held (the caller's) and then the write guard, each new entity
+    /// is given its id, put in its list and its component, and has its
+    /// first state written, in HA's platform order. A registry edit holds
+    /// the set-up lock until the running entities have followed it
+    /// ([`crate::components::Components::registry_edit`]), so an entity
+    /// made here takes no id a rename is giving, and a rename after finds
+    /// it everywhere, with a state (so its id is taken). What the entities
+    /// that exist already write is not done here: it waits for no lock.
+    fn expose(self: &Arc<Self>) -> Made {
+        let alive = self.alive.lock();
+        if !*alive {
+            return Made::default();
+        }
         let store = self.store.read();
-        let mut new: Vec<Arc<dyn crate::light::Light>> = Vec::new();
+        let mut new_lights: Vec<Arc<HueLight>> = Vec::new();
+        let mut new_groups: Vec<Arc<GroupLight>> = Vec::new();
         for r in store.of_type("light") {
             let rid = r["id"].as_str().unwrap_or_default();
             if self.lights.read().iter().any(|l| l.rid == rid) {
@@ -264,7 +349,7 @@ impl Bridge {
                 continue;
             };
             let l = Arc::new(HueLight::new(Arc::downgrade(self), r, id));
-            new.push(l.clone());
+            new_lights.push(l.clone());
             self.lights.write().push(l);
         }
         for r in store.of_type("grouped_light") {
@@ -284,7 +369,7 @@ impl Bridge {
                 continue;
             };
             let g = Arc::new(GroupLight::new(Arc::downgrade(self), rid, gid, id, &store));
-            new.push(g.clone());
+            new_groups.push(g.clone());
             self.groups.write().push(g);
         }
         let mut made: Vec<Arc<HueEntity>> = Vec::new();
@@ -300,6 +385,22 @@ impl Bridge {
                         .iter()
                         .any(|e| e.rid == rid && e.kind == kind)
                 {
+                    continue;
+                }
+                // A resource that comes back as another type (a scene as a
+                // smart scene) while an entity of the same domain runs for
+                // its id: HA's platform refuses the new entity, its unique
+                // id being taken, and the one that runs goes on.
+                let running = self
+                    .others
+                    .read()
+                    .iter()
+                    .find(|e| e.rid == rid && e.kind.domain() == kind.domain())
+                    .map(|e| e.entity_id.clone());
+                if let Some(running) = running {
+                    tracing::error!(
+                        "Platform hue does not generate unique IDs. ID {rid} already exists - ignoring {running}"
+                    );
                     continue;
                 }
                 let device = HueEntity::device(kind, rid, r, &store);
@@ -321,15 +422,46 @@ impl Bridge {
             }
         }
         drop(store);
-        for l in new {
-            self.platforms.lights.add(l);
+        #[cfg(test)]
+        crate::components::hooks::at("hue_added");
+        for l in &new_lights {
+            self.platforms.lights.add(l.clone());
         }
-        for e in made {
+        for g in &new_groups {
+            self.platforms.lights.add(g.clone());
+        }
+        made.sort_by_key(|e| e.order);
+        for e in &made {
             match e.kind.domain() {
-                "switch" => self.platforms.switches.add(e),
-                "scene" => self.platforms.scenes.add(e),
+                "switch" => self.platforms.switches.add(e.clone()),
+                "scene" => self.platforms.scenes.add(e.clone()),
                 _ => {}
             }
+        }
+        // Their first states, as `write_all` orders them.
+        let store = self.store.read();
+        let first = |id: &EntityId, rendered: Option<(String, Map<String, Value>)>| {
+            if let Some((state, attrs)) = rendered {
+                self.hass.set_state(id.clone(), state, attrs);
+            }
+        };
+        for e in made.iter().filter(|e| e.order < 20) {
+            first(&e.entity_id, e.render(self, &store));
+        }
+        for l in &new_lights {
+            first(&l.entity_id, l.render(self, &store));
+        }
+        for g in &new_groups {
+            g.update_values(&store);
+            first(&g.entity_id, g.render(self, &store));
+        }
+        for e in made.iter().filter(|e| e.order > 20) {
+            first(&e.entity_id, e.render(self, &store));
+        }
+        Made {
+            lights: new_lights,
+            groups: new_groups,
+            others: made,
         }
     }
 
@@ -363,28 +495,84 @@ impl Bridge {
         }
     }
 
-    /// Write a state, unless the entry was stopped.
-    fn write(&self, entity_id: &EntityId, state: String, attrs: Map<String, Value>) {
+    /// Write the state `render` makes under `entity_id`, unless the entry
+    /// was stopped or the entity is `gone` (removed, or moved to another
+    /// id) since the state was made: a service call renders a scene's
+    /// activation on its own task, and the event stream may take the
+    /// scene away in between (a scene that came after set-up has no
+    /// registry row, so nothing else would ever remove that state). A
+    /// state made before the registries were taken again ([`follow`]) is
+    /// made again, so it has the names they have now.
+    fn publish(
+        &self,
+        entity_id: &EntityId,
+        gone: &std::sync::atomic::AtomicBool,
+        render: impl Fn() -> Option<(String, Map<String, Value>)>,
+    ) {
+        use std::sync::atomic::Ordering;
+        let names = self.names.load(Ordering::Acquire);
+        let rendered = render();
+        #[cfg(test)]
+        tests::after_render();
         let alive = self.alive.lock();
-        if *alive {
+        if !*alive || gone.load(Ordering::Relaxed) {
+            return;
+        }
+        let rendered = match self.names.load(Ordering::Acquire) == names {
+            true => rendered,
+            false => render(),
+        };
+        if let Some((state, attrs)) = rendered {
             self.hass.set_state(entity_id.clone(), state, attrs);
         }
     }
 
-    /// Write an entity's state, unless the entry was stopped or the
-    /// entity removed since the state was made: a service call renders a
-    /// scene's activation on its own task, and the event stream may take
-    /// the scene away in between. A scene that came after set-up has no
-    /// registry row, so nothing else would ever remove that state.
+    /// Write an entity's state. One moved to another id since it was
+    /// picked (a service call that activated a scene) writes where the
+    /// entity is now.
     fn write_entity(&self, e: &HueEntity) {
-        let rendered = e.render(self, &self.store.read());
+        let current;
+        let e = match e.gone.load(std::sync::atomic::Ordering::Relaxed) {
+            false => e,
+            true => {
+                let others = self.others.read();
+                let found = others.iter().find(|o| o.rid == e.rid && o.kind == e.kind);
+                match found {
+                    Some(found) => current = found.clone(),
+                    None => return,
+                }
+                &*current
+            }
+        };
+        self.publish(&e.entity_id, &e.gone, || e.render(self, &self.store.read()));
+    }
+
+    /// A scene activated at `at` (`_async_record_activation`): taken and
+    /// written under the write guard by the entity as it is now, so a
+    /// rename that moves it meanwhile neither loses the activation nor
+    /// restores over it, and a scene removed meanwhile writes nothing.
+    fn activated(&self, e: &HueEntity, at: String) {
         #[cfg(test)]
         tests::after_render();
-        if let Some((state, attrs)) = rendered {
-            let alive = self.alive.lock();
-            if *alive && !e.gone.load(std::sync::atomic::Ordering::Relaxed) {
-                self.hass.set_state(e.entity_id.clone(), state, attrs);
-            }
+        let alive = self.alive.lock();
+        if !*alive {
+            return;
+        }
+        // The same entity, maybe under another id (it shares its
+        // activation with what it was): not one made since for a resource
+        // of the same id.
+        let current = self
+            .others
+            .read()
+            .iter()
+            .find(|o| o.same_activation(e))
+            .cloned();
+        let Some(e) = current else {
+            return;
+        };
+        e.set_activated(at);
+        if let Some((state, attrs)) = e.render(self, &self.store.read()) {
+            self.hass.set_state(e.entity_id.clone(), state, attrs);
         }
     }
 
@@ -436,23 +624,39 @@ impl Bridge {
     }
 
     /// Drop entities: their states, and their place as service targets.
+    ///
+    /// All under the write guard: a write that is being made ends first,
+    /// none comes after, and an entity given another id since `gone` was
+    /// found ([`follow`]) is dropped where it is now.
     fn remove(&self, gone: &Gone) {
-        {
-            // A write that is being made ends first; none comes after.
-            let _writes = self.alive.lock();
-            for e in &gone.others {
-                e.gone.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _writes = self.hold_alive();
+        let mut lights = Vec::new();
+        self.lights.write().retain(|l| {
+            let dropped = gone.lights.iter().any(|g| g.rid == l.rid);
+            if dropped {
+                lights.push(l.clone());
             }
-        }
-        self.lights
-            .write()
-            .retain(|l| !gone.lights.iter().any(|g| g.rid == l.rid));
+            !dropped
+        });
+        let mut others = Vec::new();
         self.others.write().retain(|e| {
-            !gone
+            let dropped = gone
                 .others
                 .iter()
-                .any(|g| g.rid == e.rid && g.kind == e.kind)
+                .any(|g| g.rid == e.rid && g.kind == e.kind);
+            if dropped {
+                others.push(e.clone());
+            }
+            !dropped
         });
+        // What still holds one under an id it has left writes nothing.
+        for l in gone.lights.iter().chain(&lights) {
+            l.gone.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        for e in gone.others.iter().chain(&others) {
+            e.gone.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        let gone = Gone { lights, others };
         for l in &gone.lights {
             self.platforms.lights.remove(&l.entity_id);
             self.hass.remove_state(&l.entity_id);
@@ -469,39 +673,15 @@ impl Bridge {
     }
 
     fn write_light(&self, l: &HueLight) {
-        let rendered = l.render(self, &self.store.read());
-        if let Some((state, attrs)) = rendered {
-            self.write(&l.entity_id, state, attrs);
-        }
+        self.publish(&l.entity_id, &l.gone, || l.render(self, &self.store.read()));
     }
 
     fn write_group(&self, g: &GroupLight) {
-        let store = self.store.read();
-        g.update_values(&store);
-        let rendered = g.render(self, &store);
-        drop(store);
-        if let Some((state, attrs)) = rendered {
-            self.write(&g.entity_id, state, attrs);
-        }
-    }
-
-    /// Write every entity (at start), in HA's platform order.
-    fn write_all(&self) {
-        let others = self.others.read().clone();
-        for e in others.iter().filter(|e| e.order < 20) {
-            self.write_entity(e);
-        }
-        let lights = self.lights.read().clone();
-        for l in &lights {
-            self.write_light(l);
-        }
-        let groups = self.groups.read().clone();
-        for g in &groups {
-            self.write_group(g);
-        }
-        for e in others.iter().filter(|e| e.order > 20) {
-            self.write_entity(e);
-        }
+        self.publish(&g.entity_id, &g.gone, || {
+            let store = self.store.read();
+            g.update_values(&store);
+            g.render(self, &store)
+        });
     }
 
     /// One event-stream item: merge it, then write what HA writes, in its
@@ -532,21 +712,52 @@ impl Bridge {
         match change {
             Change::Added => {
                 // A room or zone can arrive after its `grouped_light` (the
-                // race HA's `group.py` retries for): it makes that group.
-                self.add_entities();
-                for e in self.others_of(id).iter().filter(|e| e.order < 20) {
+                // race HA's `group.py` retries for): it makes that group,
+                // and the scenes that waited for it. What is made writes
+                // there; what was there writes here.
+                let made = self.add_entities();
+                // What there is already that depends on the resource (a
+                // room's scenes) writes again, as an update of it does: a
+                // scene that couldn't be written while its room was away
+                // has its state again.
+                let dependants: Vec<Arc<HueEntity>> = {
+                    let store = self.store.read();
+                    let others = self.others.read();
+                    others
+                        .iter()
+                        .filter(|e| e.rid != id && !made.other(e))
+                        .filter(|e| {
+                            let r = store.get(&e.rid);
+                            let device =
+                                r.and_then(|r| HueEntity::device(e.kind, &e.rid, r, &store));
+                            device.is_some_and(|d| d["id"] == id)
+                        })
+                        .cloned()
+                        .collect()
+                };
+                for e in &dependants {
                     self.write_entity(e);
                 }
+                for e in self.others_of(id).iter().filter(|e| e.order < 20) {
+                    if !made.other(e) {
+                        self.write_entity(e);
+                    }
+                }
                 let lights = self.lights.read().clone();
-                for l in lights.iter().filter(|l| l.rid == id) {
+                for l in lights.iter().filter(|l| l.rid == id && !made.light(l)) {
                     self.write_light(l);
                 }
                 let groups = self.groups.read().clone();
-                for g in groups.iter().filter(|g| g.rid == id || g.group == id) {
+                for g in groups
+                    .iter()
+                    .filter(|g| (g.rid == id || g.group == id) && !made.group(g))
+                {
                     self.write_group(g);
                 }
                 for e in self.others_of(id).iter().filter(|e| e.order > 20) {
-                    self.write_entity(e);
+                    if !made.other(e) {
+                        self.write_entity(e);
+                    }
                 }
             }
             Change::Deleted => {
@@ -565,15 +776,24 @@ impl Bridge {
                         )
                     }));
                 if ty == "grouped_light" {
-                    let groups: Vec<_> = self
-                        .groups
-                        .read()
-                        .iter()
-                        .filter(|g| g.rid == id)
-                        .cloned()
-                        .collect();
-                    self.groups.write().retain(|g| g.rid != id);
+                    // Under the write guard, as [`Bridge::remove`]: the
+                    // group goes from where it is now (a rename may have
+                    // given it another id), and nothing writes it after.
+                    let _writes = self.hold_alive();
+                    let mut groups = Vec::new();
+                    self.groups.write().retain(|g| {
+                        let dropped = g.rid == id;
+                        if dropped {
+                            groups.push(g.clone());
+                        }
+                        !dropped
+                    });
+                    // The groups to drop are known: a rename now would
+                    // leave one under its new id, were the guard not held.
+                    #[cfg(test)]
+                    crate::components::hooks::at("group_deleted");
                     for g in groups {
+                        g.gone.store(true, std::sync::atomic::Ordering::Relaxed);
                         self.platforms.lights.remove(&g.entity_id);
                         self.hass.remove_state(&g.entity_id);
                     }
@@ -677,50 +897,43 @@ impl Bridge {
     /// Apply a fresh snapshot: additions, changes and removals, each with
     /// the writes an event for it would make.
     fn apply_snapshot(self: &Arc<Self>, fresh: Vec<Value>) {
-        // What may be removed, known before the store forgets it: each
-        // resource's type, and what each device takes with it.
-        let (types, devices): (Vec<(String, String)>, Vec<String>) = {
-            let store = self.store.read();
-            let types = store
-                .order()
-                .filter_map(|r| {
-                    Some((r["id"].as_str()?.to_owned(), r["type"].as_str()?.to_owned()))
-                })
-                .collect();
-            let devices = store
-                .of_type("device")
-                .filter_map(|d| d["id"].as_str().map(str::to_owned))
-                .collect();
-            (types, devices)
-        };
-        let gone: Vec<(String, Gone)> = devices
+        // The snapshot's resources one at a time, in its order, each
+        // taken into the store and followed by its writes before the next
+        // is taken, as the events they stand for would be: an addition
+        // makes only what that resource lets be made (a device does not
+        // make the light the snapshot adds after it), and what comes
+        // before it in the snapshot is written before it.
+        let fresh = Store::new(fresh);
+        for new in fresh.order() {
+            let change = self.store.write().take(new);
+            if let Some(change) = change {
+                let id = new["id"].as_str().unwrap_or_default();
+                let ty = new["type"].as_str().unwrap_or_default();
+                self.after(change, ty, id, Gone::default());
+            }
+        }
+        // Then what the bridge no longer has. What each device takes with
+        // it, and each resource's type, known before the store forgets.
+        let missing = self.store.read().missing(&fresh);
+        let gone: Vec<(String, String, Gone)> = missing
             .into_iter()
-            .map(|d| {
-                let g = self.on_device(&d);
-                (d, g)
-            })
-            .collect();
-        let changes = self.store.write().reconcile(fresh);
-        for (change, id) in changes {
-            let ty = match change {
-                Change::Deleted => types
-                    .iter()
-                    .find(|(i, _)| *i == id)
-                    .map(|(_, t)| t.clone())
-                    .unwrap_or_default(),
-                _ => self
+            .map(|id| {
+                let ty = self
                     .store
                     .read()
                     .get(&id)
                     .and_then(|r| r["type"].as_str().map(str::to_owned))
-                    .unwrap_or_default(),
-            };
-            let g = gone
-                .iter()
-                .find(|(d, _)| *d == id)
-                .map(|(_, g)| g.clone())
-                .unwrap_or_default();
-            self.after(change, &ty, &id, g);
+                    .unwrap_or_default();
+                let g = match ty == "device" {
+                    true => self.on_device(&id),
+                    false => Gone::default(),
+                };
+                (id, ty, g)
+            })
+            .collect();
+        for (id, ty, g) in gone {
+            self.store.write().forget(&id);
+            self.after(Change::Deleted, &ty, &id, g);
         }
     }
 
@@ -1088,7 +1301,8 @@ pub async fn run(
         let bridge = Arc::new(Bridge {
             hass,
             // As they are now, with this entry's rows.
-            registries: components.registries(),
+            registries: RwLock::new(components.registries()),
+            names: Default::default(),
             api,
             store: RwLock::new(store),
             ignore_availability: ignore,
@@ -1099,8 +1313,12 @@ pub async fn run(
             alive: parking_lot::Mutex::new(true),
         });
         platforms.bridges.write().push(Arc::downgrade(&bridge));
-        bridge.add_entities();
-        bridge.write_all();
+        // The set-up lock is held: the entities are made, and written.
+        bridge.expose();
+        if let Some(entry_id) = entry.get("entry_id").and_then(Value::as_str) {
+            let follower = Arc::new(follow::Follow(Arc::downgrade(&bridge)));
+            components.follow(entry_id, follower);
+        }
         bridge
     };
     // When this task ends (its entry was removed), everything the bridge

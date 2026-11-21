@@ -273,7 +273,10 @@ pub struct HueEntity {
     pub(super) rid: String,
     pub(super) entity_id: EntityId,
     /// A scene's last activation by HA (its state).
-    activated: Mutex<Option<String>>,
+    /// Shared with the same entity under another id ([`HueEntity::moved`]):
+    /// an activation that began under the old id lands on it there.
+    /// A scene's only (`None` for other kinds).
+    activated: Option<std::sync::Arc<Mutex<Option<String>>>>,
     /// The bridge no longer has this entity (its resource was deleted):
     /// set and read under the bridge's write guard ([`Bridge::remove`]),
     /// so a state rendered before the removal isn't written after it.
@@ -288,8 +291,39 @@ impl HueEntity {
             order: kind.order(ty),
             rid: rid.to_owned(),
             entity_id,
-            activated: Mutex::new(None),
+            activated: matches!(kind, Kind::Scene | Kind::SmartScene).then(Default::default),
             gone: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// The same entity under another id ([`super::light::HueLight::moved`]).
+    /// A scene keeps its last activation unless one was kept under the new
+    /// id ([`HueEntity::restore`], which the caller runs).
+    pub(super) fn moved(&self, entity_id: EntityId) -> Self {
+        Self {
+            bridge: self.bridge.clone(),
+            kind: self.kind,
+            order: self.order,
+            rid: self.rid.clone(),
+            entity_id,
+            activated: self.activated.clone(),
+            gone: Default::default(),
+        }
+    }
+
+    /// Whether this is `other`, maybe under another id: a scene that
+    /// shares its activation with it ([`HueEntity::moved`]).
+    pub(super) fn same_activation(&self, other: &HueEntity) -> bool {
+        match (&self.activated, &other.activated) {
+            (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+
+    /// A scene's last activation by HA, now.
+    pub(super) fn set_activated(&self, at: String) {
+        if let Some(activated) = &self.activated {
+            *activated.lock() = Some(at);
         }
     }
 
@@ -305,7 +339,9 @@ impl HueEntity {
             .and_then(|s| s["state"].as_str().map(str::to_owned))
             .filter(|s| s != "unavailable")
         {
-            *self.activated.lock() = Some(state);
+            if let Some(activated) = &self.activated {
+                *activated.lock() = Some(state);
+            }
         }
         restore.register(self.entity_id.as_str(), None);
     }
@@ -368,7 +404,8 @@ impl HueEntity {
                 // In the unit the sensor component settles on (the
                 // user's, the one kept for the row, or the unit
                 // system's), converted from the bridge's °C.
-                let mut rows = bridge.registries.entities.iter();
+                let rows = bridge.rows();
+                let mut rows = rows.entities.iter();
                 let row = rows.find(|e| e.entity_id == self.entity_id.as_str());
                 let unit = crate::sensor::state_unit(&bridge.hass, row.map(|row| &**row));
                 let t = reading(r, "temperature", "temperature").and_then(number);
@@ -435,8 +472,8 @@ impl HueEntity {
                 }
                 let state = self
                     .activated
-                    .lock()
-                    .clone()
+                    .as_ref()
+                    .and_then(|a| a.lock().clone())
                     .unwrap_or_else(|| "unknown".into());
                 let device = Self::device(self.kind, &self.rid, r, store);
                 bridge.tail(
@@ -497,8 +534,7 @@ impl HueEntity {
         let Some(bridge) = self.bridge.upgrade() else {
             return Ok(());
         };
-        *self.activated.lock() = Some(ha_core::isoformat(bridge.hass.clock().now()));
-        bridge.write_entity(self);
+        bridge.activated(self, ha_core::isoformat(bridge.hass.clock().now()));
         if self.kind == Kind::SmartScene {
             return self.put(json!({"recall": {"action": "activate"}})).await;
         }
