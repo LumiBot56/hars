@@ -19,6 +19,7 @@ pub(crate) mod sensor;
 pub mod sun;
 pub mod switch;
 pub mod switchbot_cloud;
+pub mod tuya;
 pub mod weather;
 
 use ha_core::Hass;
@@ -33,6 +34,7 @@ pub const SUPPORTED: &[&str] = &[
     hue::DOMAIN,
     switchbot_cloud::DOMAIN,
     lifx::DOMAIN,
+    tuya::DOMAIN,
 ];
 
 /// The config flow `VERSION` of every integration `hars` runs (and of
@@ -326,6 +328,26 @@ pub fn start(
             spawn_lifx(&components, entry, endpoints, status)
         }));
         running.extend(lifx::COMPONENTS);
+    }
+    for entry in enabled(tuya::DOMAIN).cloned().collect::<Vec<_>>() {
+        let entry_id = field(&entry, "entry_id").unwrap_or_default();
+        let status = match store {
+            Some(store) => config_entries::Status::new(store.clone(), &entry_id),
+            None => config_entries::Status::none(),
+        };
+        let _ = components.switches();
+        let store = store.cloned();
+        let c = components.clone();
+        tasks.push(Running::start(&entry_id, status, |status| {
+            tokio::spawn(tuya::run(
+                c.clone(),
+                entry,
+                store,
+                c.hass().setup_guard(),
+                status,
+            ))
+        }));
+        running.extend(tuya::COMPONENTS);
     }
     running.sort_unstable();
     running.dedup();
