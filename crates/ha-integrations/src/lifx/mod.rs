@@ -1,19 +1,27 @@
-//! The `lifx` integration (`components/lifx`) for single-zone colour
-//! bulbs on the LAN, as HA 2026.6.1 runs it with aiolifx 1.2.1: one UDP
-//! socket per bulb, a `LightGet` every 10 s, HA's retry layer (5 tries;
-//! 3 s apart for commands, 18 s for polls), unavailability after a poll's
-//! 90 s of silence, HA's `set_state` with its settle and refreshes, the
-//! identify and restart buttons, and broadcast rediscovery.
+//! The `lifx` integration (`components/lifx`) for single-zone bulbs on
+//! the LAN, colour and white, as HA 2026.6.1 runs it with aiolifx 1.2.1:
+//! one UDP socket per bulb, a `LightGet` every 10 s, HA's retry layer (5
+//! tries; 3 s apart for commands, 18 s for polls), unavailability after a
+//! poll's 90 s of silence, HA's `set_state` with its settle and refreshes,
+//! the identify and restart buttons, and broadcast rediscovery. Set-up
+//! makes the registry rows HA's makes ([`register`]), and reports where it
+//! is to the entry; a removed entry stops ([`Bulb::stop`]).
 //!
 //! Not yet: the `lifx.*` services (effects, `set_state`, themes); a
 //! `light.turn_on` with an effect calls `lifx.<effect>` as HA does, which
-//! fails until they exist. The RSSI sensor (disabled by default) isn't
-//! made. A bulb found at a new address is reconnected to without
-//! rewriting the stored entry (the registries are read-only here).
+//! fails until they exist. The RSSI sensor (disabled by default) has its
+//! row but doesn't run. Multi-zone, matrix, HEV (Clean) and infrared
+//! (Night Vision) products aren't run as HA runs them: the config flow
+//! refuses them ([`config_flow`]); an imported one is run as a single-zone
+//! bulb, and its rows are left as HA made them. A bulb found at a new
+//! address is reconnected to without rewriting the stored entry.
 
+pub mod config_flow;
 pub mod conn;
 pub mod light;
+pub mod products;
 pub mod proto;
+mod register;
 
 use crate::button::Button;
 use crate::components::Components;
@@ -31,6 +39,56 @@ use tokio::time::Instant;
 
 pub const DOMAIN: &str = "lifx";
 
+/// What a running entry adds to `get_config`'s `components`.
+pub const COMPONENTS: &[&str] = &["lifx", "light", "button"];
+
+/// `lifx_features`: a product's features, those of the first product for
+/// one aiolifx doesn't know.
+pub fn features(product: Option<u32>) -> &'static products::Product {
+    product
+        .and_then(|id| products::PRODUCTS.iter().find(|p| p.id == id))
+        .unwrap_or(&products::PRODUCTS[0])
+}
+
+/// The model HA gives the device: the product's name, or "LIFX Bulb".
+pub fn model_name(product: Option<u32>) -> &'static str {
+    product
+        .and_then(|id| products::PRODUCTS.iter().find(|p| p.id == id))
+        .map_or("LIFX Bulb", |p| p.name)
+}
+
+/// Whether `hars` runs a product as HA does: a single-zone bulb, colour or
+/// white, with no infrared, HEV, zones, tiles, relays or buttons.
+pub fn runs(product: &products::Product) -> bool {
+    use products::*;
+    product.flags
+        & (MULTIZONE | EXTENDED_MULTIZONE | MATRIX | CHAIN | HEV | INFRARED | RELAYS | BUTTONS)
+        == 0
+}
+
+/// A version aiolifx writes (`"3.70"`) as AwesomeVersion compares it.
+fn version(v: &str) -> Vec<u64> {
+    v.split('.').map(|p| p.parse().unwrap_or(0)).collect()
+}
+
+/// `get_real_mac_addr`: the serial, its last byte one up from firmware
+/// 3.70 on.
+pub fn real_mac(serial: &[u8; 6], firmware: &str) -> String {
+    let mut mac = *serial;
+    if version(firmware) >= version("3.70") {
+        mac[5] = mac[5].wrapping_add(1);
+    }
+    proto::mac(&mac)
+}
+
+/// The RSSI sensor's unit (`rssi_uom`): dB up to firmware 2.77, dBm after.
+pub fn rssi_unit(firmware: &str) -> &'static str {
+    match version(firmware) <= version("2.77") {
+        true => "dB",
+        false => "dBm",
+    }
+}
+
 const ATTEMPTS: u32 = 5;
 
 /// HA's delays (tests shrink them).
@@ -46,6 +104,8 @@ pub struct Timing {
     /// The coordinator's request-refresh debounce.
     pub debounce: Duration,
     pub identify: Duration,
+    /// When rediscovery first searches (`DISCOVERY_COOLDOWN`).
+    pub rediscover_after: Duration,
 }
 
 impl Timing {
@@ -56,10 +116,10 @@ impl Timing {
         settle: Duration::from_millis(300),
         debounce: Duration::from_millis(350),
         identify: Duration::from_secs(3),
+        rediscover_after: Duration::from_secs(5),
     };
 }
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(15 * 60);
-const DISCOVERY_WINDOW: Duration = Duration::from_millis(8500);
 
 /// What the last `LightGet` (or an ack) left.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -84,6 +144,8 @@ enum Ctl {
 struct ButtonInfo {
     entity_id: EntityId,
     friendly: String,
+    /// The icon the user gave it.
+    icon: Option<String>,
     class: &'static str,
     last: Mutex<Option<String>>,
 }
@@ -99,14 +161,56 @@ pub struct Bulb {
     ok: AtomicBool,
     ctl: mpsc::UnboundedSender<Ctl>,
     timing: Timing,
+    model: light::Model,
     light: Option<(EntityId, String)>,
+    /// The icon the user gave the light.
+    light_icon: Option<String>,
     buttons: Vec<ButtonInfo>,
+    /// False once the entry is stopped: nothing of it writes a state after.
+    /// Held for every state write.
+    alive: Mutex<bool>,
+    components: Arc<Components>,
 }
 
 impl Bulb {
     fn light_state(&self) -> LightState {
         let c = self.cached.lock();
-        light::state(c.power, c.color, None)
+        light::state(self.model, c.power, c.color, None)
+    }
+
+    /// Write a state, unless the entry was stopped.
+    fn write(
+        &self,
+        id: &EntityId,
+        state: &str,
+        a: Map<String, Value>,
+        context: Option<ha_core::Context>,
+    ) {
+        let alive = self.alive.lock();
+        if *alive {
+            self.hass
+                .set_state_with_context(id.clone(), state, a, context);
+        }
+    }
+
+    /// The entry is stopped (HA's unload): its commands end, nothing is
+    /// sent to the bulb or written after, and its entities go with their
+    /// states and their place as service targets.
+    pub fn stop(&self) {
+        self.conn.stop();
+        let mut alive = self.alive.lock();
+        *alive = false;
+        if let Some((id, _)) = &self.light {
+            self.components.lights().remove(id);
+            self.hass.remove_state(id);
+        }
+        for b in &self.buttons {
+            self.components.buttons().remove(&b.entity_id);
+            self.hass
+                .restore()
+                .unregister(&self.hass, b.entity_id.as_str());
+            self.hass.remove_state(&b.entity_id);
+        }
     }
 
     fn write_light(&self) {
@@ -115,7 +219,10 @@ impl Bulb {
         };
         let ok = self.ok.load(Ordering::Relaxed);
         let s = self.light_state();
-        let mut a = crate::light::attributes(&light::capabilities(), &s, ok);
+        let mut a = crate::light::attributes(&light::capabilities(self.model), &s, ok);
+        if let Some(icon) = &self.light_icon {
+            a.insert("icon".into(), json!(icon));
+        }
         a.insert("friendly_name".into(), json!(friendly));
         a.insert("supported_features".into(), json!(light::FEATURES));
         let state = match (ok, s.on) {
@@ -123,7 +230,7 @@ impl Bulb {
             (true, true) => "on",
             (true, false) => "off",
         };
-        self.hass.set_state(id.clone(), state, a);
+        self.write(id, state, a, None);
     }
 
     fn write_button(&self, b: &ButtonInfo, context: Option<ha_core::Context>) {
@@ -133,9 +240,11 @@ impl Bulb {
         };
         let mut a = Map::new();
         a.insert("device_class".into(), json!(b.class));
+        if let Some(icon) = &b.icon {
+            a.insert("icon".into(), json!(icon));
+        }
         a.insert("friendly_name".into(), json!(b.friendly));
-        self.hass
-            .set_state_with_context(b.entity_id.clone(), state, a, context);
+        self.write(&b.entity_id, &state, a, context);
     }
 
     /// The coordinator's listeners: every entity.
@@ -380,10 +489,11 @@ async fn coordinate(bulb: Arc<Bulb>, mut rx: mpsc::UnboundedReceiver<Ctl>, polli
     }
 }
 
-/// Why setup stopped.
+/// Why setup stopped: HA's `ConfigEntryNotReady`, with its message (none
+/// for a refresh that timed out) and what is logged.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SetupError {
-    Retry(String),
+    Retry { reason: Option<String>, log: String },
 }
 
 /// What setup learnt.
@@ -391,34 +501,54 @@ pub struct Found {
     conn: Conn,
     serial: [u8; 6],
     cached: Cached,
+    /// `host_firmware_version`, `product` and `group`.
+    pub firmware: String,
+    pub product: Option<u32>,
+    pub group: String,
+}
+
+impl Found {
+    pub fn serial(&self) -> String {
+        proto::mac(&self.serial)
+    }
 }
 
 /// HA's setup: device info (5 × 3 s), then the first refresh (5 × 18 s),
-/// both tagged to "any", then the serial check.
+/// both tagged to "any", then the serial check. The bulb at `host` is
+/// reached at `at` (the host and port, or a stand-in).
 pub async fn connect(
     host: &str,
-    port: u16,
+    at: (&str, u16),
     unique_id: &str,
     t: Timing,
 ) -> Result<Found, SetupError> {
-    let conn = Conn::open(host, port)
-        .await
-        .map_err(|e| SetupError::Retry(format!("Could not resolve {host}: {e}")))?;
+    let conn = Conn::open(at.0, at.1).await.map_err(|e| {
+        let why = format!("Could not resolve {host}: {e}");
+        SetupError::Retry {
+            reason: Some(why.clone()),
+            log: why,
+        }
+    })?;
     let info = [
         Op::get(ty::GET_HOST_FIRMWARE, ty::STATE_HOST_FIRMWARE),
         Op::get(ty::GET_VERSION, ty::STATE_VERSION),
         Op::get(ty::GET_GROUP, ty::STATE_GROUP),
     ];
-    if let Err(missing) = conn.execute(&info, ATTEMPTS, t.command_try).await {
-        let names: Vec<&str> = missing
-            .iter()
-            .map(|i| ["get_hostfirmware", "get_version", "get_group"][*i])
-            .collect();
-        return Err(SetupError::Retry(format!(
-            "{} timed out after 5 attempts",
-            names.join(", ")
-        )));
-    }
+    // A refresh that times out is a `ConfigEntryNotReady` with no message.
+    let timed_out = |log: String| SetupError::Retry { reason: None, log };
+    let info = match conn.execute(&info, ATTEMPTS, t.command_try).await {
+        Ok(info) => info,
+        Err(missing) => {
+            let names: Vec<&str> = missing
+                .iter()
+                .map(|i| ["get_hostfirmware", "get_version", "get_group"][*i])
+                .collect();
+            return Err(timed_out(format!(
+                "{} timed out after 5 attempts",
+                names.join(", ")
+            )));
+        }
+    };
     let r = conn
         .execute(
             &[Op::get(ty::LIGHT_GET, ty::LIGHT_STATE)],
@@ -426,15 +556,17 @@ pub async fn connect(
             t.poll_try,
         )
         .await
-        .map_err(|_| SetupError::Retry("get_color timed out after 5 attempts".into()))?;
+        .map_err(|_| timed_out("get_color timed out after 5 attempts".into()))?;
     let (h, payload) = &r[0];
     let s = proto::LightState::parse(payload)
-        .ok_or_else(|| SetupError::Retry("get_color timed out after 5 attempts".into()))?;
+        .ok_or_else(|| timed_out("get_color timed out after 5 attempts".into()))?;
     let found = proto::mac(&h.target);
     if found != unique_id {
-        return Err(SetupError::Retry(format!(
-            "Unexpected device found at {host}; expected {unique_id}, found {found}"
-        )));
+        let why = format!("Unexpected device found at {host}; expected {unique_id}, found {found}");
+        return Err(SetupError::Retry {
+            reason: Some(why.clone()),
+            log: why,
+        });
     }
     conn.set_target(h.target);
     Ok(Found {
@@ -445,13 +577,16 @@ pub async fn connect(
             color: s.color,
             label: s.label,
         },
+        firmware: proto::host_firmware(&info[0].1).unwrap_or_default(),
+        product: proto::product(&info[1].1),
+        group: proto::group(&info[2].1).unwrap_or_default(),
     })
 }
 
 /// The bulb and its entities, from a setup, with its coordinator (stop
 /// it to let the bulb go).
 pub fn bulb(
-    components: &Components,
+    components: &Arc<Components>,
     title: &str,
     host: &str,
     found: Found,
@@ -463,7 +598,21 @@ pub fn bulb(
     let names = crate::naming::Names::new(hass, &registries, DOMAIN);
     let serial = proto::mac(&found.serial);
     let label = found.cached.label.clone();
+    let model = light::Model::of(features(found.product));
     let light = names.entity("light", &serial, &serial, &label, None);
+    // The icon the user gave an entity is in its state.
+    let icon = |domain: &str, unique_id: &str| {
+        registries
+            .entities
+            .iter()
+            .find(|e| {
+                e.platform == DOMAIN
+                    && e.entity_id.split('.').next() == Some(domain)
+                    && e.unique_id.as_ref().and_then(Value::as_str) == Some(unique_id)
+            })
+            .and_then(|e| e.icon.clone())
+    };
+    let light_icon = icon("light", &serial);
     let buttons = [("restart", "Restart"), ("identify", "Identify")]
         .into_iter()
         .filter_map(|(class, name)| {
@@ -478,6 +627,7 @@ pub fn bulb(
             Some(ButtonInfo {
                 entity_id,
                 friendly,
+                icon: icon("button", &format!("{serial}_{class}")),
                 class,
                 last: Mutex::new(last),
             })
@@ -492,10 +642,17 @@ pub fn bulb(
         ok: AtomicBool::new(true),
         ctl: tx,
         timing,
+        model,
         light,
+        light_icon,
         buttons,
+        alive: Mutex::new(true),
+        components: components.clone(),
     });
-    let coordinator = tokio::spawn(coordinate(b.clone(), rx, polling));
+    // HA's coordinator refreshes on its interval only while an entity
+    // listens: an entry whose entities are all disabled isn't polled.
+    let listened = b.light.is_some() || !b.buttons.is_empty();
+    let coordinator = tokio::spawn(coordinate(b.clone(), rx, polling && listened));
     if b.light.is_some() {
         components.lights().add(Arc::new(LifxLight(b.clone())));
     }
@@ -506,88 +663,299 @@ pub fn bulb(
     (b, coordinator)
 }
 
-/// The entry: set up on HA's ladder, then run; rediscovery moves it.
-/// `ready` is done after the first connection attempt.
+/// Where bulbs are reached: at their own address, or at stand-ins on
+/// 127.0.0.1 (tests, and a debug build's browser run).
+#[derive(Debug, Clone)]
+pub struct Where {
+    /// Where a discovery's `GetService` goes (`255.255.255.255:56700`).
+    pub broadcast: std::net::SocketAddr,
+    /// A bulb's address and the stand-in that answers for it.
+    pub stand_ins: Vec<(String, std::net::SocketAddr)>,
+    /// The config flow's waits.
+    pub flow: config_flow::Timing,
+    /// An entry's waits.
+    pub timing: Timing,
+}
+
+impl Default for Where {
+    fn default() -> Self {
+        Self {
+            broadcast: std::net::SocketAddr::from(([255, 255, 255, 255], conn::PORT)),
+            stand_ins: Vec::new(),
+            flow: config_flow::Timing::HA,
+            timing: Timing::HA,
+        }
+    }
+}
+
+impl Where {
+    /// Where the bulb at `host` is reached.
+    pub fn addr(&self, host: &str) -> (String, u16) {
+        match self.stand_ins.iter().find(|(h, _)| h == host) {
+            Some((_, at)) => (at.ip().to_string(), at.port()),
+            None => (host.to_owned(), conn::PORT),
+        }
+    }
+
+    /// The bulb an answer came from.
+    pub fn host_of(&self, from: std::net::SocketAddr) -> String {
+        match self.stand_ins.iter().find(|(_, at)| *at == from) {
+            Some((host, _)) => host.clone(),
+            None => from.ip().to_string(),
+        }
+    }
+}
+
+/// When its task ends (its entry was removed, or the bulb moved), a
+/// bulb stops: whoever stops the task waits for that.
+struct Stopped(Arc<Bulb>, tokio::task::JoinHandle<()>);
+
+impl Drop for Stopped {
+    fn drop(&mut self) {
+        self.1.abort();
+        self.0.stop();
+    }
+}
+
+/// A task that ends with whoever holds this.
+struct Owned(tokio::task::JoinHandle<()>);
+
+impl Drop for Owned {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// The entry: set up on HA's ladder (retrying as `ConfigEntryNotReady`
+/// does), make its registry rows, then run; rediscovery moves it. `ready`
+/// is done after the first connection attempt; `status` hears where the
+/// set-up is.
 pub async fn run(
     components: Arc<Components>,
     entry: Map<String, Value>,
-    port: u16,
+    at: Where,
     ready: ha_core::SetupGuard,
+    status: crate::config_entries::Status,
 ) {
+    use crate::config_entries::EntryState;
     let mut ready = Some(ready);
     let s = |k: &str| entry.get(k).and_then(Value::as_str).map(str::to_owned);
-    let (Some(mut host), Some(unique_id)) = (
-        entry
-            .get("data")
-            .and_then(|d| d.get("host"))
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        s("unique_id"),
-    ) else {
-        tracing::error!("lifx: the entry has no host or unique id");
+    let host = entry
+        .get("data")
+        .and_then(|d| d.get("host"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    // HA's legacy entry (no unique id, or `lifx`) sets nothing up.
+    let unique_id = s("unique_id").filter(|u| u != DOMAIN);
+    let (Some(mut host), Some(unique_id)) = (host, unique_id) else {
+        tracing::warn!("lifx: the entry has no host or serial; nothing is set up for it");
+        status.set(EntryState::Loaded, None);
         return;
     };
     let title = s("title").unwrap_or_default();
+    let entry_id = s("entry_id").unwrap_or_default();
     let polling = entry.get("pref_disable_polling").and_then(Value::as_bool) != Some(true);
+    let disable_new = entry
+        .get("pref_disable_new_entities")
+        .and_then(Value::as_bool)
+        == Some(true);
+    // `async_migrate_entities_devices`: while HA's old shared entry is
+    // there, this bulb's device and its entities move from it to this
+    // entry, before anything else (so removing the old entry doesn't take
+    // them).
+    if let (Some((entries, _)), Some(registry)) = (status.entry(), components.registry())
+        && registry.read_only().is_none()
+    {
+        let legacy = entries.list().unwrap_or_default().into_iter().find(|e| {
+            e.get("domain").and_then(Value::as_str) == Some(DOMAIN)
+                && e.get("unique_id")
+                    .and_then(Value::as_str)
+                    .is_none_or(|u| u == DOMAIN)
+        });
+        if let Some(legacy) = legacy.and_then(|e| e.get("entry_id")?.as_str().map(str::to_owned)) {
+            let _one = crate::switchbot_cloud::SETUP.lock();
+            registry.move_devices_to_entry(&json!([DOMAIN, unique_id]), &legacy, &entry_id);
+        }
+    }
+    // The host as the entry has it now, with its data's revision: a flow
+    // may have changed it while the set-up waited for a retry.
+    let current_host = |fallback: &str, revision: u64| {
+        status
+            .entry()
+            .and_then(|(entries, id)| entries.data_value(id, "host"))
+            .unwrap_or_else(|| (fallback.to_owned(), revision))
+    };
+    // A bulb found at a new address: the entry has it from now on, as HA's
+    // discovery flow writes it. Not if the entry's data changed since this
+    // task read it (a flow wrote a newer address): that one stands.
+    let save_host = |revision: u64, host: &str| {
+        if let Some((entries, id)) = status.entry() {
+            save_host(entries, id, revision, host);
+        }
+    };
+    let mut revision = 0;
     let (found_tx, mut found_rx) = mpsc::unbounded_channel::<String>();
-    tokio::spawn(discover(unique_id.clone(), port, found_tx));
+    // Rediscovery ends with this task.
+    let discovery = Owned(tokio::spawn(discover(
+        unique_id.clone(),
+        at.clone(),
+        found_tx,
+    )));
+    // The bulb this entry runs: let go when the task ends.
+    struct Runs<'a>(&'a Components, &'a str, &'a str, bool);
+    impl Drop for Runs<'_> {
+        fn drop(&mut self) {
+            if self.3 {
+                self.0.let_go(self.1, self.2);
+            }
+        }
+    }
+    let mut runs_it = Runs(&components, &unique_id, &entry_id, false);
+    let mut tries = 0u32;
+    // Whether the entry was last told `loaded`: told again after a retry.
+    let mut loaded = false;
     loop {
-        let mut tries = 0u32;
         let found = loop {
-            match connect(&host, port, &unique_id, Timing::HA).await {
+            (host, revision) = current_host(&host, revision);
+            let (ip, port) = at.addr(&host);
+            match connect(&host, (&ip, port), &unique_id, at.timing).await {
                 Ok(f) => break f,
-                Err(SetupError::Retry(why)) => {
+                Err(SetupError::Retry { reason, log }) => {
+                    status.set(EntryState::SetupRetry, reason);
+                    loaded = false;
                     if let Some(r) = ready.take() {
                         r.done();
                     }
                     let wait = (5u64 << tries.min(7)).min(600);
                     tracing::info!(
-                        "Config entry '{title}' for lifx integration not ready yet: {why}; Retrying in {wait} seconds"
+                        "Config entry '{title}' for lifx integration not ready yet: {log}; Retrying in {wait} seconds"
                     );
                     tries += 1;
                     let jitter = Duration::from_micros(rand::random_range(50_000..500_001));
                     // Discovery of the bulb retries at once.
                     tokio::select! {
                         () = components.hass().setup_retry_wait(Duration::from_secs(wait) + jitter) => {}
-                        Some(at) = found_rx.recv() => host = at,
+                        Some(found) = found_rx.recv() => save_host(revision, &found),
                     }
+                    status.set(EntryState::SetupInProgress, None);
                 }
             }
         };
-        let (b, coordinator) = bulb(&components, &title, &host, found, polling, Timing::HA);
-        if let Some(r) = ready.take() {
-            r.done();
+        // Two entries for one bulb (an imported install can have that):
+        // the first that reaches it runs it. The other is set up with no
+        // entities, as HA sets it up with its entities refused (their
+        // unique ids are taken), and waits: a reload (a flow that finds the
+        // bulb at a new address) tries again.
+        // The set-up lock is taken before the bulb is claimed and held
+        // through its rows and entities: no other entry's set-up (another
+        // for this bulb) comes between them. Nothing awaits under it.
+        let one = crate::switchbot_cloud::SETUP.lock();
+        if !runs_it.3 {
+            if !components.run_device(&unique_id, &entry_id) {
+                tracing::error!(
+                    "Platform lifx does not generate unique IDs. ID {unique_id} already exists - ignoring the entities of '{title}'"
+                );
+                // HA's set-up still registers the device to this entry, and
+                // the rows no running entity has (a disabled one).
+                if runs(features(found.product))
+                    && let Some(registry) = components.registry()
+                {
+                    register::register(
+                        components.hass(),
+                        registry,
+                        &entry_id,
+                        &found,
+                        disable_new,
+                        true,
+                    );
+                }
+                drop(one);
+                // It holds nothing while it waits: no socket, no search.
+                drop(found);
+                drop(discovery);
+                drop(found_rx);
+                status.set(EntryState::Loaded, None);
+                drop(ready.take());
+                return std::future::pending().await;
+            }
+            runs_it.3 = true;
+            #[cfg(test)]
+            tests::claimed(&entry_id);
         }
+        let stopped = {
+            // No other entry is set up or removed, and no registry edit
+            // made, while this one's rows and entities are.
+            let _one = one;
+            let product = features(found.product);
+            if !runs(product) {
+                tracing::warn!(
+                    "lifx: {title} is a {}, which hars runs as a single-zone bulb; its registry rows are left as they are",
+                    model_name(found.product)
+                );
+            } else if let (Some(registry), Some(entry_id)) = (
+                components.registry(),
+                entry.get("entry_id").and_then(Value::as_str),
+            ) {
+                register::register(
+                    components.hass(),
+                    registry,
+                    entry_id,
+                    &found,
+                    disable_new,
+                    false,
+                );
+            }
+            let (b, coordinator) = bulb(&components, &title, &host, found, polling, at.timing);
+            Stopped(b, coordinator)
+        };
+        if !loaded {
+            loaded = true;
+            tries = 0;
+            status.set(EntryState::Loaded, None);
+        }
+        drop(ready.take());
         // Running until the bulb turns up elsewhere.
         loop {
             match found_rx.recv().await {
-                Some(at) if at != host => {
-                    tracing::info!("lifx: {title} moved from {host} to {at}; reconnecting");
-                    host = at;
+                Some(found) if found != host => {
+                    tracing::info!("lifx: {title} moved from {host} to {found}; reconnecting");
+                    save_host(revision, &found);
+                    host = found;
                     break;
                 }
                 Some(_) => {}
                 None => return std::future::pending().await,
             }
         }
-        coordinator.abort();
-        if let Some((id, _)) = &b.light {
-            components.lights().remove(id);
-        }
-        for btn in &b.buttons {
-            components.buttons().remove(&btn.entity_id);
-        }
+        drop(stopped);
+        // Not running the bulb while it is reached again.
+        components.let_go(&unique_id, &entry_id);
+        runs_it.3 = false;
     }
+}
+
+/// A bulb found at `host`: the entry has `host` from now on, unless its
+/// data changed since it was read at `revision` (a flow wrote a newer
+/// address, even the same one again: that one stands). Looked at and
+/// written in one step.
+pub(crate) fn save_host(
+    entries: &crate::config_entries::ConfigEntries,
+    entry_id: &str,
+    revision: u64,
+    host: &str,
+) -> bool {
+    entries.replace_data_value(entry_id, "host", revision, host)
 }
 
 /// Broadcast `GetService` every 15 min (and 5 s after start), listening
 /// 8.5 s each time; report where the bulb answered from. Only to
 /// 255.255.255.255: what HA sends with its default network settings (only
 /// the default interface enabled), which is how the imported install runs.
-async fn discover(unique_id: String, port: u16, found: mpsc::UnboundedSender<String>) {
-    tokio::time::sleep(Duration::from_secs(5)).await;
+async fn discover(unique_id: String, at: Where, found: mpsc::UnboundedSender<String>) {
+    tokio::time::sleep(at.timing.rediscover_after).await;
     loop {
-        if let Some(ip) = discover_once(&unique_id, port).await
+        let bulbs = scan(&at, at.flow.discovery, Some(&unique_id)).await;
+        if let Some((_, ip)) = bulbs.into_iter().find(|(serial, _)| *serial == unique_id)
             && found.send(ip).is_err()
         {
             return;
@@ -596,9 +964,23 @@ async fn discover(unique_id: String, port: u16, found: mpsc::UnboundedSender<Str
     }
 }
 
-async fn discover_once(unique_id: &str, port: u16) -> Option<String> {
-    let sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await.ok()?;
-    sock.set_broadcast(true).ok()?;
+/// aiolifx's `LifxDiscovery` for `window`: one `GetService` broadcast, then
+/// every bulb that answers (as UDP, or with a `LightState`), by serial, in
+/// the order they first answered, with the address each answered from;
+/// only the bulb `only` names, if it names one. Its socket is gone when
+/// this returns.
+pub(crate) async fn scan(
+    at: &Where,
+    window: Duration,
+    only: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut bulbs: Vec<(String, String)> = Vec::new();
+    let Ok(sock) = tokio::net::UdpSocket::bind("0.0.0.0:0").await else {
+        return bulbs;
+    };
+    if sock.set_broadcast(true).is_err() {
+        return bulbs;
+    }
     let frame = proto::Out {
         source: rand::random_range(1..=u32::MAX),
         target: [0; 6],
@@ -609,24 +991,25 @@ async fn discover_once(unique_id: &str, port: u16) -> Option<String> {
         payload: &[],
     }
     .encode();
-    sock.send_to(&frame, ("255.255.255.255", port)).await.ok()?;
+    if sock.send_to(&frame, at.broadcast).await.is_err() {
+        return bulbs;
+    }
     let mut buf = [0u8; 256];
-    let deadline = Instant::now() + DISCOVERY_WINDOW;
-    let mut at = None;
+    let deadline = Instant::now() + window;
     while let Ok(Ok((n, from))) = tokio::time::timeout_at(deadline, sock.recv_from(&mut buf)).await
     {
         let Some((h, p)) = proto::decode(&buf[..n]) else {
             continue;
         };
         let udp = h.ty == ty::STATE_SERVICE && proto::service(p).is_some_and(|s| s.0 == 1);
-        if (udp || h.ty == ty::LIGHT_STATE)
-            && h.target != [0; 6]
-            && proto::mac(&h.target) == unique_id
-        {
-            at.get_or_insert(from.ip().to_string());
+        if (udp || h.ty == ty::LIGHT_STATE) && h.target != [0; 6] {
+            let serial = proto::mac(&h.target);
+            if only.is_none_or(|only| only == serial) && !bulbs.iter().any(|(s, _)| *s == serial) {
+                bulbs.push((serial, at.host_of(from)));
+            }
         }
     }
-    at
+    bulbs
 }
 
 struct LifxLight(Arc<Bulb>);
@@ -637,7 +1020,7 @@ impl crate::light::Light for LifxLight {
     }
 
     fn capabilities(&self) -> Capabilities {
-        light::capabilities()
+        light::capabilities(self.0.model)
     }
 
     fn state(&self) -> LightState {

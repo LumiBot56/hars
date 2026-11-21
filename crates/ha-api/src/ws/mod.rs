@@ -258,6 +258,10 @@ async fn run(mut socket: WebSocket, shared: Shared, ip: Option<IpAddr>) {
     let mut awaiting_pong = false;
     // The command at work, moved out of `conn` so the loop can wait on it.
     let mut busy = None;
+    // What ended the connection, for a test of a busy command's
+    // cancellation. Test builds only: it would live across every await.
+    #[cfg(test)]
+    let mut ended = "gone";
     let writer_done = loop {
         if busy.is_none() {
             busy = conn.busy.take();
@@ -281,12 +285,23 @@ async fn run(mut socket: WebSocket, shared: Shared, ip: Option<IpAddr>) {
                 }
                 Some(Ok(Message::Pong(_))) => awaiting_pong = false,
                 Some(Ok(Message::Ping(_))) => {}
-                // Close, an error, or a binary frame (no binary handlers exist).
+                Some(Ok(Message::Close(_))) => {
+                    #[cfg(test)]
+                    {
+                        ended = "close";
+                    }
+                    break false;
+                }
+                // An error, or a binary frame (no binary handlers exist).
                 _ => break false,
             },
             _ = heartbeat.tick() => {
                 if awaiting_pong {
                     tracing::debug!("websocket client missed a heartbeat; disconnecting");
+                    #[cfg(test)]
+                    {
+                        ended = "heartbeat";
+                    }
                     break false;
                 }
                 if !conn.out.queue(Frame::Ping) {
@@ -312,7 +327,10 @@ async fn run(mut socket: WebSocket, shared: Shared, ip: Option<IpAddr>) {
         }
     };
     if let Some(busy) = busy {
-        busy.abort();
+        #[cfg(test)]
+        busy.abort(ended);
+        #[cfg(not(test))]
+        busy.abort("gone");
     }
     conn.close();
     if !writer_done {
@@ -622,7 +640,7 @@ impl Conn {
         // Work for a connection that is gone: stop it, and drop what it
         // holds (a render already running ends at its fuel budget).
         if let Some(busy) = self.busy.take() {
-            busy.abort();
+            busy.abort("gone");
         }
         self.queue.clear();
         self.queued_bytes = 0;

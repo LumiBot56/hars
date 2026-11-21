@@ -186,6 +186,11 @@ pub struct ConfigEntries {
     runtime: parking_lot::Mutex<Vec<(String, Runtime)>>,
     /// `config_entries/subscribe`rs. Empty while nobody subscribes.
     listeners: parking_lot::Mutex<Vec<(Live, Listener)>>,
+    /// How many times each entry's data has been changed here, by entry
+    /// id: a value read with its revision is still the one written last
+    /// only while the revision is the same. Changed with the entries'
+    /// write lock held. Empty until an entry's data changes.
+    revisions: parking_lot::Mutex<Vec<(String, u64)>>,
 }
 
 impl std::fmt::Debug for ConfigEntries {
@@ -264,6 +269,7 @@ impl ConfigEntries {
                 read_only: !writable,
                 runtime: Default::default(),
                 listeners: Default::default(),
+                revisions: Default::default(),
             }
         })
     }
@@ -277,6 +283,7 @@ impl ConfigEntries {
             read_only: false,
             runtime: Default::default(),
             listeners: Default::default(),
+            revisions: Default::default(),
         })
     }
 
@@ -347,6 +354,7 @@ impl ConfigEntries {
             let i = list
                 .iter()
                 .position(|e| e.get("entry_id").and_then(Value::as_str) == Some(entry_id))?;
+            self.forget_revision(entry_id);
             list.remove(i)
         };
         self.schedule();
@@ -374,6 +382,7 @@ impl ConfigEntries {
             let i = list
                 .iter()
                 .position(|e| e.get("entry_id").and_then(Value::as_str) == Some(entry_id))?;
+            self.forget_revision(entry_id);
             list.remove(i)
         };
         self.schedule();
@@ -610,10 +619,105 @@ impl ConfigEntries {
         })
     }
 
+    /// An entry's data revision: changed with each change of its data.
+    fn revision(&self, entry_id: &str) -> u64 {
+        let revisions = self.revisions.lock();
+        revisions
+            .iter()
+            .find(|(id, _)| id == entry_id)
+            .map_or(0, |(_, r)| *r)
+    }
+
+    /// The entry's data changed (called with the entries' write lock held).
+    fn bump(&self, entry_id: &str) {
+        let mut revisions = self.revisions.lock();
+        match revisions.iter_mut().find(|(id, _)| id == entry_id) {
+            Some((_, r)) => *r += 1,
+            None => revisions.push((entry_id.to_owned(), 1)),
+        }
+    }
+
+    /// The entry left the list (called with the entries' write lock held):
+    /// its revision goes with it, and the list's memory once it is empty.
+    fn forget_revision(&self, entry_id: &str) {
+        let mut revisions = self.revisions.lock();
+        revisions.retain(|(id, _)| id != entry_id);
+        if revisions.is_empty() {
+            *revisions = Vec::new();
+        }
+    }
+
+    /// Test access to how many entries have a revision.
+    #[cfg(test)]
+    pub(crate) fn revision_count(&self) -> usize {
+        self.revisions.lock().len()
+    }
+
+    /// `data[key]` of an entry, with the data's revision, read together.
+    pub fn data_value(&self, entry_id: &str, key: &str) -> Option<(String, u64)> {
+        let guard = self.entries.read();
+        let entry = guard
+            .iter()
+            .flatten()
+            .find(|e| e.get("entry_id").and_then(Value::as_str) == Some(entry_id))?;
+        let value = entry.get("data")?.get(key)?.as_str()?.to_owned();
+        Some((value, self.revision(entry_id)))
+    }
+
+    /// One field of an entry's data, `key`, becomes `value`, if the data is
+    /// still at `revision` (as [`ConfigEntries::data_value`] read it): looked
+    /// at and changed under one write lock, so data written meanwhile (a
+    /// flow's address, even one changed back to what it was) is never
+    /// overwritten. The rest of the data stays. `modified_at`, the save and
+    /// the listeners as [`ConfigEntries::update_data`]. `false` if nothing
+    /// changed.
+    pub fn replace_data_value(
+        &self,
+        entry_id: &str,
+        key: &str,
+        revision: u64,
+        value: &str,
+    ) -> bool {
+        #[cfg(test)]
+        tests::before_write();
+        let mut listeners = self.listeners.lock();
+        {
+            let mut guard = self.entries.write();
+            let Some(entry) = guard
+                .iter_mut()
+                .flatten()
+                .find(|e| e.get("entry_id").and_then(Value::as_str) == Some(entry_id))
+            else {
+                return false;
+            };
+            let Some(Value::Object(data)) = entry.get_mut("data") else {
+                return false;
+            };
+            if self.revision(entry_id) != revision
+                || data.get(key).and_then(Value::as_str) == Some(value)
+            {
+                return false;
+            }
+            data.insert(key.to_owned(), Value::String(value.to_owned()));
+            entry.insert(
+                "modified_at".into(),
+                Value::String(ha_core::isoformat(self.hass.clock().now())),
+            );
+            self.bump(entry_id);
+        }
+        self.schedule();
+        if let Some(entry) = self.get(entry_id) {
+            tell(&mut listeners, Change::Updated, &entry);
+        }
+        true
+    }
+
     /// `async_update_entry(entry, data=…)`: when the data differs it is
     /// replaced, `modified_at` moves and the save is scheduled. `false`
     /// for no change (or no such entry).
     pub fn update_data(&self, entry_id: &str, data: Map<String, Value>) -> bool {
+        #[cfg(test)]
+        tests::before_write();
         let mut listeners = self.listeners.lock();
         {
             let mut guard = self.entries.write();
@@ -632,6 +736,7 @@ impl ConfigEntries {
                 "modified_at".into(),
                 Value::String(ha_core::isoformat(self.hass.clock().now())),
             );
+            self.bump(entry_id);
         }
         self.schedule();
         if let Some(entry) = self.get(entry_id) {
@@ -669,8 +774,28 @@ impl ConfigEntries {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    thread_local! {
+        /// What this thread does at the start of its next write of an
+        /// entry's data, before it looks at the entry: a test makes another
+        /// writer come first there.
+        static BEFORE_WRITE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    pub(crate) fn before_write() {
+        let hook = BEFORE_WRITE.with(|hook| hook.borrow_mut().take());
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
+    /// Run `hook` at the start of this thread's next write of entry data.
+    pub(crate) fn set_before_write(hook: impl FnOnce() + 'static) {
+        BEFORE_WRITE.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
+    }
 
     /// HA's own files (the registry-write runs) are written back byte for
     /// byte.
@@ -724,6 +849,30 @@ mod tests {
         assert!(saved.contains(r#""x":25.096823722419074"#), "{saved}");
         assert!(saved.contains(r#""z":12345678901234567890"#), "{saved}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Review regression: a removed or replaced entry's data revision goes
+    /// with it, so adding, changing and removing entries leaves nothing.
+    #[tokio::test]
+    async fn a_removed_entry_leaves_no_revision() {
+        let entry = |id: &str| {
+            let mut e = Map::new();
+            e.insert("entry_id".into(), Value::from(id));
+            e.insert("data".into(), Value::Object(Map::new()));
+            e
+        };
+        let entries = ConfigEntries::in_memory(&Hass::new(), vec![entry("one"), entry("two")]);
+        for id in ["one", "two"] {
+            let mut data = Map::new();
+            data.insert("host".into(), Value::from("192.0.2.1"));
+            assert!(entries.update_data(id, data));
+        }
+        assert_eq!(entries.revision_count(), 2);
+        assert!(entries.remove("one").is_some());
+        assert_eq!(entries.revision_count(), 1);
+        assert!(entries.take("two").is_some());
+        assert_eq!(entries.revision_count(), 0);
+        assert_eq!(entries.revisions.lock().capacity(), 0);
     }
 
     /// A subscriber's first look and the changes after it never overlap,

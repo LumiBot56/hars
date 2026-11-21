@@ -822,6 +822,93 @@ impl Registry {
         find_unique(&self.snapshot(), domain, platform, unique_id).cloned()
     }
 
+    /// LIFX's `async_migrate_entities_devices`: each device of config entry
+    /// `from` that has `identifier` moves to entry `to`
+    /// (`async_update_device(add_config_entry_id=to,
+    /// remove_config_entry_id=from)`), and then each entity of `from` on such
+    /// a device (`async_update_entity(config_entry_id=to)`), in one write
+    /// (no reader sees a device and its entities apart). Each change fires
+    /// its `update`.
+    ///
+    /// Where `hars` differs from HA, on purpose: in HA 2026.6.1 the device
+    /// update itself takes the moved entities to `deleted_entities` (they
+    /// belonged to the entry the device left) and leaves the device with no
+    /// subentry for `to`, and the set-up after makes them again from the
+    /// deleted rows. `hars` keeps the entities in place and gives the device
+    /// `to`'s subentry, so nothing of an imported install is lost on the way.
+    pub fn move_devices_to_entry(&self, identifier: &Value, from: &str, to: &str) {
+        // Most bulbs have no device of the old entry: no write at all then.
+        let has = |d: &Device| {
+            d.config_entries.iter().any(|e| e == from) && d.identifiers.contains(identifier)
+        };
+        if !self.snapshot().devices.iter().any(|d| has(d)) {
+            return;
+        }
+        let now = now_iso(&self.hass);
+        let to_disabled = self.entry_disabled(Some(to));
+        self.write(|tx| {
+            let mut moved: Vec<String> = Vec::new();
+            for i in 0..tx.r.devices.len() {
+                let old = &tx.r.devices[i];
+                if !old.config_entries.iter().any(|e| e == from)
+                    || !old.identifiers.contains(identifier)
+                {
+                    continue;
+                }
+                let mut d = (**old).clone();
+                let mut changes = Map::new();
+                if !d.config_entries.iter().any(|e| e == to) {
+                    changes.insert("config_entries".into(), json!(old.config_entries));
+                    changes.insert(
+                        "config_entries_subentries".into(),
+                        Value::Object(old.config_entries_subentries.clone()),
+                    );
+                    d.config_entries.push(to.to_owned());
+                    d.config_entries_subentries
+                        .insert(to.to_owned(), json!([null]));
+                    if d.disabled_by.as_deref() == Some("config_entry") && !to_disabled {
+                        changes.insert("disabled_by".into(), json!(d.disabled_by));
+                        d.disabled_by = None;
+                    }
+                }
+                changes
+                    .entry("config_entries")
+                    .or_insert_with(|| json!(old.config_entries));
+                changes
+                    .entry("config_entries_subentries")
+                    .or_insert_with(|| Value::Object(old.config_entries_subentries.clone()));
+                d.config_entries_subentries.remove(from);
+                d.config_entries.retain(|e| e != from);
+                if d.primary_config_entry.as_deref() == Some(from) {
+                    changes.insert("primary_config_entry".into(), json!(d.primary_config_entry));
+                    d.primary_config_entry = None;
+                }
+                d.modified_at = Some(now.clone());
+                let id = d.id.clone();
+                tx.r.devices[i] = Arc::new(d);
+                tx.device_event(json!({"action": "update", "device_id": id, "changes": changes}));
+                moved.push(id);
+            }
+            // Nothing moved (the device left the old entry meanwhile): the
+            // entities aren't looked at.
+            if moved.is_empty() {
+                return;
+            }
+            let patch = EntityPatch {
+                config_entry_id: Some(Some(to.to_owned())),
+                ..Default::default()
+            };
+            for i in 0..tx.r.entities.len() {
+                let e = &tx.r.entities[i];
+                if e.config_entry_id.as_deref() == Some(from)
+                    && e.device_id.as_ref().is_some_and(|d| moved.contains(d))
+                {
+                    update_row(tx, i, &patch, &now, None);
+                }
+            }
+        });
+    }
+
     /// `async_get_or_create`: the existing row, updated with `patch`, or a
     /// new one. `disabled_by` applies only to a new row; a deleted row
     /// that comes back brings its own; then, in HA's order, the entry's
