@@ -77,18 +77,13 @@ type TokenListener = Box<dyn Fn(&Token) + Send + Sync>;
 
 pub struct Api {
     client: ha_http::Client,
+    /// `hass.clock()`: token expiry and request times follow it.
+    clock: ha_core::Clock,
     endpoint: String,
     token: Mutex<Token>,
     /// One refresh at a time.
     refreshing: tokio::sync::Mutex<()>,
     on_token: Mutex<Option<TokenListener>>,
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 /// `_random_nonce`.
@@ -172,9 +167,19 @@ fn form_encode(s: &str) -> String {
 }
 
 impl Api {
-    pub fn new(client: ha_http::Client, endpoint: String, token: Token) -> Arc<Self> {
+    fn now_ms(&self) -> i64 {
+        self.clock.now().as_millisecond()
+    }
+
+    pub fn new(
+        client: ha_http::Client,
+        clock: ha_core::Clock,
+        endpoint: String,
+        token: Token,
+    ) -> Arc<Self> {
         Arc::new(Self {
             client,
+            clock,
             endpoint,
             token: Mutex::new(token),
             refreshing: tokio::sync::Mutex::new(()),
@@ -204,14 +209,15 @@ impl Api {
     /// `refresh_access_token_if_need`: a failure is logged and the old
     /// token tried anyway, as the SDK does.
     async fn refresh_if_needed(&self) {
-        if self.token.lock().expires_at() - 60_000 > now_ms() {
+        if self.token.lock().expires_at() - 60_000 > self.now_ms() {
             return;
         }
         let _one = self.refreshing.lock().await;
-        if self.token.lock().expires_at() - 60_000 > now_ms() {
+        if self.token.lock().expires_at() - 60_000 > self.now_ms() {
             return;
         }
-        let refresh = self.token.lock().refresh_token.clone();
+        let previous = self.token.lock().clone();
+        let refresh = previous.refresh_token.clone();
         match self
             .request(Method::GET, &format!("/v1.0/m/token/{refresh}"), None, None)
             .await
@@ -219,13 +225,17 @@ impl Api {
             Ok(ret) => {
                 let r = &ret["result"];
                 let token = Token {
-                    t: ret.get("t").and_then(Value::as_i64).unwrap_or_else(now_ms),
+                    t: ret
+                        .get("t")
+                        .and_then(Value::as_i64)
+                        .unwrap_or_else(|| self.now_ms()),
                     expire_time: r.get("expireTime").and_then(Value::as_i64).unwrap_or(7200),
+                    // A refresh that leaves the uid out keeps the old one.
                     uid: r
                         .get("uid")
                         .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_owned(),
+                        .map(str::to_owned)
+                        .unwrap_or(previous.uid),
                     access_token: r
                         .get("accessToken")
                         .and_then(Value::as_str)
@@ -280,7 +290,7 @@ impl Api {
         } else {
             String::new()
         };
-        let t = now_ms().to_string();
+        let t = self.now_ms().to_string();
         let sign = sign(
             &hash_key,
             &[

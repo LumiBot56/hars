@@ -27,7 +27,7 @@ DOMAINS = sorted(
     event fan frontend group history homeassistant http hue humidifier input_boolean lifx
     light logbook lovelace met mobile_app notify number onboarding person
     persistent_notification recorder repairs scene script select sensor sun switch
-    switchbot_cloud system_log weather websocket_api zone""".split()
+    switchbot_cloud system_log tuya weather websocket_api zone""".split()
 )
 
 

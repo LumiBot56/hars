@@ -243,6 +243,9 @@ Not yet:
 
 - The QR-code config flow: an entry only comes from an import.
 - Every other Tuya category, and fan speed, oscillation and direction.
+- Tuya's tap-to-run scenes (HA makes `scene` entities of them).
+- A device renamed in the Smart Life app keeps its old name until the entry
+  is set up again.
 - Value conversions other than the SDK's `default` in local-format pushes.
 
 ### Weather

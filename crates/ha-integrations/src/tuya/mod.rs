@@ -1,29 +1,40 @@
-//! The `tuya` integration (`components/tuya`, `tuya-device-sharing-sdk`),
-//! for an imported Smart Life / Tuya entry: the cloud's device list, then
-//! state pushed over Tuya's MQTT channel, and commands sent to the cloud.
+//! The `tuya` integration (`components/tuya` at HA 2026.6.1, on
+//! `tuya-device-sharing-sdk` 0.2.8 and `tuya-device-handlers` 0.0.22), for
+//! an imported Smart Life / Tuya entry: the cloud's device list, then state
+//! pushed over Tuya's MQTT channel, and commands sent to the cloud.
 //!
 //! Covered: the dehumidifier (`cs`) and pet feeder (`cwwsq`) categories,
-//! with HA's entity descriptions for them: humidifier, fan, switch, select,
-//! number, sensor and binary sensor entities. Other categories are logged
-//! and skipped.
+//! with HA's entity descriptions for them. Their entities go to the shared
+//! `humidifier`, `fan`, `number`, `select` and `switch` components; sensors
+//! and binary sensors only write states. Other categories are logged and
+//! skipped.
 //!
-//! Where `hars` differs from HA: there is no config flow (the QR-code
-//! login), so an entry only arrives by import; the fan has on/off only;
-//! the SDK's version report and `unload` on removal are not sent.
+//! Where `hars` differs from HA, on purpose:
+//! - There is no config flow (the QR-code login): an entry only arrives by
+//!   import.
+//! - A device renamed in the Smart Life app (`nameUpdate`) keeps its old
+//!   name until the entry is set up again; HA renames it at once.
+//! - The fan has on/off only (no speed, oscillation or direction).
+//! - The SDK's version report, and its `unload` when the entry is removed,
+//!   are not sent.
 
 pub mod api;
 pub mod mqtt;
 
+#[cfg(test)]
+mod tests;
+
+use crate::climate::Temp;
 use crate::components::Components;
 use crate::config_entries::{ConfigEntries, EntryState, Status};
 use crate::light::BoxFuture;
 use api::{Api, ApiError, Token};
-use ha_core::{Attributes, EntityId, Hass, Kind, Range, Schema, ServiceError, SupportsResponse};
+use ha_core::{Attributes, EntityId, Hass, ServiceError};
 use ha_registry::{DeviceInfo, EntityPatch, Registry};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 pub const DOMAIN: &str = "tuya";
@@ -40,19 +51,25 @@ pub const COMPONENTS: &[&str] = &[
     "switch",
 ];
 
+/// `const.CELSIUS_ALIASES` / `FAHRENHEIT_ALIASES`.
+const CELSIUS: [&str; 4] = ["°c", "c", "celsius", "℃"];
+const FAHRENHEIT: [&str; 4] = ["°f", "f", "fahrenheit", "℉"];
+
 /// A data point's type and range (`DeviceFunction` / `DeviceStatusRange`).
 #[derive(Debug, Clone, Default)]
 struct Spec {
     kind: String,
     values: Value,
+    /// `dp-report-types`: `sum`, `minux` or `un_known`.
+    report_type: Option<String>,
 }
 
 impl Spec {
-    fn int(&self, k: &str) -> Option<f64> {
+    fn num(&self, k: &str) -> Option<f64> {
         self.values.get(k).and_then(Value::as_f64)
     }
     fn scale(&self) -> i32 {
-        self.int("scale").unwrap_or(0.0) as i32
+        self.num("scale").unwrap_or(0.0) as i32
     }
     fn unit(&self) -> Option<String> {
         self.values
@@ -60,9 +77,9 @@ impl Spec {
             .and_then(Value::as_str)
             .map(str::to_owned)
     }
-    fn range(&self) -> Vec<String> {
+    fn strings(&self, k: &str) -> Vec<String> {
         self.values
-            .get("range")
+            .get(k)
             .and_then(Value::as_array)
             .map(|a| {
                 a.iter()
@@ -72,17 +89,11 @@ impl Spec {
             })
             .unwrap_or_default()
     }
+    fn range(&self) -> Vec<String> {
+        self.strings("range")
+    }
     fn labels(&self) -> Vec<String> {
-        self.values
-            .get("label")
-            .and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.strings("label")
     }
     /// A raw integer as the device means it.
     fn scaled(&self, raw: f64) -> f64 {
@@ -104,7 +115,6 @@ struct Dev {
     product_id: String,
     online: bool,
     status: Map<String, Value>,
-    /// Writable data points first, then reported ones.
     function: HashMap<String, Spec>,
     status_range: HashMap<String, Spec>,
     support_local: bool,
@@ -114,23 +124,26 @@ struct Dev {
 
 impl Dev {
     fn has(&self, code: &str) -> bool {
-        self.function.contains_key(code) || self.status_range.contains_key(code)
+        self.function.contains_key(code)
+            || self.status.contains_key(code)
+            || self.status_range.contains_key(code)
     }
+    /// `find_dpcode(..., prefer_function=True)`.
     fn spec(&self, code: &str) -> Option<&Spec> {
         self.function
             .get(code)
             .or_else(|| self.status_range.get(code))
     }
     fn first<'a>(&self, codes: &[&'a str]) -> Option<&'a str> {
-        codes.iter().copied().find(|c| self.has(c))
+        codes.iter().copied().find(|c| self.spec(c).is_some())
     }
 }
 
 /// What an entity reads and writes.
 #[derive(Debug, Clone)]
-enum Kind2 {
+enum Kind {
     Humidifier {
-        switch: &'static str,
+        switch: Option<&'static str>,
         current: Option<&'static str>,
         target: Option<&'static str>,
         mode: Option<&'static str>,
@@ -163,6 +176,7 @@ enum Kind2 {
 }
 
 /// An entity HA's description makes for a device.
+#[derive(Debug, Clone)]
 struct Desc {
     domain: &'static str,
     /// The unique id's suffix after `tuya.<device id>`.
@@ -173,12 +187,12 @@ struct Desc {
     entity_category: Option<&'static str>,
     icon: Option<&'static str>,
     measurement: bool,
-    /// A fixed unit, else the data point's.
+    /// The description's own unit, else the data point's.
     unit: Option<&'static str>,
-    kind: Kind2,
+    kind: Kind,
 }
 
-fn desc(domain: &'static str, key: &'static str, kind: Kind2) -> Desc {
+fn desc(domain: &'static str, key: &'static str, kind: Kind) -> Desc {
     Desc {
         domain,
         key,
@@ -222,43 +236,57 @@ impl Desc {
 }
 
 /// HA's descriptions for a device's category, kept only where the device
-/// has the data points they need.
+/// has the data points they need (each platform's `async_discover_device`).
 fn descriptions(d: &Dev) -> Vec<Desc> {
     let mut out = Vec::new();
     let mut add = |x: Desc, needs: &str| {
-        if d.has(needs) {
+        if d.spec(needs).is_some() {
             out.push(x);
         }
     };
     match d.category.as_str() {
         "cs" => {
-            if let Some(switch) = d.first(&["switch", "switch_spray"]) {
+            // `humidifier.get_default_definition`: any of its codes.
+            let switch = ["switch", "switch_spray"];
+            let codes = [
+                "switch",
+                "switch_spray",
+                "humidity_indoor",
+                "dehumidify_set_value",
+            ];
+            if let Some(any) = codes.into_iter().find(|c| d.has(c)) {
+                let mode = d
+                    .first(&["mode"])
+                    .filter(|m| d.spec(m).is_some_and(|s| s.kind == "Enum"));
                 let hum = desc(
                     "humidifier",
                     "switch",
-                    Kind2::Humidifier {
-                        switch,
+                    Kind::Humidifier {
+                        switch: d.first(&switch),
                         current: d.first(&["humidity_indoor"]),
                         target: d.first(&["dehumidify_set_value"]),
-                        mode: d.first(&["mode"]),
+                        mode,
                     },
                 )
                 .class("dehumidifier");
-                out.push(hum);
-            }
-            if let Some(switch) = d.first(&["switch_fan", "fan_switch", "switch"]) {
-                out.push(desc("fan", "", Kind2::Fan { switch }));
+                if d.has(any) {
+                    out.push(hum);
+                }
             }
             let mut add = |x: Desc, needs: &str| {
-                if d.has(needs) {
+                if d.spec(needs).is_some() {
                     out.push(x);
                 }
             };
+            // `fan.get_default_definition`: on/off only in hars.
+            if let Some(switch) = d.first(&["switch_fan", "fan_switch", "switch"]) {
+                add(desc("fan", "", Kind::Fan { switch }), switch);
+            }
             add(
                 desc(
                     "select",
                     "countdown_set",
-                    Kind2::Select {
+                    Kind::Select {
                         code: "countdown_set",
                     },
                 )
@@ -270,7 +298,7 @@ fn descriptions(d: &Dev) -> Vec<Desc> {
                 desc(
                     "select",
                     "dehumidify_set_enum",
-                    Kind2::Select {
+                    Kind::Select {
                         code: "dehumidify_set_enum",
                     },
                 )
@@ -284,7 +312,7 @@ fn descriptions(d: &Dev) -> Vec<Desc> {
                 ("filter_reset", "filter_reset", "Filter reset", "mdi:filter"),
             ] {
                 add(
-                    desc("switch", code, Kind2::Switch { code })
+                    desc("switch", code, Kind::Switch { code })
                         .named(tk, name)
                         .icon(icon)
                         .cat("config"),
@@ -295,7 +323,7 @@ fn descriptions(d: &Dev) -> Vec<Desc> {
                 desc(
                     "sensor",
                     "temp_indoor",
-                    Kind2::Sensor {
+                    Kind::Sensor {
                         code: "temp_indoor",
                     },
                 )
@@ -308,7 +336,7 @@ fn descriptions(d: &Dev) -> Vec<Desc> {
                 desc(
                     "sensor",
                     "humidity_indoor",
-                    Kind2::Sensor {
+                    Kind::Sensor {
                         code: "humidity_indoor",
                     },
                 )
@@ -342,7 +370,7 @@ fn descriptions(d: &Dev) -> Vec<Desc> {
                         desc(
                             "binary_sensor",
                             key,
-                            Kind2::Bitmap {
+                            Kind::Bitmap {
                                 code: "fault",
                                 label,
                             },
@@ -359,7 +387,7 @@ fn descriptions(d: &Dev) -> Vec<Desc> {
                 desc(
                     "number",
                     "manual_feed",
-                    Kind2::Number {
+                    Kind::Number {
                         code: "manual_feed",
                     },
                 )
@@ -370,7 +398,7 @@ fn descriptions(d: &Dev) -> Vec<Desc> {
                 desc(
                     "number",
                     "voice_times",
-                    Kind2::Number {
+                    Kind::Number {
                         code: "voice_times",
                     },
                 )
@@ -378,7 +406,7 @@ fn descriptions(d: &Dev) -> Vec<Desc> {
                 "voice_times",
             );
             add(
-                desc("switch", "slow_feed", Kind2::Switch { code: "slow_feed" })
+                desc("switch", "slow_feed", Kind::Switch { code: "slow_feed" })
                     .named("slow_feed", "Slow feed")
                     .cat("config"),
                 "slow_feed",
@@ -389,7 +417,7 @@ fn descriptions(d: &Dev) -> Vec<Desc> {
                 "battery_value",
                 "va_battery",
             ] {
-                let mut s = desc("sensor", code, Kind2::Sensor { code })
+                let mut s = desc("sensor", code, Kind::Sensor { code })
                     .named("battery", "Battery")
                     .class("battery")
                     .cat("diagnostic")
@@ -403,7 +431,7 @@ fn descriptions(d: &Dev) -> Vec<Desc> {
                 desc(
                     "sensor",
                     "battery_state",
-                    Kind2::Sensor {
+                    Kind::Sensor {
                         code: "battery_state",
                     },
                 )
@@ -415,7 +443,7 @@ fn descriptions(d: &Dev) -> Vec<Desc> {
                 desc(
                     "sensor",
                     "feed_report",
-                    Kind2::Sensor {
+                    Kind::Sensor {
                         code: "feed_report",
                     },
                 )
@@ -427,7 +455,7 @@ fn descriptions(d: &Dev) -> Vec<Desc> {
                 desc(
                     "binary_sensor",
                     "feed_state",
-                    Kind2::Binary {
+                    Kind::Binary {
                         code: "feed_state",
                         on: Some("feeding"),
                     },
@@ -438,7 +466,7 @@ fn descriptions(d: &Dev) -> Vec<Desc> {
             let mut charging = desc(
                 "binary_sensor",
                 "charge_state",
-                Kind2::Binary {
+                Kind::Binary {
                     code: "charge_state",
                     on: None,
                 },
@@ -456,29 +484,192 @@ fn descriptions(d: &Dev) -> Vec<Desc> {
     out
 }
 
+/// What a sensor shows: its state's unit, device class, state class and
+/// options, and whether a temperature is converted. Settled at set-up
+/// (`TuyaSensorEntity.__init__` and `_validate_device_class_unit`).
+#[derive(Debug, Clone, Default)]
+struct Shown {
+    unit: Option<String>,
+    device_class: Option<&'static str>,
+    options: Option<Vec<String>>,
+    state_class: Option<&'static str>,
+    /// A temperature's native unit, when it is shown in another.
+    native_temp: Option<&'static str>,
+}
+
+/// `util.get_temperature_unit`, plus `K`, which HA's temperature sensor
+/// takes as it comes.
+fn temperature_unit(d: &Dev, uom: Option<&str>) -> Option<&'static str> {
+    match uom.filter(|u| !u.is_empty()) {
+        None => match d.status.get("temp_unit_convert").and_then(Value::as_str) {
+            Some("c") => Some("°C"),
+            Some("f") => Some("°F"),
+            _ => None,
+        },
+        Some(u) => {
+            let u = u.to_lowercase();
+            if CELSIUS.contains(&u.as_str()) {
+                Some("°C")
+            } else if FAHRENHEIT.contains(&u.as_str()) {
+                Some("°F")
+            } else if u == "k" {
+                Some("K")
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// A sensor's [`Shown`]. `row` is its registry row, for the unit the
+/// sensor component shows a temperature in.
+fn shown(hass: &Hass, d: &Dev, x: &Desc, row: Option<&ha_registry::Entity>) -> Shown {
+    let Kind::Sensor { code } = x.kind else {
+        return Shown::default();
+    };
+    let spec = d.spec(code).cloned().unwrap_or_default();
+    let mut s = Shown {
+        device_class: x.device_class,
+        state_class: x.measurement.then_some("measurement"),
+        ..Default::default()
+    };
+    // An enum data point without a device class is an ENUM sensor.
+    if spec.kind == "Enum" && x.device_class.is_none() {
+        s.device_class = Some("enum");
+        s.options = Some(spec.range());
+        return s;
+    }
+    // An integer the cloud sums is a total that only grows.
+    if spec.kind == "Integer" && !x.measurement && spec.report_type.as_deref() == Some("sum") {
+        s.state_class = Some("total_increasing");
+    }
+    let native = spec.unit();
+    s.unit = match x.device_class {
+        Some("temperature") => match temperature_unit(d, native.as_deref()) {
+            Some(native) => {
+                let unit = crate::sensor::state_unit(hass, row);
+                s.native_temp = (native != unit).then_some(native);
+                Some(unit.to_owned())
+            }
+            None => x.unit.map(str::to_owned),
+        },
+        _ => x.unit.map(str::to_owned).or(native),
+    };
+    s
+}
+
+/// `TemperatureConverter` between two temperature units.
+fn convert_temp(v: f64, from: &str, to: &str) -> f64 {
+    let celsius = match from {
+        "°F" => (v - 32.0) / 1.8,
+        "K" => v - 273.15,
+        _ => v,
+    };
+    crate::sensor::from_celsius(celsius, to)
+}
+
+/// A (de)humidifier's `min_humidity` and `max_humidity`: its target's
+/// range, rounded, else HA's defaults (0 and 100).
+fn min_max_humidity(x: &Desc, dev: &Dev) -> (Temp, Temp) {
+    use crate::humidifier::{DEFAULT_MAX_HUMIDITY, DEFAULT_MIN_HUMIDITY};
+    let Kind::Humidifier {
+        target: Some(t), ..
+    } = x.kind
+    else {
+        return (DEFAULT_MIN_HUMIDITY, DEFAULT_MAX_HUMIDITY);
+    };
+    let s = dev.spec(t).cloned().unwrap_or_default();
+    let get = |k: &str, default: Temp| {
+        s.num(k)
+            .map(|v| Temp::Int(s.scaled(v).round() as i64))
+            .unwrap_or(default)
+    };
+    (
+        get("min", DEFAULT_MIN_HUMIDITY),
+        get("max", DEFAULT_MAX_HUMIDITY),
+    )
+}
+
+/// The capability attributes: kept while unavailable, and stored in the
+/// registry row.
+fn capabilities(x: &Desc, shown: &Shown, dev: &Dev) -> Attributes {
+    let mut cap = Attributes::new();
+    let spec = |code: &str| dev.spec(code).cloned().unwrap_or_default();
+    match &x.kind {
+        Kind::Humidifier { mode, .. } => {
+            let (min, max) = min_max_humidity(x, dev);
+            let num = |t: Temp| match t {
+                Temp::Int(i) => json!(i),
+                Temp::Float(f) => json!(f),
+            };
+            cap.insert("min_humidity".into(), num(min));
+            cap.insert("max_humidity".into(), num(max));
+            if let Some(m) = mode {
+                cap.insert("available_modes".into(), json!(spec(m).range()));
+            }
+        }
+        Kind::Select { code } => {
+            cap.insert("options".into(), json!(spec(code).range()));
+        }
+        Kind::Number { code } => {
+            let s = spec(code);
+            cap.insert("min".into(), json!(s.scaled(s.num("min").unwrap_or(0.0))));
+            cap.insert("max".into(), json!(s.scaled(s.num("max").unwrap_or(100.0))));
+            cap.insert("step".into(), json!(s.scaled(s.num("step").unwrap_or(1.0))));
+            cap.insert("mode".into(), json!("auto"));
+        }
+        Kind::Sensor { .. } => {
+            if let Some(c) = shown.state_class {
+                cap.insert("state_class".into(), json!(c));
+            }
+            if let Some(o) = &shown.options {
+                cap.insert("options".into(), json!(o));
+            }
+        }
+        _ => {}
+    }
+    cap
+}
+
+fn supported_features(x: &Desc) -> u32 {
+    match &x.kind {
+        Kind::Humidifier { mode: Some(_), .. } => crate::humidifier::feature::MODES,
+        Kind::Fan { .. } => crate::fan::feature::TURN_ON | crate::fan::feature::TURN_OFF,
+        _ => 0,
+    }
+}
+
+/// The unit an entity shows, if it has one.
+fn unit_of(x: &Desc, shown: &Shown, dev: &Dev) -> Option<String> {
+    match &x.kind {
+        Kind::Sensor { .. } => shown.unit.clone(),
+        Kind::Number { code } => x
+            .unit
+            .map(str::to_owned)
+            .or_else(|| dev.spec(code).and_then(Spec::unit)),
+        _ => None,
+    }
+}
+
 /// What an entry's entities share.
 pub struct Shared {
     hass: Hass,
     api: Arc<Api>,
     devices: Mutex<HashMap<String, Dev>>,
     alive: Mutex<bool>,
-    /// The SDK's `Filter`: the same command to a device within 10 s is
-    /// sent once.
+    /// The SDK's `Filter`: the same commands to a device within 10 s are
+    /// sent once. Only a command that was sent counts.
     last_command: Mutex<HashMap<String, (Value, tokio::time::Instant)>>,
 }
 
 impl Shared {
     async fn send(&self, device: &str, commands: Value) -> Result<(), ServiceError> {
+        let clock = self.hass.clock();
+        if let Some((v, at)) = self.last_command.lock().get(device)
+            && *v == commands
+            && clock.instant().saturating_duration_since(*at) < Duration::from_secs(10)
         {
-            let mut last = self.last_command.lock();
-            let now = tokio::time::Instant::now();
-            if let Some((v, at)) = last.get(device)
-                && *v == commands
-                && now.duration_since(*at) < Duration::from_secs(10)
-            {
-                return Ok(());
-            }
-            last.insert(device.to_owned(), (commands.clone(), now));
+            return Ok(());
         }
         self.api
             .post(
@@ -486,117 +677,118 @@ impl Shared {
                 json!({"commands": commands}),
             )
             .await
-            .map(|_| ())
-            .map_err(|e| ServiceError::Failed(format!("Tuya command failed: {e}")))
+            .map_err(|e| ServiceError::Failed(format!("Tuya command failed: {e}")))?;
+        self.last_command
+            .lock()
+            .insert(device.to_owned(), (commands, clock.instant()));
+        Ok(())
+    }
+
+    fn spec(&self, device: &str, code: &str) -> Spec {
+        self.devices
+            .lock()
+            .get(device)
+            .and_then(|d| d.spec(code).cloned())
+            .unwrap_or_default()
+    }
+
+    fn value(&self, device: &str, code: &str) -> Option<Value> {
+        self.devices
+            .lock()
+            .get(device)
+            .and_then(|d| d.status.get(code).cloned())
     }
 }
 
+/// One entity: its id and friendly name as the registry had them at
+/// set-up, and what its description reads.
 pub struct Ent {
     shared: Arc<Shared>,
     device: String,
-    domain: &'static str,
     entity_id: EntityId,
     friendly: String,
     d: Desc,
+    shown: Shown,
 }
 
 fn num_state(v: f64) -> String {
     crate::num::py_format(v, 15)
 }
 
-impl Ent {
-    fn spec(&self, dev: &Dev, code: &str) -> Spec {
-        dev.spec(code).cloned().unwrap_or_default()
-    }
+/// `DPCodeRoundedIntegerWrapper`: a scaled value rounded to an int.
+fn rounded(spec: &Spec, v: Option<&Value>) -> Option<i64> {
+    v.and_then(Value::as_f64)
+        .map(|v| spec.scaled(v).round() as i64)
+}
 
-    /// The state, the attributes kept while unavailable (capabilities),
-    /// and those only while available.
-    fn compute(&self, dev: &Dev) -> (String, Attributes, Attributes) {
-        let mut cap = Attributes::new();
+impl Ent {
+    /// The state and the attributes only written while available.
+    fn compute(&self, dev: &Dev) -> (String, Attributes) {
         let mut st = Attributes::new();
         let raw = |code: &str| dev.status.get(code);
-        let int = |code: &str| -> Option<f64> {
-            let spec = self.spec(dev, code);
-            raw(code).and_then(Value::as_f64).map(|v| spec.scaled(v))
-        };
+        let spec = |code: &str| dev.spec(code).cloned().unwrap_or_default();
         let bool_state = |b: Option<bool>| match b {
             Some(true) => "on".to_owned(),
             Some(false) => "off".to_owned(),
             None => "unknown".to_owned(),
         };
         let state = match &self.d.kind {
-            Kind2::Humidifier {
+            Kind::Humidifier {
                 switch,
                 current,
                 target,
                 mode,
             } => {
-                if let Some(t) = target {
-                    let s = self.spec(dev, t);
-                    cap.insert(
-                        "min_humidity".into(),
-                        json!(s.scaled(s.int("min").unwrap_or(0.0)).round() as i64),
-                    );
-                    cap.insert(
-                        "max_humidity".into(),
-                        json!(s.scaled(s.int("max").unwrap_or(100.0)).round() as i64),
-                    );
+                if let Some(c) = current.and_then(|c| rounded(&spec(c), raw(c))) {
+                    st.insert("current_humidity".into(), json!(c));
                 }
-                if let Some(m) = mode {
-                    cap.insert("available_modes".into(), json!(self.spec(dev, m).range()));
-                }
-                if let Some(c) = current.and_then(&int) {
-                    st.insert("current_humidity".into(), json!(c.round() as i64));
-                }
-                if let Some(t) = target.and_then(&int) {
-                    st.insert("humidity".into(), json!(t.round() as i64));
+                if let Some(t) = target.and_then(|t| rounded(&spec(t), raw(t))) {
+                    st.insert("humidity".into(), json!(t));
                 }
                 if let Some(m) = mode {
                     st.insert("mode".into(), raw(m).cloned().unwrap_or(Value::Null));
                 }
-                bool_state(raw(switch).and_then(Value::as_bool))
+                bool_state(switch.and_then(raw).and_then(Value::as_bool))
             }
-            Kind2::Fan { switch } => bool_state(raw(switch).and_then(Value::as_bool)),
-            Kind2::Switch { code } => bool_state(raw(code).and_then(Value::as_bool)),
-            Kind2::Binary { code, on } => {
+            Kind::Fan { switch } => bool_state(raw(switch).and_then(Value::as_bool)),
+            Kind::Switch { code } => bool_state(raw(code).and_then(Value::as_bool)),
+            Kind::Binary { code, on } => {
                 let v = raw(code);
-                let b = match on {
+                bool_state(match on {
                     Some(on) => v.and_then(Value::as_str).map(|s| s == *on),
                     None => v.and_then(Value::as_bool),
-                };
-                bool_state(b)
+                })
             }
-            Kind2::Bitmap { code, label } => {
-                let labels = self.spec(dev, code).labels();
-                let bit = labels.iter().position(|l| l == label);
-                let b = match (bit, raw(code).and_then(Value::as_i64)) {
+            Kind::Bitmap { code, label } => {
+                let bit = spec(code).labels().iter().position(|l| l == label);
+                bool_state(match (bit, raw(code).and_then(Value::as_i64)) {
                     (Some(bit), Some(v)) => Some((v >> bit) & 1 == 1),
                     _ => None,
-                };
-                bool_state(b)
+                })
             }
-            Kind2::Select { code } => {
-                cap.insert("options".into(), json!(self.spec(dev, code).range()));
+            Kind::Select { code } => raw(code)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| "unknown".into()),
+            Kind::Number { code } => {
+                let s = spec(code);
                 raw(code)
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
+                    .and_then(Value::as_f64)
+                    .map(|v| num_state(s.scaled(v)))
                     .unwrap_or_else(|| "unknown".into())
             }
-            Kind2::Number { code } => {
-                let s = self.spec(dev, code);
-                cap.insert("min".into(), json!(s.scaled(s.int("min").unwrap_or(0.0))));
-                cap.insert("max".into(), json!(s.scaled(s.int("max").unwrap_or(100.0))));
-                cap.insert("step".into(), json!(s.scaled(s.int("step").unwrap_or(1.0))));
-                cap.insert("mode".into(), json!("auto"));
-                int(code).map(num_state).unwrap_or_else(|| "unknown".into())
-            }
-            Kind2::Sensor { code } => {
-                let s = self.spec(dev, code);
-                if self.d.measurement {
-                    cap.insert("state_class".into(), json!("measurement"));
-                }
+            Kind::Sensor { code } => {
+                let s = spec(code);
                 match (s.kind.as_str(), raw(code)) {
-                    ("Integer", Some(v)) => v.as_f64().map(|v| num_state(s.scaled(v))),
+                    ("Integer", Some(v)) => v.as_f64().map(|v| {
+                        let v = s.scaled(v);
+                        match (self.shown.native_temp, &self.shown.unit) {
+                            (Some(from), Some(to)) => num_state(convert_temp(v, from, to)),
+                            _ => num_state(v),
+                        }
+                    }),
+                    // An enum's value outside its range reads as unknown.
+                    ("Enum", Some(Value::String(v))) => s.range().contains(v).then(|| v.clone()),
                     (_, Some(Value::String(v))) => Some(v.clone()),
                     (_, Some(Value::Number(n))) => n.as_f64().map(num_state),
                     _ => None,
@@ -604,7 +796,7 @@ impl Ent {
                 .unwrap_or_else(|| "unknown".into())
             }
         };
-        (state, cap, st)
+        (state, st)
     }
 
     fn write(&self) {
@@ -612,40 +804,31 @@ impl Ent {
         let Some(dev) = devices.get(&self.device) else {
             return;
         };
-        let (state, mut attrs, st) = self.compute(dev);
         let available = dev.online;
+        let mut attrs = capabilities(&self.d, &self.shown, dev);
+        let (state, st) = self.compute(dev);
         if available {
             attrs.extend(st);
         }
-        // `_async_write_ha_state`'s order.
-        if let Kind2::Number { code } | Kind2::Sensor { code } = &self.d.kind {
-            let unit = self
-                .d
-                .unit
-                .map(str::to_owned)
-                .or_else(|| dev.spec(code).and_then(Spec::unit));
-            if let Some(u) = unit {
-                attrs.insert("unit_of_measurement".into(), json!(u));
-            }
+        if let Some(u) = unit_of(&self.d, &self.shown, dev) {
+            attrs.insert("unit_of_measurement".into(), json!(u));
         }
-        if let Some(c) = self.d.device_class {
+        let device_class = match &self.d.kind {
+            Kind::Sensor { .. } => self.shown.device_class,
+            _ => self.d.device_class,
+        };
+        if let Some(c) = device_class {
             attrs.insert("device_class".into(), json!(c));
         }
         if let Some(i) = self.d.icon {
             attrs.insert("icon".into(), json!(i));
         }
         attrs.insert("friendly_name".into(), json!(self.friendly));
-        match &self.d.kind {
-            Kind2::Humidifier { mode, .. } => {
-                attrs.insert(
-                    "supported_features".into(),
-                    json!(if mode.is_some() { 1 } else { 0 }),
-                );
-            }
-            Kind2::Fan { .. } => {
-                attrs.insert("supported_features".into(), json!(48));
-            }
-            _ => {}
+        if matches!(self.d.kind, Kind::Humidifier { .. } | Kind::Fan { .. }) {
+            attrs.insert(
+                "supported_features".into(),
+                json!(supported_features(&self.d)),
+            );
         }
         drop(devices);
         if *self.shared.alive.lock() {
@@ -654,11 +837,7 @@ impl Ent {
             } else {
                 "unavailable".into()
             };
-            tracing::debug!(
-                "tuya: {} = {state} {}",
-                self.entity_id,
-                serde_json::Value::Object(attrs.clone())
-            );
+            tracing::debug!("tuya: {} = {state}", self.entity_id);
             self.shared
                 .hass
                 .set_state(self.entity_id.clone(), state, attrs);
@@ -673,50 +852,64 @@ impl Ent {
             .is_some_and(|d| d.online)
     }
 
+    fn switch_code(&self) -> Option<&'static str> {
+        match &self.d.kind {
+            Kind::Humidifier { switch, .. } => *switch,
+            Kind::Fan { switch } => Some(switch),
+            Kind::Switch { code } => Some(code),
+            _ => None,
+        }
+    }
+
     fn is_on(&self) -> bool {
-        let code = match &self.d.kind {
-            Kind2::Humidifier { switch, .. } | Kind2::Fan { switch } => *switch,
-            Kind2::Switch { code } => code,
-            _ => return false,
-        };
-        self.shared
-            .devices
-            .lock()
-            .get(&self.device)
-            .and_then(|d| d.status.get(code))
-            .and_then(Value::as_bool)
+        self.switch_code()
+            .and_then(|c| self.shared.value(&self.device, c))
+            .and_then(|v| v.as_bool())
             == Some(true)
     }
 
+    /// `ActionDPCodeNotFoundError`: the device has no function for this.
+    fn no_dpcode(&self, expected: &[&str]) -> ServiceError {
+        let mut available: Vec<String> = self
+            .shared
+            .devices
+            .lock()
+            .get(&self.device)
+            .map(|d| d.function.keys().cloned().collect())
+            .unwrap_or_default();
+        available.sort();
+        let mut expected: Vec<String> = expected.iter().map(|s| (*s).to_owned()).collect();
+        expected.sort();
+        // Python's `str()` of a list of strings.
+        let list = |v: &[String]| {
+            let items: Vec<String> = v.iter().map(|s| format!("'{s}'")).collect();
+            format!("[{}]", items.join(", "))
+        };
+        let (expected, available) = (list(&expected), list(&available));
+        let mut p = Map::new();
+        p.insert("expected".into(), json!(expected));
+        p.insert("available".into(), json!(available));
+        ServiceError::validation(
+            DOMAIN,
+            "action_dpcode_not_found",
+            Some(p),
+            format!(
+                "Unable to process action as the device does not provide a corresponding function code (expected one of {expected}, got {available})."
+            ),
+        )
+    }
+
     async fn turn(&self, on: bool) -> Result<(), ServiceError> {
-        let code = match &self.d.kind {
-            Kind2::Humidifier { switch, .. } | Kind2::Fan { switch } => *switch,
-            Kind2::Switch { code } => code,
-            _ => return Err(ServiceError::Failed("not switchable".into())),
+        let Some(code) = self.switch_code() else {
+            return Err(self.no_dpcode(&["switch", "switch_spray"]));
         };
         self.shared
             .send(&self.device, json!([{"code": code, "value": on}]))
             .await
     }
 
-    async fn set_int(&self, code: &str, v: f64) -> Result<(), ServiceError> {
-        let spec = self
-            .shared
-            .devices
-            .lock()
-            .get(&self.device)
-            .and_then(|d| d.spec(code).cloned())
-            .unwrap_or_default();
-        let (min, max) = (
-            spec.scaled(spec.int("min").unwrap_or(f64::MIN)),
-            spec.scaled(spec.int("max").unwrap_or(f64::MAX)),
-        );
-        if v < min || v > max {
-            return Err(ServiceError::Failed(format!(
-                "Value {v} for {} is outside {min}..{max}",
-                self.entity_id
-            )));
-        }
+    async fn send_int(&self, code: &str, v: f64) -> Result<(), ServiceError> {
+        let spec = self.shared.spec(&self.device, code);
         self.shared
             .send(
                 &self.device,
@@ -725,38 +918,26 @@ impl Ent {
             .await
     }
 
-    async fn set_enum(&self, code: &str, v: &str) -> Result<(), ServiceError> {
-        let options = self
-            .shared
-            .devices
-            .lock()
-            .get(&self.device)
-            .and_then(|d| d.spec(code).map(Spec::range))
-            .unwrap_or_default();
-        if !options.iter().any(|o| o == v) {
-            return Err(ServiceError::Failed(format!(
-                "Option {v} is not valid for {}",
-                self.entity_id
-            )));
-        }
+    async fn send_enum(&self, code: &str, v: &str) -> Result<(), ServiceError> {
         self.shared
             .send(&self.device, json!([{"code": code, "value": v}]))
             .await
     }
+
+    fn not_supported(&self, service: &str) -> BoxFuture<'_> {
+        let e = ServiceError::not_supported(self.d.domain, service, self.entity_id.as_str());
+        Box::pin(async move { Err(e) })
+    }
+
+    fn with_dev<T>(&self, f: impl FnOnce(&Dev) -> T) -> Option<T> {
+        self.shared.devices.lock().get(&self.device).map(f)
+    }
 }
 
-/// The entities services reach, by domain, from every entry.
-#[derive(Default)]
-struct Registered {
-    items: RwLock<Vec<Arc<Ent>>>,
-}
+/// The entity as each component sees it.
+struct As(Arc<Ent>);
 
-static ENTITIES: OnceLock<Arc<Registered>> = OnceLock::new();
-
-/// A switch for the shared switch component.
-struct TuyaSwitch(Arc<Ent>);
-
-impl crate::switch::Switch for TuyaSwitch {
+impl crate::switch::Switch for As {
     fn entity_id(&self) -> &EntityId {
         &self.0.entity_id
     }
@@ -771,174 +952,154 @@ impl crate::switch::Switch for TuyaSwitch {
     }
 }
 
-fn register_services(hass: &Hass, registries: ha_registry::Lookup) -> Arc<Registered> {
-    ENTITIES
-        .get_or_init(|| {
-            let reg = Arc::new(Registered::default());
-            let entity = Schema::entity_service;
-            let services: Vec<(&'static str, &'static str, Schema)> = vec![
-                ("humidifier", "turn_on", entity()),
-                ("humidifier", "turn_off", entity()),
-                ("humidifier", "toggle", entity()),
-                (
-                    "humidifier",
-                    "set_humidity",
-                    entity().required("humidity", Kind::Int(Range::new(0.0, 100.0))),
-                ),
-                (
-                    "humidifier",
-                    "set_mode",
-                    entity().required("mode", Kind::String),
-                ),
-                (
-                    "fan",
-                    "turn_on",
-                    entity()
-                        .optional("percentage", Kind::Int(Range::new(0.0, 100.0)))
-                        .optional("preset_mode", Kind::String),
-                ),
-                ("fan", "turn_off", entity()),
-                ("fan", "toggle", entity()),
-                (
-                    "number",
-                    "set_value",
-                    entity().required("value", Kind::Float(Range::ANY)),
-                ),
-                (
-                    "select",
-                    "select_option",
-                    entity().required("option", Kind::String),
-                ),
-                ("select", "select_first", entity()),
-                ("select", "select_last", entity()),
-                (
-                    "select",
-                    "select_next",
-                    entity().optional("cycle", Kind::Boolean),
-                ),
-                (
-                    "select",
-                    "select_previous",
-                    entity().optional("cycle", Kind::Boolean),
-                ),
-            ];
-            for (domain, name, schema) in services {
-                let reg = reg.clone();
-                let registries = registries.clone();
-                hass.services().register_with_schema(
-                    domain,
-                    name,
-                    Some(schema),
-                    SupportsResponse::None,
-                    move |call| {
-                        let reg = reg.clone();
-                        let registries = registries.clone();
-                        async move {
-                            let target = call.entity_ids()?;
-                            let indirect = registries.get().target_entities(&call.data);
-                            let items: Vec<Arc<Ent>> = reg
-                                .items
-                                .read()
-                                .iter()
-                                .filter(|e| e.domain == domain)
-                                .cloned()
-                                .collect();
-                            let chosen = crate::switch::select(
-                                &items,
-                                |e| &e.entity_id,
-                                |e| e.available(),
-                                &target,
-                                &indirect,
-                            );
-                            let data = call.data.clone();
-                            let calls = chosen.iter().map(|e| {
-                                let data = data.clone();
-                                async move { service(e, name, &data).await }
-                            });
-                            crate::light::join_all(calls)
-                                .await
-                                .into_iter()
-                                .collect::<Result<Vec<()>, _>>()?;
-                            Ok(None)
-                        }
-                    },
-                );
+impl crate::humidifier::Humidifier for As {
+    fn entity_id(&self) -> &EntityId {
+        &self.0.entity_id
+    }
+    fn available(&self) -> bool {
+        self.0.available()
+    }
+    fn supported_features(&self) -> u32 {
+        supported_features(&self.0.d)
+    }
+    fn is_on(&self) -> bool {
+        self.0.is_on()
+    }
+    fn min_humidity(&self) -> Temp {
+        self.0
+            .with_dev(|d| min_max_humidity(&self.0.d, d).0)
+            .unwrap_or(crate::humidifier::DEFAULT_MIN_HUMIDITY)
+    }
+    fn max_humidity(&self) -> Temp {
+        self.0
+            .with_dev(|d| min_max_humidity(&self.0.d, d).1)
+            .unwrap_or(crate::humidifier::DEFAULT_MAX_HUMIDITY)
+    }
+    fn turn(&self, on: bool) -> BoxFuture<'_> {
+        Box::pin(self.0.turn(on))
+    }
+    fn set_humidity(&self, humidity: i64) -> BoxFuture<'_> {
+        Box::pin(async move {
+            match &self.0.d.kind {
+                Kind::Humidifier {
+                    target: Some(t), ..
+                } => self.0.send_int(t, humidity as f64).await,
+                _ => Err(self.0.no_dpcode(&["dehumidify_set_value"])),
             }
-            reg
         })
-        .clone()
+    }
+    fn set_mode(&self, mode: &str) -> BoxFuture<'_> {
+        let mode = mode.to_owned();
+        Box::pin(async move {
+            match &self.0.d.kind {
+                Kind::Humidifier { mode: Some(m), .. } => self.0.send_enum(m, &mode).await,
+                _ => Err(self.0.no_dpcode(&["mode"])),
+            }
+        })
+    }
 }
 
-async fn service(e: &Ent, name: &str, data: &Map<String, Value>) -> Result<(), ServiceError> {
-    match (&e.d.kind, name) {
-        (_, "turn_on") => e.turn(true).await,
-        (_, "turn_off") => e.turn(false).await,
-        (_, "toggle") => e.turn(!e.is_on()).await,
-        (
-            Kind2::Humidifier {
-                target: Some(t), ..
-            },
-            "set_humidity",
-        ) => {
-            let h = data.get("humidity").and_then(Value::as_f64).unwrap_or(0.0);
-            e.set_int(t, h).await
-        }
-        (Kind2::Humidifier { mode: Some(m), .. }, "set_mode") => {
-            e.set_enum(m, data.get("mode").and_then(Value::as_str).unwrap_or(""))
-                .await
-        }
-        (Kind2::Number { code }, "set_value") => {
-            e.set_int(
-                code,
-                data.get("value").and_then(Value::as_f64).unwrap_or(0.0),
-            )
-            .await
-        }
-        (Kind2::Select { code }, _) => {
-            let (options, current) = {
-                let devs = e.shared.devices.lock();
-                let d = devs.get(&e.device);
-                (
-                    d.and_then(|d| d.spec(code).map(Spec::range))
-                        .unwrap_or_default(),
-                    d.and_then(|d| d.status.get(*code))
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                )
-            };
-            let cycle = data.get("cycle").and_then(Value::as_bool).unwrap_or(true);
-            let at = current.and_then(|c| options.iter().position(|o| *o == c));
-            let n = options.len();
-            let pick = match name {
-                "select_option" => data
-                    .get("option")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                "select_first" => options.first().cloned(),
-                "select_last" => options.last().cloned(),
-                "select_next" => match at {
-                    Some(i) if i + 1 < n => options.get(i + 1).cloned(),
-                    Some(_) if cycle => options.first().cloned(),
-                    Some(i) => options.get(i).cloned(),
-                    None => options.first().cloned(),
-                },
-                "select_previous" => match at {
-                    Some(i) if i > 0 => options.get(i - 1).cloned(),
-                    Some(_) if cycle => options.last().cloned(),
-                    Some(i) => options.get(i).cloned(),
-                    None => options.last().cloned(),
-                },
-                _ => None,
-            };
-            match pick {
-                Some(o) => e.set_enum(code, &o).await,
-                None => Ok(()),
+impl crate::fan::Fan for As {
+    fn entity_id(&self) -> &EntityId {
+        &self.0.entity_id
+    }
+    fn available(&self) -> bool {
+        self.0.available()
+    }
+    fn supported_features(&self) -> u32 {
+        supported_features(&self.0.d)
+    }
+    fn is_on(&self) -> bool {
+        self.0.is_on()
+    }
+    fn turn_on(&self, _percentage: Option<i64>, _preset: Option<String>) -> BoxFuture<'_> {
+        Box::pin(self.0.turn(true))
+    }
+    fn turn_off(&self) -> BoxFuture<'_> {
+        Box::pin(self.0.turn(false))
+    }
+    // The fan advertises on/off only, so the component refuses these
+    // before they get here.
+    fn set_percentage(&self, _: i64) -> BoxFuture<'_> {
+        self.0.not_supported("set_percentage")
+    }
+    fn set_preset_mode(&self, _: &str) -> BoxFuture<'_> {
+        self.0.not_supported("set_preset_mode")
+    }
+    fn oscillate(&self, _: bool) -> BoxFuture<'_> {
+        self.0.not_supported("oscillate")
+    }
+    fn set_direction(&self, _: &str) -> BoxFuture<'_> {
+        self.0.not_supported("set_direction")
+    }
+}
+
+impl crate::number::Number for As {
+    fn entity_id(&self) -> &EntityId {
+        &self.0.entity_id
+    }
+    fn available(&self) -> bool {
+        self.0.available()
+    }
+    fn min_value(&self) -> f64 {
+        match &self.0.d.kind {
+            Kind::Number { code } => {
+                let s = self.0.shared.spec(&self.0.device, code);
+                s.scaled(s.num("min").unwrap_or(0.0))
             }
+            _ => 0.0,
         }
-        _ => Err(ServiceError::Unknown(format!(
-            "{}.{name} is not supported by hars yet",
-            e.domain
-        ))),
+    }
+    fn max_value(&self) -> f64 {
+        match &self.0.d.kind {
+            Kind::Number { code } => {
+                let s = self.0.shared.spec(&self.0.device, code);
+                s.scaled(s.num("max").unwrap_or(100.0))
+            }
+            _ => 100.0,
+        }
+    }
+    fn set_value(&self, value: f64) -> BoxFuture<'_> {
+        Box::pin(async move {
+            match &self.0.d.kind {
+                Kind::Number { code } => self.0.send_int(code, value).await,
+                _ => Err(self.0.no_dpcode(&[])),
+            }
+        })
+    }
+}
+
+impl crate::select::Select for As {
+    fn entity_id(&self) -> &EntityId {
+        &self.0.entity_id
+    }
+    fn available(&self) -> bool {
+        self.0.available()
+    }
+    fn options(&self) -> Vec<String> {
+        match &self.0.d.kind {
+            Kind::Select { code } => self.0.shared.spec(&self.0.device, code).range(),
+            _ => Vec::new(),
+        }
+    }
+    fn current_option(&self) -> Option<String> {
+        match &self.0.d.kind {
+            Kind::Select { code } => self
+                .0
+                .shared
+                .value(&self.0.device, code)
+                .and_then(|v| v.as_str().map(str::to_owned)),
+            _ => None,
+        }
+    }
+    fn select_option(&self, option: &str) -> BoxFuture<'_> {
+        let option = option.to_owned();
+        Box::pin(async move {
+            match &self.0.d.kind {
+                Kind::Select { code } => self.0.send_enum(code, &option).await,
+                _ => Err(self.0.no_dpcode(&[])),
+            }
+        })
     }
 }
 
@@ -966,14 +1127,16 @@ fn specs(list: Option<&Value>) -> HashMap<String, Spec> {
                 Spec {
                     kind: s(f, "type"),
                     values,
+                    report_type: None,
                 },
             ))
         })
         .collect()
 }
 
-/// `Manager.update_device_cache`: every home's devices with their
-/// specifications and push format. Also the home ids, for the owner topic.
+/// `Manager.update_device_cache` (SDK 0.2.8): every home's devices with
+/// their specifications, push format and report types. Also the home ids,
+/// for the owner topic.
 async fn fetch(api: &Api) -> Result<(Vec<String>, Vec<Dev>), ApiError> {
     let homes = api.get("/v1.0/m/life/users/homes", None).await?;
     let home_ids: Vec<String> = homes["result"]
@@ -1018,48 +1181,51 @@ async fn fetch(api: &Api) -> Result<(Vec<String>, Vec<Dev>), ApiError> {
                 .await?;
             d.function = specs(spec["result"].get("functions"));
             d.status_range = specs(spec["result"].get("status"));
-            if let Ok(rel) = api
+            // `update_device_strategy_info`: local-format pushes only when
+            // every data point supports them, and the device lists some.
+            let rel = api
                 .get(&format!("/v1.0/m/life/devices/{}/status", d.id), None)
-                .await
+                .await?;
+            let mut local = true;
+            for x in rel["result"]["dpStatusRelationDTOS"]
+                .as_array()
+                .into_iter()
+                .flatten()
             {
-                let mut local = true;
-                for x in rel["result"]["dpStatusRelationDTOS"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                {
-                    if x.get("supportLocal").and_then(Value::as_bool) != Some(true) {
-                        local = false;
-                        break;
-                    }
-                    if s(x, "valueConvert") != "default" {
-                        tracing::debug!(
-                            "tuya: {} dp {} uses conversion {}",
-                            d.id,
-                            s(x, "dpId"),
-                            s(x, "valueConvert")
-                        );
-                    }
-                    if let Some(id) = x.get("dpId").and_then(Value::as_i64) {
-                        d.local.insert(id, s(x, "statusCode"));
-                    }
+                if x.get("supportLocal").and_then(Value::as_bool) != Some(true) {
+                    local = false;
+                    break;
                 }
-                if let Ok(custom) = api
-                    .get(&format!("/v1.0/m/life/ha/{}/code/custom-type", d.id), None)
-                    .await
-                {
-                    let on = match &custom["result"] {
-                        Value::Bool(b) => *b,
-                        Value::String(s) => s.eq_ignore_ascii_case("true"),
-                        _ => false,
-                    };
-                    if on {
-                        local = false;
-                    }
+                if s(x, "valueConvert") != "default" {
+                    tracing::debug!(
+                        "tuya: {} dp {} uses conversion {}, read as it comes",
+                        d.id,
+                        s(x, "dpId"),
+                        s(x, "valueConvert")
+                    );
                 }
-                d.support_local = local;
-                if !local {
-                    d.local.clear();
+                if let Some(id) = x.get("dpId").and_then(Value::as_i64) {
+                    d.local.insert(id, s(x, "statusCode"));
+                }
+            }
+            d.support_local = local && !d.local.is_empty();
+            if !d.support_local {
+                d.local.clear();
+            }
+            // `update_device_report_type`.
+            let types = api
+                .get(&format!("/v1.0/m/life/ha/{}/dp-report-types", d.id), None)
+                .await?;
+            for t in types["result"].as_array().into_iter().flatten() {
+                if let Some(spec) = t
+                    .get("dp_code")
+                    .and_then(Value::as_str)
+                    .and_then(|c| d.status_range.get_mut(c))
+                {
+                    spec.report_type = t
+                        .get("report_type")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
                 }
             }
             devices.push(d);
@@ -1068,14 +1234,21 @@ async fn fetch(api: &Api) -> Result<(Vec<String>, Vec<Dev>), ApiError> {
     Ok((home_ids, devices))
 }
 
-/// Registry rows for the devices and entities, as HA's platforms make
-/// them; rows an import brought are left as HA wrote them.
-fn register(registry: &Registry, entry_id: &str, disable_new: bool, devices: &[Dev]) {
+/// The devices' and entities' registry rows, as HA's platforms make them:
+/// made if missing, changed where HA's values differ.
+fn register(
+    hass: &Hass,
+    registry: &Registry,
+    entry_id: &str,
+    disable_new: bool,
+    found: &[(Dev, Vec<Desc>)],
+) {
+    // Nothing is registered when the stores can't be written (an install
+    // imported from an older Home Assistant).
     if registry.read_only().is_some() {
         return;
     }
-    for d in devices {
-        let descs = descriptions(d);
+    for (d, descs) in found {
         if descs.is_empty() {
             continue;
         }
@@ -1090,23 +1263,45 @@ fn register(registry: &Registry, entry_id: &str, disable_new: bool, devices: &[D
         });
         for x in descs {
             let unique_id = format!("tuya.{}{}", d.id, x.key);
-            let text = |s: Option<&str>| Some(s.map(str::to_owned));
-            let unit = match &x.kind {
-                Kind2::Number { code } | Kind2::Sensor { code } => x
-                    .unit
-                    .map(str::to_owned)
-                    .or_else(|| d.spec(code).and_then(Spec::unit)),
-                _ => None,
+            let row = registry.entity_by_unique_id(x.domain, DOMAIN, &unique_id);
+            let shown = shown(hass, d, x, row.as_deref());
+            // A temperature's unit is the sensor component's to settle,
+            // which may first keep the old one in the row's options.
+            let unit = if shown.native_temp.is_some()
+                || (x.device_class == Some("temperature") && shown.unit.is_some())
+            {
+                let settled = crate::sensor::when_registered(hass, row.as_deref());
+                if let (Some(row), Some(options)) = (&row, settled.options) {
+                    let options = EntityPatch {
+                        options: Some(options),
+                        ..Default::default()
+                    };
+                    registry.update_entity(&row.entity_id, options);
+                }
+                Some(settled.unit.to_owned())
+            } else {
+                unit_of(x, &shown, d)
             };
+            let cap = capabilities(x, &shown, d);
+            let device_class = match &x.kind {
+                Kind::Sensor { .. } => shown.device_class,
+                _ => x.device_class,
+            };
+            let text = |s: Option<&str>| Some(s.map(str::to_owned));
             let patch = EntityPatch {
+                // A fan keeps an empty mapping; the others none.
+                capabilities: Some(
+                    (!cap.is_empty() || x.domain == "fan").then_some(Value::Object(cap)),
+                ),
                 config_entry_id: Some(Some(entry_id.to_owned())),
                 device_id: Some(Some(device.id.clone())),
                 entity_category: Some(x.entity_category.map(str::to_owned)),
                 has_entity_name: Some(true),
                 object_id_base: text(x.name),
-                original_device_class: text(x.device_class),
+                original_device_class: text(device_class),
                 original_icon: text(x.icon),
                 original_name: text(x.name),
+                supported_features: Some(i64::from(supported_features(x))),
                 translation_key: text(x.translation_key),
                 unit_of_measurement: Some(unit),
                 pref_disable_new: disable_new,
@@ -1118,6 +1313,7 @@ fn register(registry: &Registry, entry_id: &str, disable_new: bool, devices: &[D
 }
 
 /// Apply one push message (`Manager.on_message`); the device it was for.
+/// A rename (`nameUpdate`) is not followed: see the module's notes.
 fn on_message(devices: &mut HashMap<String, Dev>, msg: &Value) -> Option<String> {
     let data = msg.get("data")?;
     match msg.get("protocol").and_then(Value::as_i64) {
@@ -1153,11 +1349,6 @@ fn on_message(devices: &mut HashMap<String, Dev>, msg: &Value) -> Option<String>
             match data.get("bizCode")?.as_str()? {
                 "online" => dev.online = true,
                 "offline" => dev.online = false,
-                "nameUpdate" => {
-                    if let Some(n) = data["bizData"].get("name").and_then(Value::as_str) {
-                        dev.name = n.to_owned();
-                    }
-                }
                 _ => return None,
             }
             Some(id.to_owned())
@@ -1166,12 +1357,23 @@ fn on_message(devices: &mut HashMap<String, Dev>, msg: &Value) -> Option<String>
     }
 }
 
+/// `coordinator.py`'s check for a login Tuya refuses for good
+/// (`ConfigEntryAuthFailed`): no retry will fix it.
+fn auth_failed(e: &ApiError) -> bool {
+    match e {
+        ApiError::Api { code, msg } => code == "1010" || msg.contains("sign invalid"),
+        _ => false,
+    }
+}
+
 /// Set up an entry and keep its devices' states current from the push
-/// channel. `store` keeps the refreshed tokens.
+/// channel. `store` keeps the refreshed tokens; `endpoint` replaces the
+/// entry's API address (tests).
 pub async fn run(
     components: Arc<Components>,
     entry: Map<String, Value>,
     store: Option<Arc<ConfigEntries>>,
+    endpoint: Option<String>,
     ready: ha_core::SetupGuard,
     status: Status,
 ) {
@@ -1187,11 +1389,7 @@ pub async fn run(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
-    let endpoint = data
-        .get("endpoint")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned();
+    let endpoint = endpoint.unwrap_or_else(|| s(&Value::Object(data.clone()), "endpoint"));
     let Some(token) = data
         .get("token_info")
         .map(Token::from_value)
@@ -1209,18 +1407,17 @@ pub async fn run(
             return;
         }
     };
-    let api = Api::new(client, endpoint, token);
+    let api = Api::new(client, hass.clock().clone(), endpoint, token);
     {
+        // `TokenListener.update_token`: the entry keeps the new pair.
         let store = store.clone();
         let entry_id = entry_id.clone();
         let data = Mutex::new(data);
         api.on_token(move |t| {
             let mut d = data.lock();
             d.insert("token_info".into(), t.to_value());
-            if let Some(store) = &store
-                && !store.update_data(&entry_id, d.clone())
-            {
-                tracing::debug!("tuya: token unchanged in the entry");
+            if let Some(store) = &store {
+                store.update_data(&entry_id, d.clone());
             }
         });
     }
@@ -1231,9 +1428,9 @@ pub async fn run(
         }
         match fetch(&api).await {
             Ok(x) => break x,
-            Err(ApiError::Api { code, msg }) if code == "1010" || msg.contains("token") => {
+            Err(e) if auth_failed(&e) => {
                 tracing::error!(
-                    "tuya: the login was refused ({code}: {msg}); add the integration again in Home Assistant and re-import"
+                    "tuya: the login was refused ({e}); add Tuya again in Home Assistant and import again"
                 );
                 status.set(EntryState::SetupError, None);
                 return;
@@ -1253,69 +1450,93 @@ pub async fn run(
             }
         }
     };
-    if let Some(registry) = components.registry() {
-        let disable_new = entry
-            .get("pref_disable_new_entities")
-            .and_then(Value::as_bool)
-            == Some(true);
-        register(registry, &entry_id, disable_new, &devices);
-    }
+    // Each device's descriptions, worked out once.
+    let found: Vec<(Dev, Vec<Desc>)> = devices
+        .into_iter()
+        .map(|d| {
+            let descs = descriptions(&d);
+            (d, descs)
+        })
+        .collect();
     let shared = Arc::new(Shared {
         hass: hass.clone(),
         api: api.clone(),
-        devices: Mutex::new(devices.iter().map(|d| (d.id.clone(), d.clone())).collect()),
+        devices: Mutex::new(
+            found
+                .iter()
+                .map(|(d, _)| (d.id.clone(), d.clone()))
+                .collect(),
+        ),
         alive: Mutex::new(true),
         last_command: Mutex::default(),
     });
-    let registries = components.registries();
-    let names = crate::naming::Names::new(&hass, &registries, DOMAIN);
-    let reg = register_services(&hass, components.lookup());
-    let mut ents = Vec::new();
-    for d in &devices {
-        for x in descriptions(d) {
-            let unique_id = format!("tuya.{}{}", d.id, x.key);
-            let Some((entity_id, friendly)) =
-                names.entity(x.domain, &unique_id, &d.id, &d.name, x.name)
-            else {
-                continue;
-            };
-            ents.push(Arc::new(Ent {
-                shared: shared.clone(),
-                device: d.id.clone(),
-                domain: x.domain,
-                entity_id,
-                friendly,
-                d: x,
-            }));
+    let ents: Vec<Arc<Ent>> = {
+        // One entry at a time, and none removed meanwhile.
+        let _one = crate::switchbot_cloud::SETUP.lock();
+        if let Some(registry) = components.registry() {
+            let disable_new = entry
+                .get("pref_disable_new_entities")
+                .and_then(Value::as_bool)
+                == Some(true);
+            register(&hass, registry, &entry_id, disable_new, &found);
         }
-    }
-    for e in &ents {
-        match e.domain {
-            "switch" => components.switches().add(Arc::new(TuyaSwitch(e.clone()))),
-            "humidifier" | "fan" | "number" | "select" => reg.items.write().push(e.clone()),
-            _ => {}
+        let registries = components.registries();
+        let names = crate::naming::Names::new(&hass, &registries, DOMAIN);
+        let mut ents = Vec::new();
+        for (d, descs) in &found {
+            for x in descs {
+                let unique_id = format!("tuya.{}{}", d.id, x.key);
+                let Some((entity_id, friendly)) =
+                    names.entity(x.domain, &unique_id, &d.id, &d.name, x.name)
+                else {
+                    continue;
+                };
+                let row = registries.entities.iter().find(|e| {
+                    e.platform == DOMAIN
+                        && e.entity_id.split('.').next() == Some(x.domain)
+                        && e.unique_id.as_ref().and_then(Value::as_str) == Some(&unique_id)
+                });
+                ents.push(Arc::new(Ent {
+                    shared: shared.clone(),
+                    device: d.id.clone(),
+                    entity_id,
+                    friendly,
+                    shown: shown(&hass, d, x, row.map(|r| &**r)),
+                    d: x.clone(),
+                }));
+            }
         }
-        e.write();
-    }
-    tracing::info!("tuya: {} devices, {} entities", devices.len(), ents.len());
-    struct Stopped(Arc<Shared>, Arc<Registered>, Vec<EntityId>);
+        for e in &ents {
+            let a = || Arc::new(As(e.clone()));
+            match e.d.domain {
+                "switch" => components.switches().add(a()),
+                "humidifier" => components.humidifiers().add(a()),
+                "fan" => components.fans().add(a()),
+                "number" => components.numbers().add(a()),
+                "select" => components.selects().add(a()),
+                _ => {}
+            }
+            e.write();
+        }
+        ents
+    };
+    tracing::info!("tuya: {} devices, {} entities", found.len(), ents.len());
+    struct Stopped(Arc<Shared>);
     impl Drop for Stopped {
         fn drop(&mut self) {
             *self.0.alive.lock() = false;
-            self.1
-                .items
-                .write()
-                .retain(|e| !self.2.contains(&e.entity_id));
         }
     }
-    let _stopped = Stopped(
-        shared.clone(),
-        reg.clone(),
-        ents.iter().map(|e| e.entity_id.clone()).collect(),
-    );
+    let _stopped = Stopped(shared.clone());
     status.set(EntryState::Loaded, None);
     drop(ready);
-    if ents.is_empty() {
+    // `refresh_mq`: only devices with an entity are subscribed.
+    let subscribed: Vec<&Dev> = found
+        .iter()
+        .map(|(d, _)| d)
+        .filter(|d| ents.iter().any(|e| e.device == d.id))
+        .collect();
+    if subscribed.is_empty() {
         return;
     }
     // `SharingMQ.run`: fetch credentials, connect, renew a minute before
@@ -1338,7 +1559,6 @@ pub async fn run(
                 continue;
             }
         };
-        let url = s(&cfg, "url");
         let expire = cfg
             .get("expireTime")
             .and_then(Value::as_u64)
@@ -1349,7 +1569,7 @@ pub async fn run(
             .iter()
             .map(|h| owner.replace("{ownerId}", h))
             .collect();
-        for d in &devices {
+        for d in &subscribed {
             let t = dev_topic.replace("{devId}", &d.id);
             topics.push(format!(
                 "{t}{}",
@@ -1359,7 +1579,7 @@ pub async fn run(
         let renew = tokio::time::sleep(Duration::from_secs(expire.saturating_sub(60).max(60)));
         let started = tokio::time::Instant::now();
         let result = mqtt::run(
-            &url,
+            &s(&cfg, "url"),
             &s(&cfg, "clientId"),
             &s(&cfg, "username"),
             &s(&cfg, "password"),
@@ -1389,85 +1609,5 @@ pub async fn run(
                 backoff = (backoff * 2).min(60);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn dehumidifier() -> Dev {
-        let spec = |kind: &str, v: Value| Spec {
-            kind: kind.into(),
-            values: v,
-        };
-        let mut d = Dev {
-            id: "dev".into(),
-            name: "Dry".into(),
-            category: "cs".into(),
-            online: true,
-            support_local: true,
-            ..Default::default()
-        };
-        d.function
-            .insert("switch".into(), spec("Boolean", json!({})));
-        d.function.insert(
-            "dehumidify_set_value".into(),
-            spec(
-                "Integer",
-                json!({"min":35,"max":70,"scale":0,"step":5,"unit":"%"}),
-            ),
-        );
-        d.status_range.insert(
-            "humidity_indoor".into(),
-            spec(
-                "Integer",
-                json!({"min":0,"max":100,"scale":0,"step":1,"unit":"%"}),
-            ),
-        );
-        d.status_range.insert(
-            "fault".into(),
-            spec(
-                "Bitmap",
-                json!({"label":["tankfull","defrost","E1","E2","L2","L3","L4","wet"]}),
-            ),
-        );
-        d.status.insert("switch".into(), json!(true));
-        d.status.insert("humidity_indoor".into(), json!(72));
-        d.status.insert("fault".into(), json!(1));
-        d.local.insert(16, "humidity_indoor".into());
-        d
-    }
-
-    #[test]
-    fn describes_a_dehumidifier() {
-        let keys: Vec<(&str, &str)> = descriptions(&dehumidifier())
-            .iter()
-            .map(|x| (x.domain, x.key))
-            .collect();
-        assert_eq!(
-            keys,
-            [
-                ("humidifier", "switch"),
-                ("fan", ""),
-                ("sensor", "humidity_indoor"),
-                ("binary_sensor", "tankfull"),
-                ("binary_sensor", "defrost"),
-                ("binary_sensor", "wet"),
-                ("binary_sensor", "fault_E1"),
-            ]
-        );
-    }
-
-    #[test]
-    fn local_push_updates_by_dp_id() {
-        let mut devices = HashMap::from([("dev".to_owned(), dehumidifier())]);
-        let msg = json!({"protocol": 4, "data": {"devId": "dev", "status": [{"dpId": 16, "t": 1, "value": 60}]}});
-        assert_eq!(on_message(&mut devices, &msg).as_deref(), Some("dev"));
-        assert_eq!(devices["dev"].status["humidity_indoor"], json!(60));
-        let off =
-            json!({"protocol": 20, "data": {"bizCode": "offline", "bizData": {"devId": "dev"}}});
-        on_message(&mut devices, &off);
-        assert!(!devices["dev"].online);
     }
 }

@@ -624,3 +624,38 @@ the same code with the Tuya integration on top (which adds nothing to an
 install without a Tuya entry) read 0.00 wake-ups a second and 0.000 % CPU,
 as main.
 
+### `tuya`, 2026-11-22
+
+Nothing of it runs on an install with no Tuya entry: no timer, no task,
+no socket. A Tuya entry runs one task: its set-up
+(the cloud's device list, each device's specification, push format and
+report types), then one MQTT connection to Tuya's broker, renewed with
+fresh credentials a minute before they run out (two hours), and a ping
+once per 60 s keepalive, as paho does. The TLS settings for that
+connection are built once per process (`ha_http::stream`). State comes
+pushed; nothing is polled.
+
+Release binary (Linux aarch64, `cargo build --release --locked` in
+`rust:1`, each tree with its own target directory): main (ee4c844)
+11,034,048 bytes; with the entity components (the entry above)
+11,099,584; with `tuya` too 11,362,112 (+262,528 for `tuya`): the
+integration, its MQTT client, the TLS stream helper (`ha_http::stream`),
+`md-5` (Tuya's request key is an MD5 hash; AES-GCM and HMAC use `ring` and
+`hmac`, already linked) and `tuya`'s translation and manifest rows. The
+size moves in 64 KiB steps, so those parts aren't measured apart.
+
+`scripts/perf-docker.sh` (Linux, `PERF_GATE=1`), on a throwaway config
+whose one entry is a Tuya entry pointed at `scripts/vectors/tuya.py
+--serve host.docker.internal 18080 18883` (a fake cloud and a broker
+that never publishes, on the host):
+
+| | binary | start→/api/ | idle RSS | idle PSS | idle CPU | wakeups/s | threads | run |
+|---|---|---|---|---|---|---|---|---|
+| main, the same config (the entry is not run) | 10.52 MiB | 3 ms | 10.1 MiB | 9.1 MiB | 0.000 % | 0.00 | 20 | 15 s warm-up, 60 s quiet |
+| branch, a fresh install | 10.84 MiB | 10 ms | 11.9 MiB | 10.9 MiB | 0.000 % | 0.00 | 20 | 15 s warm-up, 60 s quiet |
+| branch, the Tuya entry running | 10.84 MiB | 3 ms | 7.8 MiB | 6.8 MiB | 0.000 % | 0.07 | 20 | 15 s warm-up, 120 s quiet |
+
+The wake-ups are the keepalive: a ping and its answer each minute. RSS
+moved by several MiB between runs of the same binary here (an earlier run
+of the branch with the entry, pinging every 30 s, read 13.2 MiB), so these
+three runs don't show what the entry costs in memory to better than that.

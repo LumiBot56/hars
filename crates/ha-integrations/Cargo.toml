@@ -20,9 +20,6 @@ ha-registry.workspace = true
 hmac = "0.12"
 md5 = { package = "md-5", version = "0.10" }
 ring = "0.17"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-webpki-roots = "1"
 jiff = { version = "0.2.43", features = ["serde"] }
 parking_lot = "0.12.5"
 rand = "0.9.5"

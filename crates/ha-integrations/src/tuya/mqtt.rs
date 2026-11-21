@@ -3,12 +3,14 @@
 //! subscribe at QoS 0, receive publishes, keep the link alive with pings.
 //! Nothing is ever published.
 
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// paho's default keepalive.
 pub const KEEPALIVE: Duration = Duration::from_secs(60);
+
+/// How long connecting (TCP, TLS, CONNECT and CONNACK) may take.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug, thiserror::Error)]
 pub enum MqttError {
@@ -22,6 +24,8 @@ pub enum MqttError {
     Url(String),
     #[error("no ping answer")]
     Timeout,
+    #[error("{0}")]
+    Connect(#[from] ha_http::Error),
 }
 
 fn put_str(buf: &mut Vec<u8>, s: &str) {
@@ -129,32 +133,13 @@ pub async fn open(url: &str) -> Result<Box<dyn Stream>, MqttError> {
         .rsplit_once(':')
         .and_then(|(h, p)| Some((h.to_owned(), p.trim_end_matches('/').parse::<u16>().ok()?)))
         .ok_or_else(|| MqttError::Url(url.into()))?;
-    let tcp = tokio::time::timeout(
-        Duration::from_secs(20),
-        tokio::net::TcpStream::connect((host.as_str(), port)),
-    )
-    .await
-    .map_err(|_| MqttError::Timeout)??;
-    tcp.set_nodelay(true).ok();
     match scheme {
-        "tcp" | "mqtt" => Ok(Box::new(tcp)),
-        "ssl" | "mqtts" | "tls" => {
-            let mut roots = rustls::RootCertStore::empty();
-            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-            let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-                rustls::crypto::ring::default_provider(),
-            ))
-            .with_safe_default_protocol_versions()
-            .map_err(|_| MqttError::Protocol("tls versions"))?
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-            let name = rustls::pki_types::ServerName::try_from(host.clone())
-                .map_err(|_| MqttError::Url(url.into()))?;
-            let tls = tokio_rustls::TlsConnector::from(Arc::new(config))
-                .connect(name, tcp)
-                .await?;
-            Ok(Box::new(tls))
-        }
+        "tcp" | "mqtt" => Ok(Box::new(
+            ha_http::stream::connect_tcp(&host, port, CONNECT_TIMEOUT).await?,
+        )),
+        "ssl" | "mqtts" | "tls" => Ok(Box::new(
+            ha_http::stream::connect_tls(&host, port, CONNECT_TIMEOUT).await?,
+        )),
         _ => Err(MqttError::Url(url.into())),
     }
 }
@@ -170,24 +155,31 @@ pub async fn run(
     stop: impl std::future::Future<Output = ()>,
     mut on_message: impl FnMut(&str, &[u8]),
 ) -> Result<(), MqttError> {
-    let stream = open(url).await?;
-    let (mut r, mut w) = tokio::io::split(stream);
-    w.write_all(&connect_packet(
-        client_id,
-        user,
-        pass,
-        KEEPALIVE.as_secs() as u16,
-    ))
-    .await?;
-    let (first, body) = tokio::time::timeout(Duration::from_secs(20), read_packet(&mut r))
+    // Everything up to the broker's CONNACK, within one timeout: a
+    // stalled handshake or write ends the attempt and the caller retries.
+    let connect = async {
+        let stream = open(url).await?;
+        let (mut r, mut w) = tokio::io::split(stream);
+        w.write_all(&connect_packet(
+            client_id,
+            user,
+            pass,
+            KEEPALIVE.as_secs() as u16,
+        ))
+        .await?;
+        w.flush().await?;
+        let (first, body) = read_packet(&mut r).await?;
+        if first >> 4 != 2 || body.len() < 2 {
+            return Err(MqttError::Protocol("expected CONNACK"));
+        }
+        if body[1] != 0 {
+            return Err(MqttError::Refused(body[1]));
+        }
+        Ok((r, w))
+    };
+    let (mut r, mut w) = tokio::time::timeout(CONNECT_TIMEOUT, connect)
         .await
         .map_err(|_| MqttError::Timeout)??;
-    if first >> 4 != 2 || body.len() < 2 {
-        return Err(MqttError::Protocol("expected CONNACK"));
-    }
-    if body[1] != 0 {
-        return Err(MqttError::Refused(body[1]));
-    }
     for (i, chunk) in topics.chunks(20).enumerate() {
         w.write_all(&subscribe_packet(i as u16 + 1, chunk)).await?;
     }
@@ -214,13 +206,16 @@ pub async fn run(
     }
     let _reader = Abort(reader);
     let mut awaiting_pong = false;
-    // The client must speak within the keepalive, whatever it hears.
-    let mut ping =
-        tokio::time::interval_at(tokio::time::Instant::now() + KEEPALIVE / 2, KEEPALIVE / 2);
+    // paho's ping: once per keepalive (the broker allows one and a half).
+    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + KEEPALIVE, KEEPALIVE);
+    // After the host slept, one late ping, not a burst that would read as
+    // an unanswered one.
+    ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             _ = &mut stop => {
                 let _ = w.write_all(&[0xE0, 0]).await; // DISCONNECT
+                let _ = w.flush().await;
                 return Ok(());
             }
             _ = ping.tick() => {
@@ -246,7 +241,7 @@ pub async fn run(
                             on_message(&topic, &payload);
                         }
                         13 => awaiting_pong = false, // PINGRESP
-                        9 => tracing::debug!("tuya: mqtt suback {:?}", &body[2..]),
+                        9 => tracing::debug!("tuya: mqtt suback {:?}", body.get(2..)),
                         _ => {}
                     }
                 }
@@ -268,6 +263,55 @@ mod tests {
         assert_eq!(s, vec![0x82, 8, 0, 1, 0, 3, b'a', b'/', b'b', 0]);
         let (t, id, p) = parse_publish(0x30, &[0, 1, b'x', b'h', b'i']).unwrap();
         assert_eq!((t.as_str(), id, p.as_slice()), ("x", None, &b"hi"[..]));
+    }
+
+    /// A broker on 127.0.0.1: it answers CONNECT and SUBSCRIBE, publishes
+    /// one message, and sees DISCONNECT when the client is stopped.
+    #[tokio::test]
+    async fn talks_to_a_broker() {
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let broker = tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let (first, body) = read_packet(&mut s).await.unwrap();
+            assert_eq!(first, 0x10);
+            assert_eq!(&body[..6], &[0, 4, b'M', b'Q', b'T', b'T']);
+            s.write_all(&[0x20, 2, 0, 0]).await.unwrap();
+            let (first, body) = read_packet(&mut s).await.unwrap();
+            assert_eq!(first, 0x82);
+            assert_eq!(&body[..2], &[0, 1]);
+            s.write_all(&[0x90, 3, 0, 1, 0]).await.unwrap();
+            s.write_all(&packet(0x30, &[0, 1, b't', b'h', b'i']))
+                .await
+                .unwrap();
+            let (first, _) = read_packet(&mut s).await.unwrap();
+            first
+        });
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let mut got = Vec::new();
+        let mut tx = Some(tx);
+        let stop = async {
+            let _ = rx.await;
+        };
+        run(
+            &format!("tcp://127.0.0.1:{port}"),
+            "id",
+            "user",
+            "pass",
+            &["t".into()],
+            stop,
+            |topic, payload| {
+                got.push((topic.to_owned(), payload.to_vec()));
+                if let Some(tx) = tx.take() {
+                    let _ = tx.send(());
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(got, [("t".to_owned(), b"hi".to_vec())]);
+        assert_eq!(broker.await.unwrap(), 0xE0, "DISCONNECT on stop");
     }
 
     #[test]

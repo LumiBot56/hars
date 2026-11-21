@@ -82,6 +82,9 @@ pub struct Endpoints {
     pub hue_bridge: Option<String>,
     /// Where LIFX bulbs are reached, and where discovery broadcasts.
     pub lifx: lifx::Where,
+    /// `None`: Tuya's API is at the address its entry names. A base URL:
+    /// every Tuya entry talks to it instead (tests).
+    pub tuya: Option<String>,
 }
 
 impl Default for Endpoints {
@@ -92,6 +95,7 @@ impl Default for Endpoints {
             hue_discovery_timeout: std::time::Duration::from_secs(5),
             hue_bridge: None,
             lifx: lifx::Where::default(),
+            tuya: None,
         }
     }
 }
@@ -204,6 +208,32 @@ pub(crate) fn spawn_switchbot(
         components.clone(),
         entry,
         endpoints.switchbot.clone(),
+        components.hass().setup_guard(),
+        status,
+    ))
+}
+
+/// Start a `tuya` entry. Its components exist before its setup, so their
+/// services do even while Tuya's cloud can't be reached.
+pub(crate) fn spawn_tuya(
+    components: &Arc<components::Components>,
+    entry: Map<String, Value>,
+    endpoints: &Endpoints,
+    store: Option<Arc<config_entries::ConfigEntries>>,
+    status: config_entries::Status,
+) -> tokio::task::JoinHandle<()> {
+    let _ = (
+        components.switches(),
+        components.humidifiers(),
+        components.fans(),
+        components.numbers(),
+        components.selects(),
+    );
+    tokio::spawn(tuya::run(
+        components.clone(),
+        entry,
+        store,
+        endpoints.tuya.clone(),
         components.hass().setup_guard(),
         status,
     ))
@@ -339,17 +369,8 @@ pub fn start(
             Some(store) => config_entries::Status::new(store.clone(), &entry_id),
             None => config_entries::Status::none(),
         };
-        let _ = components.switches();
-        let store = store.cloned();
-        let c = components.clone();
         tasks.push(Running::start(&entry_id, status, |status| {
-            tokio::spawn(tuya::run(
-                c.clone(),
-                entry,
-                store,
-                c.hass().setup_guard(),
-                status,
-            ))
+            spawn_tuya(&components, entry, endpoints, store.cloned(), status)
         }));
         running.extend(tuya::COMPONENTS);
     }
